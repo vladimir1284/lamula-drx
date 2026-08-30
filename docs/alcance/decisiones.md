@@ -51,6 +51,10 @@ Conteo de bins resultante: **3689 bins** a 124,71 m y **1844 bins** a 249,41 m, 
     (Farrow) o a otra fs, y eso cambia el presupuesto de DSPs y la arquitectura. Ver
     [Pendientes, P-01](pendientes.md#p-01).
 
+    La lectura del código de ORPG de agosto de 2026 apunta a sustituir esta decisión por dos
+    cadenas independientes con **R₂ = 417**, pero la evidencia todavía no es reverificable y P-01
+    sigue abierto. **No cambies R₁/R₂ sin cerrar P-01 primero.**
+
 ## D-05 · SystemVerilog para el RTL custom; Verilator + cocotb para unidades, xsim para integración { #d-05 }
 
 El plan original decía «VHDL/Verilog» y «Verilator + cocotb», y eso es incompatible: **Verilator no

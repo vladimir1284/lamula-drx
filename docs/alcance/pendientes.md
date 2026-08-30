@@ -11,8 +11,9 @@ ahora, y los dos cuestan mucho después.
 
 ### P-01 · Tolerancia del tamaño de celda { #p-01 }
 
-**Estado:** abierto · **Dueño:** especialistas de dominio · **Bloquea:** cierre de
-[D-04](decisiones.md#d-04) y la arquitectura del DDC.
+**Estado:** parcialmente respondido sobre código de ORPG, pendiente de verificación de fuente ·
+**Dueño:** especialistas de dominio · **Bloquea:** cierre de [D-04](decisiones.md#d-04) y la
+arquitectura del DDC.
 
 A 250 MSPS cada muestra cubre `c/2 × 4 ns = 0,5996 m`:
 
@@ -28,12 +29,38 @@ exactos? Si exige exactitud hay que ir a remuestreo fraccionario (Farrow) o a ot
 el presupuesto de DSPs y la arquitectura completa.
 
 **Condición de cierre:** respuesta escrita de los especialistas, y si es «exactitud requerida», un
-ADR nuevo que sustituya a D-04.
+ADR nuevo que sustituya a D-04. A la luz del resultado de agosto de 2026, el ADR que hace falta no
+es de exactitud fraccionaria sino de **elección de R sobre la rejilla de cuantización del campo**.
 
 **Brief de investigación:** `research/p-01-orpg-gate-spacing.md` (en el repositorio, no publicado en
 este sitio) descompone la pregunta en cuatro sub-preguntas respondibles desde el código de ORPG y
 del legacy `RDA_Backend_Py`, y corrige la cuantificación del error: lo que decide no es el error por
 celda (0,29 m) sino el **acumulado a 460 km, ~1,1 km**.
+
+**Resultado parcial, 30 de agosto de 2026:** `research/p-01-RESULTADO.md` (en el repositorio, no
+publicado en este sitio) recoge la lectura del árbol de fuentes real de ORPG build 24
+(`rpg_b24_0r1_20_pub_src`, paquete CODE del ROC), hecha en otra máquina. En resumen:
+
+- El espaciado **es un campo transmitido**, entero de 16 bits **en metros**. 124,71 m y 249,41 m no
+  son declarables: se declaran como 125/124 y 249. La conversión de punto flotante a entero ocurre
+  en nuestro firmware, no en ORPG.
+- ORPG **re-deriva el rango con una tabla cableada a 250 m** y la aplica a todo lo que no declare
+  exactamente 1000 m de celda. Declarar 249 cae en esa ruta con la corrección mal alineada.
+- Hay **tope duro de 1840 gates de reflectividad** (1840 × 250 m = 460 km: la rejilla nativa de
+  ORPG es de 250 m) y de 1200 en Doppler y dual-pol. Se recorta con aviso en el log, no se rechaza
+  el radial.
+- Por tanto el modo de 125 m con 3689 bins **no llega entero a ORPG en ningún caso**, y la elección
+  de R₁ pasa a fijarla el consumidor interno.
+
+La recomendación que sale de ahí es **R₂ = 417** (250,026 m, que se declara como 250 exactos y da
+1840 bins justos) con cadena propia, frente a R₂ = 416 (249,41 m, que se declara como 249 y da 1844
+bins, cuatro por encima del tope).
+
+!!! warning "Por qué esto no cierra P-01 todavía"
+    El árbol de ORPG **no está en la máquina de desarrollo**, así que ninguna de las citas
+    `fichero:línea` del resultado es reverificable aquí. La lectura cubrió un solo subdirectorio
+    (`src/cpc102/tsk033`) de unos 35, y `RDA_Backend_Py` —la única fuente empírica, ver
+    [P-05](#p-05)— sigue sin localizar. Nada de esto revierte D-04 por sí solo.
 
 ### P-02 · Capa física de los encoders SSI { #p-02 }
 

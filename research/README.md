@@ -13,4 +13,5 @@ Convención de nombres: `<id-del-pendiente>-<tema>.md` para el brief, y
 
 | Brief | Pendiente | Estado |
 |---|---|---|
-| [p-01-orpg-gate-spacing.md](p-01-orpg-gate-spacing.md) | P-01 — tolerancia del tamaño de celda | Abierto, sin ejecutar. Bloqueado en parte por P-05: `RDA_Backend_Py`, la única fuente empírica del brief, no está localizado |
+| [p-01-orpg-gate-spacing.md](p-01-orpg-gate-spacing.md) | P-01 — tolerancia del tamaño de celda | Ejecutado en parte sobre el árbol de ORPG build 24; resultado en [p-01-RESULTADO.md](p-01-RESULTADO.md). Sigue abierto: citas no reverificables en esta máquina, cobertura de un solo subdirectorio, y `RDA_Backend_Py` (P-05) aún sin localizar |
+| [p-01-barrido-cpc0xx.md](p-01-barrido-cpc0xx.md) | P-01 — barrido del resto del árbol de ORPG | Listo para ejecutar en la máquina que tiene montado `rpg_b24_0r1_20_pub_src`. Es lo único pendiente que puede tumbar la recomendación de R₂ = 417 |
