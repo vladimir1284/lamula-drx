@@ -51,6 +51,7 @@ nav:
   - Implementación:
       - Fases Z0–Z5: implementacion/fases.md
       - Estructura del repositorio: implementacion/estructura-repo.md
+      - Infraestructura: implementacion/infraestructura.md
   - Verificación:
       - Plan de testing: pruebas/plan-testing.md
       - Modelo dorado (oráculo): pruebas/modelo-dorado.md

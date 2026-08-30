@@ -80,6 +80,44 @@ necesitan, es un requisito del motor de timing en PL — las tablas de trigger n
 por sector — y un campo correspondiente en la dirección de configuración del contrato DRx↔DSP. **No
 se asume necesario sin esa confirmación.**
 
+## Pendientes de procedencia y de fuentes
+
+Estos no son hallazgos técnicos del receptor; son huecos en la trazabilidad que bloquean o encarecen
+el trabajo de arriba.
+
+### P-05 · `RDA_Backend_Py` sin localizar { #p-05 }
+
+**Estado:** abierto · **Dueño:** vladimir · **Bloquea:** la parte empírica de
+[P-01](#p-01).
+
+`lamula-rcp/spike-fase0/README-rda-orpg.md` documenta un proyecto legacy de 2013,
+`RDA_Backend_Py`, que hizo **ingesta en producción de los radares cubanos al ORPG** citando el ICD
+2620002 como fuente. Es la única fuente empírica disponible sobre qué acepta un ORPG real, y ya hay
+precedente de que gana al ICD: `RESULTADO-rda-orpg.md` registra un caso en el que la dirección real
+del loopback del legacy contradecía la lectura literal de las tablas, y se resolvió a favor del
+legacy porque había corrido en producción.
+
+**No está en `/home/node/workspace`.** Sin él, la investigación de P-01 solo puede leer
+especificación, y el precedente del loopback dice que eso no basta.
+
+**Condición de cierre:** ruta al repositorio o copia del código, anotada aquí.
+
+### P-06 · Dos copias vivas del project plan de la ZU9 { #p-06 }
+
+**Estado:** abierto · **Dueño:** equipo · **Severidad:** baja, pero divergirá.
+
+El plan ZU9 existe en dos sitios publicados: `docs/referencia/project-plan-zu9.md` en este
+repositorio y `docs/drx-plan.md` en `lamula-dsp`, que sigue en el nav de ese sitio. El fuente del
+plan de ZedBoard (`lamula-drx-zedboard-plan.md`) sí se eliminó de `lamula-dsp` al escindir este
+repositorio, pero el del plan ZU9 no.
+
+Mientras las dos copias existan, un cambio en una no se refleja en la otra. La opción de retirar
+`drx-plan.md` del sitio DSP se planteó y se decidió **no tocarlo** por ahora, porque rompe enlaces
+existentes a ese sitio.
+
+**Condición de cierre:** o se retira la copia del sitio DSP dejando una redirección, o se declara
+explícitamente cuál de las dos es la canónica y se anota en las dos.
+
 ## Supuestos de entorno a verificar
 
 Estos son supuestos del plan de ZedBoard. Todo número marcado como *estimación* en este sitio es una

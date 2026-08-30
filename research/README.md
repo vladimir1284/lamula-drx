@@ -13,4 +13,4 @@ Convención de nombres: `<id-del-pendiente>-<tema>.md` para el brief, y
 
 | Brief | Pendiente | Estado |
 |---|---|---|
-| [p-01-orpg-gate-spacing.md](p-01-orpg-gate-spacing.md) | P-01 — tolerancia del tamaño de celda | Abierto, sin ejecutar |
+| [p-01-orpg-gate-spacing.md](p-01-orpg-gate-spacing.md) | P-01 — tolerancia del tamaño de celda | Abierto, sin ejecutar. Bloqueado en parte por P-05: `RDA_Backend_Py`, la única fuente empírica del brief, no está localizado |

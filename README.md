@@ -12,7 +12,9 @@ al LAMULA DSP por 1GbE contra el contrato DRx↔DSP.
 El plan de trabajo, las decisiones congeladas, el plan de verificación y el registro de deuda de
 portabilidad viven en `docs/` y se publican en <https://lamula-drx-docs.pages.dev>.
 
-Empieza por `docs/alcance/contexto.md`. Si vas a escribir código, lee `AGENTS.md` primero.
+Si te incorporas en frío, empieza por `CLAUDE.md`: dice dónde está el proyecto, en qué orden leer y
+qué está bloqueado. Si vas a escribir código, lee `AGENTS.md` primero. El estado de la
+infraestructura (repo, Pages, secrets, CI) está en `docs/implementacion/infraestructura.md`.
 
 Para construir el sitio localmente:
 
@@ -22,4 +24,5 @@ uvx --with mkdocs-material==9.* mkdocs serve
 
 ## Estado
 
-Fase Z0 — substrato. Todavía no hay RTL ni firmware; ver `docs/implementacion/fases.md`.
+Fase Z0 — substrato, **no empezada**. El repositorio contiene documentación y nada más: no hay RTL,
+firmware, flujo Tcl, testbenches ni modelo dorado. Ver `docs/implementacion/fases.md`.
