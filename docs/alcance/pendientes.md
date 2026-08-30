@@ -178,63 +178,83 @@ DRx↔DSP. Y el DSP tampoco: `lamula-dsp/docs/dsp-plan.md:71` retira el contrato
 Lo único que llega al DRx de todo esto es el tamaño de celda, que es P-01, y la elección de `fs`,
 que es [P-08](#p-08).
 
-### P-08 · `fs` no está obligada a ser 250 MSPS, y eso disuelve P-01 { #p-08 }
+### P-08 · `fs` es un grado de libertad, y bien elegida disuelve P-01 { #p-08 }
 
 **Estado:** abierto, con una propuesta concreta · **Dueño:** dirección técnica + compra ·
 **Bloquea:** el cierre de [D-04](decisiones.md#d-04).
 
-Los convertidores del FMC213 son de 250 MSPS, pero **nada obliga a operarlos exactamente a 250
-MHz**. El tamaño de celda es `R · c / (2·fs)`: si `fs` es un grado de libertad, se elige para que la
-celda caiga exacta en vez de elegir `R` para que caiga cerca.
+Los convertidores del FMC213 son de 250 MSPS, pero **nada obliga a operarlos a 250 MHz**. El tamaño
+de celda es `R · c / (2·fs)`: si `fs` es libre, se elige `fs` para que la celda caiga donde se
+quiere, en vez de elegir `R` para que caiga cerca.
 
-Con `fs = 208 · c / 250 = 249 427 325 Hz` — es decir **249,427325 MHz**, un 0,229 % por debajo de
-250 MHz — sale:
+**Precisión sobre el límite matemático.** Celda de 125 m exacta al metro exige
+`fs = R · c/250 = R · 1,199169832 MHz`, y ese cuanto no cae nunca sobre una rejilla redonda: para
+que `fs` fuera un número entero de MHz haría falta que `R` fuera múltiplo de 125 000 000. **No se
+puede tener celda exacta y reloj redondo a la vez.** Lo que sí se puede es un reloj redondo con un
+error tres órdenes de magnitud menor que el actual, que a efectos prácticos es lo mismo.
 
-| | R | celda | bins a 460 km |
+### La propuesta: `fs` = 143,9 MHz, R₁ = 120, R₂ = 240
+
+| | R | celda | error acumulado a 460 km |
 |---|---|---|---|
-| Modo fino | 208 | **125,000000 m** | 3680 |
-| Modo grueso | 416 | **250,000000 m** | 1840 |
+| Modo fino | 120 | 125,000330 m | 1,2 m sobre 3680 bins |
+| Modo grueso | 240 | 250,000660 m | **1,2 m** sobre 1840 bins |
 
-Los dos exactos, con **R₂ = 2·R₁ intacto**: se conserva la cadena única con etapa ÷2 de D-04, no
-hacen falta dos cadenas de diezmado, y los factores R₁ = 208 y R₂ = 416 de D-04 **no cambian**. Lo
-único que cambia es `fs`.
+Contra los 1054 m de D-04 tal como está hoy. 1,2 m es el 0,5 % de una celda: irrelevante para
+cualquier producto, y el valor declarado a ORPG sigue siendo 250 exacto, que es lo que exige la
+lista blanca de P-01.
 
-Y los conteos vuelven a cuadrar solos: 1840 bins a 250 m es exactamente el tope de reflectividad de
-ORPG, y 3680 a 125 m es la cifra del plan original de la ZU9, que asumía celdas exactas.
+Lo que trae de regalo:
 
-Comparado con lo que hay sobre la mesa:
+- **Reloj redondo.** 143,9 MHz está en la rejilla de 100 kHz, así que sale por **integer-N** desde
+  la referencia de 10 MHz de la casa (PFD 100 kHz, N = 1439). Sin PLL fraccional-N, **sin espurios
+  fraccionales** — que era la única objeción seria a la variante de `fs` exacta.
+- **Factores de diezmado mucho mejores.** 240 = 2⁴·3·5 y 120 = 2³·3·5, frente a 416 = 2⁵·13 y
+  208 = 2⁴·13. El 13 de D-04 es un factor incómodo para una cadena CIC; 240 y 120 se descomponen en
+  etapas cómodas.
+- **R₂ = 2·R₁ intacto:** se conserva la cadena única con etapa ÷2. Una sola cadena de diezmado, no
+  dos.
+- **Menos presión de recursos y de timing**, y en ZedBoard el factor de dilatación baja de 2,5 a
+  1,439, lo que acerca la plataforma de desarrollo a la de destino.
 
-| Opción | celda de 250 m | error acumulado a 460 km | cadenas de diezmado |
-|---|---|---|---|
-| D-04 actual: R₂ = 416 a 250 MHz | 249,4273 m → se declara **249** | 1056 m, y ORPG **descarta** el radial (ver P-01) | una |
-| Opción B: R₂ = 417 a 250 MHz | 250,0269 m → se declara 250 | 49 m | dos |
-| **`fs` = 249,427325 MHz, R₂ = 416** | **250,000000 m** | **0 m** | **una** |
+### Alternativas evaluadas
 
-**Supuestos que hay que verificar antes de convertir esto en ADR** — ninguno se puede comprobar
-desde este repositorio:
+| `fs` | R₁ / R₂ | celda de 250 m | acumulado a 460 km | nota |
+|---|---|---|---|---|
+| **143,9 MHz** | **120 / 240** | **250,000660 m** | **1,2 m** | integer-N, factores limpios |
+| 145,1 MHz | 121 / 242 | 249,999224 m | 1,4 m | R = 2·11² , peor para CIC |
+| 149,9 MHz | 125 / 250 | 249,993711 m | 11,6 m | R muy limpio (2·5³) |
+| 153,5 MHz | 128 / 256 | 249,989802 m | 18,8 m | R potencia de dos |
+| 247,0 MHz | 206 / 412 | 250,029337 m | 54,0 m | el mejor en rejilla de 1 MHz |
+| 249,427325 MHz | 208 / 416 | 250,000000 m | 0 m | exacto, pero pide fraccional-N o cristal a medida |
+| 250 MHz, R₂ = 417 | — / 417 | 250,026910 m | 49,5 m | Opción B de P-01: obliga a dos cadenas |
+| **250 MHz, R₂ = 416 (D-04 hoy)** | 208 / 416 | 249,427325 m | **1054 m** | se declara 249: **ORPG descarta el radial** |
 
-- **Rate máximo del convertidor del FMC213.** 249,43 MSPS queda *por debajo* de 250, así que si el
-  máximo es 250 MSPS hay margen. Esa es también la razón para preferir R₁ = 208 sobre R₁ = 209, que
-  pediría 250,63 MHz y se saldría del rango.
-- **Síntesis del reloj.** 249,427325 MHz no es múltiplo entero cómodo de las referencias habituales:
-  pide PLL fraccional-N o un VCXO a medida. **Este es el único coste real de la propuesta**, y no es
-  cosmético: los espurios de un fraccional-N degradan el ruido de fase y el SFDR, y eso pega
-  directamente a la supresión de clutter que necesita el DSP. Hay que mirar el árbol de clocking del
-  FMC213 y de la portadora antes de comprometerse.
-- **JESD204B.** La tasa de línea escala con `fs`: un 0,229 % menos. Comprobar que el modo del
-  convertidor y los transceptores siguen en rango, y que SYSREF sigue siendo submúltiplo entero del
-  LMFC.
-- **Plan de frecuencia intermedia.** El desplazamiento de las zonas de Nyquist por un 0,229 % es
-  despreciable, **salvo** si el DDC pensaba usar el truco de mezclar a `fs/4`: en ese caso el IF
-  tiene que seguir a `fs`.
+### Supuestos que hay que verificar antes del ADR
 
-**Impacto en el RTL: ninguno, si se cumple [D-02](decisiones.md#d-02).** Todo se deriva de `FS_HZ`,
-así que esto es un cambio de parámetro. Tampoco toca la ZedBoard, que ya corre a otro reloj por
-dilatación temporal.
+Ninguno se puede comprobar desde este repositorio:
 
-**Condición de cierre:** confirmación de que el clocking puede generar 249,427325 MHz con ruido de
-fase aceptable, y un ADR que sustituya a D-04 fijando `fs` en vez de tocar R₁/R₂. Si el clocking no
-lo permite, el plan B es la Opción B de P-01 (R₂ = 417 con cadena propia).
+- **Rate mínimo del convertidor del FMC213.** Es el riesgo real de bajar a 143,9 MHz: los
+  convertidores JESD204B de gama alta tienen frecuencia de muestreo **mínima** especificada, y una
+  pieza pensada para 250 MSPS puede quedarse fuera de spec a 143,9. **Hay que leer la hoja de datos
+  antes que nada**; si el mínimo lo impide, los candidatos de la tabla por encima de 200 MHz siguen
+  en pie.
+- **Plan de frecuencia intermedia.** A 143,9 MHz, `fs/2` = 71,95 MHz. Un IF de 30 MHz entra holgado
+  en la primera zona de Nyquist; uno de 60 MHz entra pero con menos margen para el filtro
+  antialias. Hace falta el IF real del radar, que no está en este repositorio.
+- **JESD204B.** La tasa de línea baja con `fs`, lo que va a favor, pero hay que confirmar que el
+  modo del convertidor admite ese rate y que SYSREF sigue siendo submúltiplo entero del LMFC.
+- **Ancho de banda.** Con pulsos de 0,8 / 1,66 / 3,3 µs el ancho de banda es de ~1,25 MHz como
+  máximo, así que no es restricción a ninguna de estas frecuencias.
+
+**Impacto en el RTL: ninguno por el lado de `fs`, si se cumple [D-02](decisiones.md#d-02)** — todo
+se deriva de `FS_HZ`. Sí cambian R₁ y R₂, que son parámetros de la cadena de diezmado, no
+arquitectura.
+
+**Condición de cierre:** confirmación del rate mínimo del convertidor y del plan de IF, y un ADR que
+sustituya a D-04 fijando `fs`, R₁ y R₂ juntos. Si el convertidor no baja a 143,9 MHz, el plan B es
+247 MHz con R₁ = 206 / R₂ = 412 (54 m de error, reloj en rejilla de 1 MHz, cadena única); y si
+tampoco, la Opción B de P-01.
 
 ## Supuestos de entorno a verificar
 

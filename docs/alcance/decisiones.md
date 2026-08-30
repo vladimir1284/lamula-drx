@@ -57,11 +57,12 @@ Conteo de bins resultante: **3689 bins** a 124,71 m y **1844 bins** a 249,41 m, 
     descarte en la recombinación de super-res y que se rechacen todos los moments dual-pol. La
     sustituta sería **R₂ = 417** con cadena propia.
 
-    Pero hay una salida mejor, y no toca R₁ ni R₂: **`fs` no está obligada a ser 250 MHz**. Con
-    `fs` = 249,427325 MHz, R₁ = 208 da 125 m exactos y R₂ = 416 da 250 m exactos, con la cadena
-    única de esta decisión intacta y error acumulado cero. Ver [Pendientes,
-    P-08](pendientes.md#p-08); depende de que el clocking pueda sintetizar esa frecuencia sin
-    degradar el ruido de fase.
+    Pero hay una salida mejor: **`fs` no está obligada a ser 250 MHz**. Con `fs` = 143,9 MHz,
+    R₁ = 120 y R₂ = 240 dan celdas de 125,00033 m y 250,00066 m —1,2 m de error acumulado a 460 km
+    frente a los 1054 m de esta decisión—, con la cadena única con etapa ÷2 intacta, un reloj que
+    sale por integer-N desde la referencia de 10 MHz, y factores de diezmado sin el 13 incómodo de
+    416. Ver [Pendientes, P-08](pendientes.md#p-08); depende del rate mínimo del convertidor y del
+    plan de IF.
 
     **No cambies R₁/R₂ ni `fs` sin cerrar P-01 y P-08 y escribir el ADR que sustituya a esta
     decisión.**

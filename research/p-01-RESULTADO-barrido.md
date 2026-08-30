@@ -161,8 +161,9 @@ forma que el brief solo intuía: no hay una banda de tolerancia que medir, hay d
 R₂ = 417 declara 250 y entra en la lista. R₂ = 416 declara 249 y no.
 
 **Salvo que se mueva `fs`.** Los convertidores son de 250 MSPS pero no hay obligación de operarlos
-a esa frecuencia exacta: con `fs` = 249,427325 MHz, R₁ = 208 y R₂ = 416 dan 125 m y 250 m exactos,
-la cadena única con etapa ÷2 se conserva y el error acumulado es cero. Eso disuelve P-01 en vez de
+a esa frecuencia: con `fs` = 143,9 MHz, R₁ = 120 y R₂ = 240 dan celdas de 125,00033 m y 250,00066 m
+—1,2 m de error acumulado a 460 km, el 0,5 % de una celda—, la cadena única con etapa ÷2 se
+conserva y el reloj sale por integer-N desde la referencia de 10 MHz. Eso disuelve P-01 en vez de
 sortearlo. Ver [P-08](../docs/alcance/pendientes.md#p-08).
 
 ## Consecuencia más amplia, que no estaba en ningún documento
