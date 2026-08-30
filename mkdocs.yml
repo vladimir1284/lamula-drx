@@ -1,0 +1,61 @@
+site_name: LAMULA-DRx
+site_description: Receptor digital FPGA del sistema LAMULA — implementación y validación sobre ZedBoard, con portabilidad a Zynq UltraScale+ ZU9
+repo_url: https://github.com/vladimir1284/lamula-drx
+repo_name: vladimir1284/lamula-drx
+
+theme:
+  name: material
+  language: es
+  palette:
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      primary: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Modo oscuro
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      primary: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: Modo claro
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight
+  - toc:
+      permalink: true
+
+nav:
+  - Inicio: index.md
+  - Alcance:
+      - Contexto: alcance/contexto.md
+      - Decisiones congeladas: alcance/decisiones.md
+      - Pendientes y hallazgos abiertos: alcance/pendientes.md
+  - Plataforma:
+      - Frontera y cobertura: plataforma/zedboard.md
+      - Dilatación temporal (FS_HZ): plataforma/dilatacion-temporal.md
+      - Fuente de muestras (SSA): plataforma/fuente-de-muestras.md
+      - Presupuesto de recursos: plataforma/recursos.md
+  - Implementación:
+      - Fases Z0–Z5: implementacion/fases.md
+      - Estructura del repositorio: implementacion/estructura-repo.md
+  - Verificación:
+      - Plan de testing: pruebas/plan-testing.md
+      - Modelo dorado (oráculo): pruebas/modelo-dorado.md
+  - Portabilidad:
+      - Registro delta ZedBoard → ZU9: portabilidad/registro-delta.md
+  - Referencia:
+      - Plan ZedBoard (documento original): referencia/plan-zedboard.md
+      - Project Plan ZU9 (34 semanas): referencia/project-plan-zu9.md

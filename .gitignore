@@ -1,0 +1,30 @@
+# mkdocs / wrangler build artifacts
+site/
+.wrangler/
+
+# secrets
+.env
+
+# Vivado / Vitis (flujo no-project: solo se versiona tcl/, rtl/, ip/*.xci)
+*.jou
+*.log
+*.str
+.Xil/
+vivado*.backup.jou
+vivado*.backup.log
+build/
+runs/
+*.bit
+*.bin
+*.elf
+*.xsa
+
+# Python (modelo dorado, cocotb)
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+sim_build/
+results.xml
+dump.vcd
+*.fst
