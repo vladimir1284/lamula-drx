@@ -160,14 +160,21 @@ forma que el brief solo intuía: no hay una banda de tolerancia que medir, hay d
 
 R₂ = 417 declara 250 y entra en la lista. R₂ = 416 declara 249 y no.
 
+**Salvo que se mueva `fs`.** Los convertidores son de 250 MSPS pero no hay obligación de operarlos
+a esa frecuencia exacta: con `fs` = 249,427325 MHz, R₁ = 208 y R₂ = 416 dan 125 m y 250 m exactos,
+la cadena única con etapa ÷2 se conserva y el error acumulado es cero. Eso disuelve P-01 en vez de
+sortearlo. Ver [P-08](../docs/alcance/pendientes.md#p-08).
+
 ## Consecuencia más amplia, que no estaba en ningún documento
 
 Si ORPG valida el espaciado contra una lista cerrada, es razonable esperar que valide **el resto de
 la geometría igual**: conteo de gates, rango al primer gate, resolución azimutal, tamaño de palabra
 de dato (`data_word_size` ya aparece en el mismo `if` de `Verify_gm_hd()`, admitiendo solo 8 ó 16).
 El requisito para LAMULA no es «acercarse a 250 m», es **declarar valores legales de NEXRAD en
-todos los campos de geometría**. Eso excede P-01 y queda abierto como
-[P-07](../docs/alcance/pendientes.md#p-07).
+todos los campos de geometría**. Eso excede P-01 y **no es un pendiente del DRx**: el DRx no habla con ORPG, y el DSP tampoco
+(`lamula-dsp/docs/dsp-plan.md:71`). Vive en el proyecto que posee la emulación RDA, como
+`PEND-RCP-12` en `lamula-rcp/docs/alcance/pendientes.md`; en este repositorio queda solo el puntero
+en [P-07](../docs/alcance/pendientes.md#p-07).
 
 ## Qué sigue sin revisar
 

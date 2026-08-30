@@ -55,9 +55,16 @@ Conteo de bins resultante: **3689 bins** a 124,71 m y **1844 bins** a 249,41 m, 
     y por una razón más dura que el error del 0,24 %: ORPG no tiene una banda de tolerancia, tiene
     una lista blanca de espaciados. Declarar 249 m no degrada el producto, hace que el radial se
     descarte en la recombinación de super-res y que se rechacen todos los moments dual-pol. La
-    sustituta sería **R₂ = 417** con cadena propia. La evidencia todavía no es reverificable desde
-    esta máquina y P-01 sigue abierto: **no cambies R₁/R₂ sin cerrar P-01 y escribir el ADR que
-    sustituya a esta decisión.**
+    sustituta sería **R₂ = 417** con cadena propia.
+
+    Pero hay una salida mejor, y no toca R₁ ni R₂: **`fs` no está obligada a ser 250 MHz**. Con
+    `fs` = 249,427325 MHz, R₁ = 208 da 125 m exactos y R₂ = 416 da 250 m exactos, con la cadena
+    única de esta decisión intacta y error acumulado cero. Ver [Pendientes,
+    P-08](pendientes.md#p-08); depende de que el clocking pueda sintetizar esa frecuencia sin
+    degradar el ruido de fase.
+
+    **No cambies R₁/R₂ ni `fs` sin cerrar P-01 y P-08 y escribir el ADR que sustituya a esta
+    decisión.**
 
 ## D-05 · SystemVerilog para el RTL custom; Verilator + cocotb para unidades, xsim para integración { #d-05 }
 

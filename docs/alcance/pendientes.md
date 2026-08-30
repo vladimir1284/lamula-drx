@@ -72,8 +72,11 @@ bins, cuatro por encima del tope).
     potencial número uno— y `RDA_Backend_Py`, la única fuente empírica, sigue sin localizar (ver
     [P-05](#p-05)).
 
-    La evidencia ya es suficiente para decir que **R₂ = 416 es la opción equivocada**, pero
-    sustituir D-04 pide un ADR firmado por los especialistas, no una edición de este documento.
+    La evidencia ya es suficiente para decir que **R₂ = 416 declarado como 249 es la opción
+    equivocada**, pero sustituir D-04 pide un ADR firmado por los especialistas, no una edición de
+    este documento. Y antes de escribir ese ADR hay que resolver [P-08](#p-08): si `fs` puede
+    moverse a 249,427325 MHz, R₂ = 416 pasa a dar 250 m exactos y el dilema desaparece sin tocar
+    los factores de diezmado.
 
 ### P-02 · Capa física de los encoders SSI { #p-02 }
 
@@ -158,25 +161,80 @@ existentes a ese sitio.
 **Condición de cierre:** o se retira la copia del sitio DSP dejando una redirección, o se declara
 explícitamente cuál de las dos es la canónica y se anota en las dos.
 
-### P-07 · Conformidad completa con la rejilla de NEXRAD, no solo el tamaño de celda { #p-07 }
+### P-07 · Conformidad con la rejilla de NEXRAD — trasladado al RCP { #p-07 }
 
-**Estado:** abierto · **Dueño:** especialistas de dominio · **Severidad:** alta si la interfaz con
-ORPG está en alcance.
+**Estado:** trasladado el 30 de agosto de 2026 · **Dueño:** proyecto RCP.
 
-Sale del barrido de P-01. Si ORPG valida el espaciado de celda contra una lista cerrada de valores
-—y lo hace, en al menos tres subsistemas— es razonable esperar que valide **el resto de la
-geometría del radial igual**: conteo de gates, rango al primer gate, resolución azimutal, y tamaño
-de palabra de dato. Ese último ya aparece en la misma condición que rechaza el espaciado:
-`Verify_gm_hd()` admite `data_word_size` de 8 ó 16 y nada más.
+Salió del barrido de P-01: si ORPG valida el espaciado de celda contra una lista cerrada, es
+razonable esperar que valide igual el resto de la geometría del radial —conteo de gates, rango al
+primer gate, resolución azimutal, tamaño de palabra de dato— y `data_word_size` ya está confirmado
+en la misma condición de código que rechaza el espaciado.
 
-El requisito para LAMULA, entonces, no es «acercarse a 250 m». Es **declarar valores legales de
-NEXRAD en todos los campos de geometría del Message 31**, y eso puede imponer restricciones que
-todavía no están en ninguna decisión: el número de rayos por vuelta, el rango al primer gate, y el
-formato de las muestras.
+**No es un pendiente de este proyecto.** El DRx no habla con ORPG; su única interfaz externa es
+DRx↔DSP. Y el DSP tampoco: `lamula-dsp/docs/dsp-plan.md:71` retira el contrato `DSP↔ORPG`, y el
+**RCP** es quien posee la emulación RDA WSR-88D (ICD 2620002) y el feed por radial. Vive ahora como
+`PEND-RCP-12` en `lamula-rcp/docs/alcance/pendientes.md`.
 
-**Condición de cierre:** enumerar los campos de geometría del Message 31 con su lista de valores
-aceptados por ORPG, contrastarlos contra lo que produce el diseño de LAMULA, y anotar cada
-divergencia como decisión o como pendiente propio.
+Lo único que llega al DRx de todo esto es el tamaño de celda, que es P-01, y la elección de `fs`,
+que es [P-08](#p-08).
+
+### P-08 · `fs` no está obligada a ser 250 MSPS, y eso disuelve P-01 { #p-08 }
+
+**Estado:** abierto, con una propuesta concreta · **Dueño:** dirección técnica + compra ·
+**Bloquea:** el cierre de [D-04](decisiones.md#d-04).
+
+Los convertidores del FMC213 son de 250 MSPS, pero **nada obliga a operarlos exactamente a 250
+MHz**. El tamaño de celda es `R · c / (2·fs)`: si `fs` es un grado de libertad, se elige para que la
+celda caiga exacta en vez de elegir `R` para que caiga cerca.
+
+Con `fs = 208 · c / 250 = 249 427 325 Hz` — es decir **249,427325 MHz**, un 0,229 % por debajo de
+250 MHz — sale:
+
+| | R | celda | bins a 460 km |
+|---|---|---|---|
+| Modo fino | 208 | **125,000000 m** | 3680 |
+| Modo grueso | 416 | **250,000000 m** | 1840 |
+
+Los dos exactos, con **R₂ = 2·R₁ intacto**: se conserva la cadena única con etapa ÷2 de D-04, no
+hacen falta dos cadenas de diezmado, y los factores R₁ = 208 y R₂ = 416 de D-04 **no cambian**. Lo
+único que cambia es `fs`.
+
+Y los conteos vuelven a cuadrar solos: 1840 bins a 250 m es exactamente el tope de reflectividad de
+ORPG, y 3680 a 125 m es la cifra del plan original de la ZU9, que asumía celdas exactas.
+
+Comparado con lo que hay sobre la mesa:
+
+| Opción | celda de 250 m | error acumulado a 460 km | cadenas de diezmado |
+|---|---|---|---|
+| D-04 actual: R₂ = 416 a 250 MHz | 249,4273 m → se declara **249** | 1056 m, y ORPG **descarta** el radial (ver P-01) | una |
+| Opción B: R₂ = 417 a 250 MHz | 250,0269 m → se declara 250 | 49 m | dos |
+| **`fs` = 249,427325 MHz, R₂ = 416** | **250,000000 m** | **0 m** | **una** |
+
+**Supuestos que hay que verificar antes de convertir esto en ADR** — ninguno se puede comprobar
+desde este repositorio:
+
+- **Rate máximo del convertidor del FMC213.** 249,43 MSPS queda *por debajo* de 250, así que si el
+  máximo es 250 MSPS hay margen. Esa es también la razón para preferir R₁ = 208 sobre R₁ = 209, que
+  pediría 250,63 MHz y se saldría del rango.
+- **Síntesis del reloj.** 249,427325 MHz no es múltiplo entero cómodo de las referencias habituales:
+  pide PLL fraccional-N o un VCXO a medida. **Este es el único coste real de la propuesta**, y no es
+  cosmético: los espurios de un fraccional-N degradan el ruido de fase y el SFDR, y eso pega
+  directamente a la supresión de clutter que necesita el DSP. Hay que mirar el árbol de clocking del
+  FMC213 y de la portadora antes de comprometerse.
+- **JESD204B.** La tasa de línea escala con `fs`: un 0,229 % menos. Comprobar que el modo del
+  convertidor y los transceptores siguen en rango, y que SYSREF sigue siendo submúltiplo entero del
+  LMFC.
+- **Plan de frecuencia intermedia.** El desplazamiento de las zonas de Nyquist por un 0,229 % es
+  despreciable, **salvo** si el DDC pensaba usar el truco de mezclar a `fs/4`: en ese caso el IF
+  tiene que seguir a `fs`.
+
+**Impacto en el RTL: ninguno, si se cumple [D-02](decisiones.md#d-02).** Todo se deriva de `FS_HZ`,
+así que esto es un cambio de parámetro. Tampoco toca la ZedBoard, que ya corre a otro reloj por
+dilatación temporal.
+
+**Condición de cierre:** confirmación de que el clocking puede generar 249,427325 MHz con ruido de
+fase aceptable, y un ADR que sustituya a D-04 fijando `fs` en vez de tocar R₁/R₂. Si el clocking no
+lo permite, el plan B es la Opción B de P-01 (R₂ = 417 con cadena propia).
 
 ## Supuestos de entorno a verificar
 
