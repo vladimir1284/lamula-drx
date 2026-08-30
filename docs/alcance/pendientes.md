@@ -30,6 +30,11 @@ el presupuesto de DSPs y la arquitectura completa.
 **Condición de cierre:** respuesta escrita de los especialistas, y si es «exactitud requerida», un
 ADR nuevo que sustituya a D-04.
 
+**Brief de investigación:** `research/p-01-orpg-gate-spacing.md` (en el repositorio, no publicado en
+este sitio) descompone la pregunta en cuatro sub-preguntas respondibles desde el código de ORPG y
+del legacy `RDA_Backend_Py`, y corrige la cuantificación del error: lo que decide no es el error por
+celda (0,29 m) sino el **acumulado a 460 km, ~1,1 km**.
+
 ### P-02 · Capa física de los encoders SSI { #p-02 }
 
 **Estado:** abierto · **Dueño:** compra de hardware + especialistas · **Bloquea:** especificación de
