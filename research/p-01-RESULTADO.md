@@ -185,6 +185,14 @@ R₁ elegido por su cuenta para el de 125 m.** Cuatro argumentos, en orden de fu
 elección entre R₁ = 208 (124,71 m) y R₁ = 209 (125,31 m) deja de tener una restricción externa y la
 fija el consumidor interno — DSP, fichero Level-II propio, webviewer. No se cierra aquí.
 
+!!! note "Actualizado el 30 de agosto de 2026"
+    El barrido del resto del árbol ([`p-01-RESULTADO-barrido.md`](p-01-RESULTADO-barrido.md))
+    reverificó las cuatro citas decisivas de este documento y las cuatro coinciden. También
+    resolvió dos de los puntos de la lista de abajo: el riesgo de lectura fuera de arreglo queda
+    **confirmado por lógica de código** (condicionado a `Avset_enabled` y a la VCP), y el barrido
+    de Q3 encontró algo más duro que una re-derivación cableada — listas blancas de espaciado que
+    **descartan** el radial. Lee ese documento antes que la lista siguiente.
+
 ## Qué falta para cerrar P-01
 
 - **Fuente 1, `RDA_Backend_Py`** — sigue sin localizar. Es la única evidencia empírica de qué

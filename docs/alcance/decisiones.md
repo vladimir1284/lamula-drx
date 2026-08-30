@@ -51,9 +51,13 @@ Conteo de bins resultante: **3689 bins** a 124,71 m y **1844 bins** a 249,41 m, 
     (Farrow) o a otra fs, y eso cambia el presupuesto de DSPs y la arquitectura. Ver
     [Pendientes, P-01](pendientes.md#p-01).
 
-    La lectura del código de ORPG de agosto de 2026 apunta a sustituir esta decisión por dos
-    cadenas independientes con **R₂ = 417**, pero la evidencia todavía no es reverificable y P-01
-    sigue abierto. **No cambies R₁/R₂ sin cerrar P-01 primero.**
+    La lectura del código de ORPG de agosto de 2026 dice que **R₂ = 416 es la opción equivocada**,
+    y por una razón más dura que el error del 0,24 %: ORPG no tiene una banda de tolerancia, tiene
+    una lista blanca de espaciados. Declarar 249 m no degrada el producto, hace que el radial se
+    descarte en la recombinación de super-res y que se rechacen todos los moments dual-pol. La
+    sustituta sería **R₂ = 417** con cadena propia. La evidencia todavía no es reverificable desde
+    esta máquina y P-01 sigue abierto: **no cambies R₁/R₂ sin cerrar P-01 y escribir el ADR que
+    sustituya a esta decisión.**
 
 ## D-05 · SystemVerilog para el RTL custom; Verilator + cocotb para unidades, xsim para integración { #d-05 }
 

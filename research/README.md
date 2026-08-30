@@ -14,4 +14,4 @@ Convención de nombres: `<id-del-pendiente>-<tema>.md` para el brief, y
 | Brief | Pendiente | Estado |
 |---|---|---|
 | [p-01-orpg-gate-spacing.md](p-01-orpg-gate-spacing.md) | P-01 — tolerancia del tamaño de celda | Ejecutado en parte sobre el árbol de ORPG build 24; resultado en [p-01-RESULTADO.md](p-01-RESULTADO.md). Sigue abierto: citas no reverificables en esta máquina, cobertura de un solo subdirectorio, y `RDA_Backend_Py` (P-05) aún sin localizar |
-| [p-01-barrido-cpc0xx.md](p-01-barrido-cpc0xx.md) | P-01 — barrido del resto del árbol de ORPG | Listo para ejecutar en la máquina que tiene montado `rpg_b24_0r1_20_pub_src`. Es lo único pendiente que puede tumbar la recomendación de R₂ = 417 |
+| [p-01-barrido-cpc0xx.md](p-01-barrido-cpc0xx.md) | P-01 — barrido del resto del árbol de ORPG | Ejecutado; resultado en [p-01-RESULTADO-barrido.md](p-01-RESULTADO-barrido.md). No tumba R₂ = 417, la refuerza: ORPG no tolera, filtra por lista blanca. Quedan sin revisar composición geográfica, VAD/VWP y remuestreo Level-III |

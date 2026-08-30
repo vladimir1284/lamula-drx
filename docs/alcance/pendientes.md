@@ -37,9 +37,10 @@ este sitio) descompone la pregunta en cuatro sub-preguntas respondibles desde el
 del legacy `RDA_Backend_Py`, y corrige la cuantificación del error: lo que decide no es el error por
 celda (0,29 m) sino el **acumulado a 460 km, ~1,1 km**.
 
-**Resultado parcial, 30 de agosto de 2026:** `research/p-01-RESULTADO.md` (en el repositorio, no
-publicado en este sitio) recoge la lectura del árbol de fuentes real de ORPG build 24
-(`rpg_b24_0r1_20_pub_src`, paquete CODE del ROC), hecha en otra máquina. En resumen:
+**Resultado, 30 de agosto de 2026:** dos lecturas del árbol de fuentes real de ORPG build 24
+(`rpg_b24_0r1_20_pub_src`, paquete CODE del ROC), hechas en la máquina que lo tiene montado, y
+recogidas en `research/p-01-RESULTADO.md` y `research/p-01-RESULTADO-barrido.md` (en el
+repositorio, no publicados en este sitio). En resumen:
 
 - El espaciado **es un campo transmitido**, entero de 16 bits **en metros**. 124,71 m y 249,41 m no
   son declarables: se declaran como 125/124 y 249. La conversión de punto flotante a entero ocurre
@@ -51,6 +52,13 @@ publicado en este sitio) recoge la lectura del árbol de fuentes real de ORPG bu
   el radial.
 - Por tanto el modo de 125 m con 3689 bins **no llega entero a ORPG en ningún caso**, y la elección
   de R₁ pasa a fijarla el consumidor interno.
+- **ORPG no tiene una banda de tolerancia: tiene una lista blanca.** La recombinación azimutal de
+  super-res admite `{250, 1000}` en reflectividad y **solo 250** en Doppler, y descarta los dos
+  radiales si el valor no está en la lista. La validación de moments dual-pol exige **250 exacto** y
+  rechaza el campo con error si no. Es decir, declarar 249 no degrada el producto: lo elimina.
+- El tope Doppler de 1200 gates (300 km a 250 m) **no es un problema**: el plan de la ZU9 pide 150
+  km por defecto y 230 km extendido, o sea 600 y 920 gates. Pero el modo Doppler tiene que declarar
+  250 igual que reflectividad, así que no puede usar una cadena de diezmado distinta.
 
 La recomendación que sale de ahí es **R₂ = 417** (250,026 m, que se declara como 250 exactos y da
 1840 bins justos) con cadena propia, frente a R₂ = 416 (249,41 m, que se declara como 249 y da 1844
@@ -58,9 +66,14 @@ bins, cuatro por encima del tope).
 
 !!! warning "Por qué esto no cierra P-01 todavía"
     El árbol de ORPG **no está en la máquina de desarrollo**, así que ninguna de las citas
-    `fichero:línea` del resultado es reverificable aquí. La lectura cubrió un solo subdirectorio
-    (`src/cpc102/tsk033`) de unos 35, y `RDA_Backend_Py` —la única fuente empírica, ver
-    [P-05](#p-05)— sigue sin localizar. Nada de esto revierte D-04 por sí solo.
+    `fichero:línea` es reverificable aquí; el barrido sí reverificó las cuatro citas decisivas del
+    primer resultado y coinciden. Siguen sin revisar la composición geográfica entre radares, el
+    VAD/VWP y el remuestreo final a rejilla Level-III —los tres que el brief marcaba como daño
+    potencial número uno— y `RDA_Backend_Py`, la única fuente empírica, sigue sin localizar (ver
+    [P-05](#p-05)).
+
+    La evidencia ya es suficiente para decir que **R₂ = 416 es la opción equivocada**, pero
+    sustituir D-04 pide un ADR firmado por los especialistas, no una edición de este documento.
 
 ### P-02 · Capa física de los encoders SSI { #p-02 }
 
@@ -144,6 +157,26 @@ existentes a ese sitio.
 
 **Condición de cierre:** o se retira la copia del sitio DSP dejando una redirección, o se declara
 explícitamente cuál de las dos es la canónica y se anota en las dos.
+
+### P-07 · Conformidad completa con la rejilla de NEXRAD, no solo el tamaño de celda { #p-07 }
+
+**Estado:** abierto · **Dueño:** especialistas de dominio · **Severidad:** alta si la interfaz con
+ORPG está en alcance.
+
+Sale del barrido de P-01. Si ORPG valida el espaciado de celda contra una lista cerrada de valores
+—y lo hace, en al menos tres subsistemas— es razonable esperar que valide **el resto de la
+geometría del radial igual**: conteo de gates, rango al primer gate, resolución azimutal, y tamaño
+de palabra de dato. Ese último ya aparece en la misma condición que rechaza el espaciado:
+`Verify_gm_hd()` admite `data_word_size` de 8 ó 16 y nada más.
+
+El requisito para LAMULA, entonces, no es «acercarse a 250 m». Es **declarar valores legales de
+NEXRAD en todos los campos de geometría del Message 31**, y eso puede imponer restricciones que
+todavía no están en ninguna decisión: el número de rayos por vuelta, el rango al primer gate, y el
+formato de las muestras.
+
+**Condición de cierre:** enumerar los campos de geometría del Message 31 con su lista de valores
+aceptados por ORPG, contrastarlos contra lo que produce el diseño de LAMULA, y anotar cada
+divergencia como decisión o como pendiente propio.
 
 ## Supuestos de entorno a verificar
 
