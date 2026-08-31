@@ -222,8 +222,9 @@ Lo que trae de regalo:
 - **Menos presión de recursos y de timing.** ~~Y en ZedBoard el factor de dilatación baja de 2,5 a
   1,439.~~ **Corregido el 30 de agosto de 2026:** eso exigiría un `fs` de ZedBoard de 100 MHz, y con
   `if_norm` = 600/1439 los 100 MHz son ilegales —el IF no caería en hercios enteros, que es una
-  condición que comprueba el paquete de parámetros en las dos plataformas. Ver
-  [ADR-001](adr-001-fs-r1-r2.md), que propone 71,95 MHz y dilatación exactamente 2.
+  condición que comprueba el paquete de parámetros en las dos plataformas. El valor legal más
+  cercano es **99,998988 MHz**, 10,1 ppm por debajo, y con él la dilatación es 1,439015. Ver
+  [ADR-001](adr-001-fs-r1-r2.md).
 
 ### Alternativas evaluadas
 

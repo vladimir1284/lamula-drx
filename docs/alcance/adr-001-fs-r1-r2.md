@@ -65,18 +65,35 @@ cualquier `fs` de plataforma tiene que ser múltiplo de 1439 Hz. **100 MHz no lo
 
 | `fs` de ZedBoard | IF | dilatación | nota |
 |---|---|---|---|
-| **71,95 MHz** | 30 MHz | **exactamente 2** | Recomendada |
-| 99,998988 MHz | 41,6952 MHz | 1,439015 | Lo más cerca de 100 MHz por debajo |
-| 100,000427 MHz | 41,6958 MHz | 1,438994 | Lo más cerca por arriba |
+| **99,998988 MHz** | 41,6952 MHz | **1,439015** | **Recomendada.** 1439 × 69 492 |
+| 100,000427 MHz | 41,6958 MHz | 1,438994 | Lo más cerca de 100 MHz por arriba |
 | 100,73 MHz | 42 MHz | 1,428571 | Múltiplo redondo de 1439 |
+| 71,95 MHz | 30 MHz | exactamente 2 | Dilatación legible, pero reloj irreal |
 | ~~100 MHz~~ | — | — | **Ilegal**: el IF no cae en hercios enteros |
 
-Se propone **71,95 MHz**, por dos razones. La dilatación queda en exactamente 2, que es un factor
-que se razona de cabeza al leer una forma de onda, y baja el reloj de fabric, lo que ataca de frente
-un riesgo ya registrado: *«el 7Z020-1 no cierra a 100 MHz con 4 canales»*. El precio es que la
-plataforma de desarrollo se aleja algo más de la de destino en velocidad; a cambio, la afirmación de
-P-08 de que la dilatación bajaría a 1,439 **es incorrecta** salvo que se acepte un `fs` de
-99,998988 MHz, y ese número no lo quiere nadie escrito en un XDC.
+Se propone **99,998988 MHz**, y se elige por **realismo del reloj, no por legibilidad**. Es el
+múltiplo de 1439 más cercano a los 100 MHz de hoy: se queda **10,1 ppm por debajo**, así que el
+reloj de fabric de la ZedBoard no se mueve en la práctica y la plataforma de desarrollo sigue
+corriendo a la velocidad a la que va a doler el timing.
+
+La alternativa de 71,95 MHz es más bonita sobre el papel —dilatación exactamente 2, IF de 30 MHz
+redondos— y se descarta a propósito: bajar el reloj de fabric a menos de la mitad del de destino
+cierra timing con holgura, pero por eso mismo **esconde** la presión de recursos y de rutado que sí
+va a aparecer en la ZU9. Una plataforma de desarrollo que no reproduce el problema no lo detecta. El
+precio de 99,998988 MHz es un número feo en el XDC y una dilatación que no se razona de cabeza; a
+cambio, el riesgo ya registrado de que *«el 7Z020-1 no cierre a 100 MHz con 4 canales»* se sigue
+midiendo en vez de esquivarse.
+
+**`FS_HZ` es el número del que se derivan los parámetros, no una promesa sobre el oscilador.** Un
+Zynq-7000 no sintetiza 99,998988 MHz exactos —los relojes de PL salen de divisores enteros del PLL
+del PS— y no hace falta que lo haga: la comparación bit a bit contra el modelo dorado vive en el
+dominio de la muestra, no en el del tiempo de pared, y nada en la ZedBoard se contrasta contra un
+reloj externo. Lo que cambia con este valor es el paquete de parámetros; el cristal de la placa se
+queda donde está. Los 10 ppm de diferencia se ven en los valores de pared derivados —el pulso de
+200 ciclos pasa de 2,000000 µs a 2,000020 µs— y son irrelevantes en la plataforma de desarrollo.
+
+La afirmación de P-08 de que la dilatación bajaría de 2,5 a 1,439 se sostiene con este `fs`, con la
+corrección de que el valor exacto es 1,439015 y no 1,439.
 
 Esto obliga a enmendar la frase de [D-02](decisiones.md#d-02) que dice que el reloj de fabric
 objetivo en ZedBoard es 100 MHz, y a anotar la entrada correspondiente en el [registro
@@ -102,7 +119,7 @@ cic_rate = 30          # era 52; 30 × 4 = 120
 fs_hz = 143_900_000    # era 250_000_000
 
 [platform.zedboard]
-fs_hz = 71_950_000     # era 100_000_000
+fs_hz = 99_998_988     # era 100_000_000; = 1439 × 69 492
 ```
 
 `fir_decim` se queda en 4, así que los bordes de banda del FIR —normalizados a la frecuencia de
