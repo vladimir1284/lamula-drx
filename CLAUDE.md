@@ -10,7 +10,8 @@ diezmado en la lógica programable, ensambla los rayos con sus metadatos bajo Fr
 al LAMULA DSP por 1GbE contra el contrato DRx↔DSP. Su única interfaz externa es DRx↔DSP: no habla
 con el RCP ni con ORPG.
 
-- **Plataforma objetivo:** Zynq UltraScale+ ZU9 + 2× VadaTech FMC213. **Aún no comprada.**
+- **Plataforma objetivo:** Zynq UltraScale+ ZU9 + 2× VadaTech FMC213 (ADC: 2× TI ADS42JB69, dual
+  16 bits, 250 MSPS, JESD204B). **Aún no comprada.**
 - **Plataforma de desarrollo actual:** Digilent ZedBoard, XC7Z020-CLG484-1.
 
 ## Estado, a 30 de agosto de 2026
@@ -23,8 +24,10 @@ inventariado en `docs/implementacion/substrato.md`; el resumen es:
   de regeneración y gate de constante de reloj hardcodeada — los dos fallan la build.
 - Modelo dorado en NumPy: NCO, mezclador, CIC de Hogenauer, FIR de coeficientes congelados, enrejado
   en rango y generador de vectores con degradaciones. Con huella SHA-256 del oráculo en los tests.
-- Runner cocotb con L0 sobre Verilator en verde. **L1 sobre xsim no existe**: cocotb no tiene ese
-  backend, y eso es el hallazgo nuevo P-09.
+- Runner cocotb con L0 sobre Verilator en verde. **L1 no pasa por cocotb** —no tiene backend para
+  xsim, hallazgo P-09, ya decidido—: es SystemVerilog nativo con el oráculo cruzando por fichero.
+  El arnés (lector de vectores y comparador bit a bit) está verificado sobre Verilator; el flujo
+  `tcl/sim_l1.tcl` no se ha ejecutado porque falta Vivado.
 - Contrato DRx↔DSP v0.1 congelado, con codegen para C, Rust y Python y test de contrato que compara
   bytes entre C y Python.
 - RTL: diseño vacío a propósito (latido derivado de `FS_HZ`) más el paquete del interfaz SSA.
@@ -64,7 +67,8 @@ Cerrar lo que le falta a Z0, en este orden:
 
 1. **Conseguir una máquina con Vivado** y ejecutar `tcl/build.tcl` para las dos plataformas. Hasta
    que eso pase, el flujo está escrito pero no probado y ZM0 no se puede declarar.
-2. **Decidir P-09**: qué hace L1 ahora que se sabe que cocotb no habla con xsim.
+2. **Ejecutar L1 en esa misma máquina**: `tcl/sim_l1.tcl`. P-09 ya está decidido y el arnés
+   verificado; falta la primera corrida real sobre xsim.
 3. **Empaquetar el `BOOT.BIN`** y comprobar la reproducibilidad con `tools/make_boot.sh`.
 
 **No empieces por el DDC.** El substrato primero no es burocracia: sin flujo guionizado y sin
@@ -73,6 +77,9 @@ mes.
 
 Y no toques `R₁`/`R₂` ni `fs` en `config/params.toml` hasta que haya ADR: P-01 y P-08 siguen
 abiertos. Cuando lo haya, el cambio es de dos líneas más `python3 tools/gen_params.py`.
+
+P-08 ya no espera ningún dato externo: el rate mínimo del ADS42JB69 es de 60 MSPS en modo 10x, así
+que los 143,9 MHz propuestos están en spec. Lo que falta es escribir el ADR que sustituya a D-04.
 
 ## Lo que está bloqueado, y por quién
 

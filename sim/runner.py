@@ -6,11 +6,14 @@ porque los cores del DDC son cajas negras que Verilator no puede elaborar.
 
 Estado real del doble backend
 -----------------------------
-Verilator funciona. **xsim no está soportado por cocotb** — ver el hallazgo P-09
-en `docs/alcance/pendientes.md`. El backend está declarado aquí y falla con un
-mensaje explícito en vez de estar ausente en silencio: el día que se resuelva
-P-09, se implementa en este fichero y ningún testbench cambia. Esa es la razón de
-que el runner exista ya en Z0 aunque solo tenga un backend vivo.
+Verilator funciona. **xsim no está soportado por cocotb** y nunca lo ha estado —
+ese es el hallazgo P-09. La decisión tomada el 30 de agosto de 2026 es que L1 no
+pasa por cocotb: se escribe en SystemVerilog nativo (`sim/tb_sv/`), el oráculo
+del modelo dorado cruza por fichero (`tools/gen_l1_vectors.py`) y lo lanza
+`tcl/sim_l1.tcl` sobre xsim. Este runner se queda siendo el de L0.
+
+El backend L1 sigue declarado aquí, y falla con un mensaje que apunta al flujo
+correcto en vez de estar ausente en silencio.
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ for _path in (TB_DIR, ROOT / "model"):
 
 #: Nivel L0 del plan de testing: unidades del RTL custom.
 L0 = "verilator"
-#: Nivel L1: integración con IP de Xilinx. Bloqueado por P-09.
+#: Nivel L1: integración con IP de Xilinx. No corre por aquí — ver P-09.
 L1 = "xsim"
 
 
@@ -63,6 +66,13 @@ class SimJob:
     parameters: dict[str, object] = field(default_factory=dict)
     backend: str = L0
     waves: bool = False
+    #: Fuentes que no están en `rtl/filelist.f` porque no son RTL: los módulos
+    #: de testbench de `sim/tb_sv/`. La lista del RTL es única (D-07) y esto no
+    #: la contamina.
+    extra_sources: list[Path] = field(default_factory=list)
+    #: Plusargs para la ejecución. El arnés de L1 se configura así, con el mismo
+    #: formato en Verilator y en xsim.
+    plusargs: list[str] = field(default_factory=list)
 
     @property
     def build_dir(self) -> Path:
@@ -80,15 +90,16 @@ class SimJob:
             raise BackendNotAvailable(
                 "El backend xsim no está soportado por cocotb 1.9.2 (runners: "
                 "icarus, questa, ghdl, nvc, riviera, verilator, xcelium). "
-                "Ver P-09 en docs/alcance/pendientes.md. L1 no puede correr hasta "
-                "que P-09 se resuelva."
+                "Ver P-09 en docs/alcance/pendientes.md: L1 no pasa por cocotb. "
+                "Se lanza con `tcl/sim_l1.tcl` sobre testbenches nativos de "
+                "sim/tb_sv/, con los vectores de tools/gen_l1_vectors.py."
             )
         if self.backend != L0:
             raise BackendNotAvailable(f"backend desconocido: {self.backend!r}")
 
         runner = get_runner(self.backend)
         runner.build(
-            sources=rtl_sources(),
+            sources=rtl_sources() + list(self.extra_sources),
             hdl_toplevel=self.hdl_toplevel,
             parameters=self.parameters,
             build_args=self._build_args(),
@@ -104,6 +115,7 @@ class SimJob:
             # `sim/tb/`: son salida, no fuente.
             test_dir=self.build_dir,
             waves=self.waves,
+            plusargs=list(self.plusargs),
         )
 
 

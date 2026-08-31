@@ -17,11 +17,13 @@ def test_l0_heartbeat_verilator():
     ).run()
 
 
-def test_l1_declara_su_bloqueo():
-    """L1 no está mudo: falla con la razón y con el hallazgo que lo bloquea.
+def test_l1_no_pasa_por_cocotb():
+    """El backend L1 de este runner falla explícito y apunta al flujo correcto.
 
-    Si algún día este test empieza a fallar es porque P-09 se resolvió, y
-    entonces hay que borrarlo y escribir la suite L1 de verdad.
+    P-09 está decidido: L1 es SystemVerilog nativo sobre xsim y se lanza con
+    `tcl/sim_l1.tcl`, no desde aquí. Este test fija esa decisión en el código
+    para que nadie vuelva a intentar `backend=L1` y se quede pensando que es un
+    fallo de instalación.
     """
     job = SimJob(hdl_toplevel="drx_top", test_module="tb_drx_heartbeat", backend=L1)
     with pytest.raises(BackendNotAvailable, match="P-09"):

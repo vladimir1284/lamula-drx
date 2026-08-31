@@ -8,14 +8,35 @@ El oráculo de todo lo que sigue es el [modelo dorado](modelo-dorado.md). La mé
 | Nivel | Qué | Herramienta | Cuándo corre |
 |---|---|---|---|
 | **L0** | Unidades del RTL custom | cocotb + Verilator | Cada push |
-| **L1** | Integración con IP de Xilinx | cocotb + xsim | Cada push (nocturno si es lento) |
+| **L1** | Integración con IP de Xilinx | SystemVerilog nativo + xsim | Cada push (nocturno si es lento) |
 | **L2** | Hardware-in-the-loop: vector → placa → comparación bit-exacta con NumPy | Runner sobre ZedBoard | Cada merge a `main` |
 | **L3** | Subsistema: matriz de timing, perfiles SSI, throughput | Scripts + osciloscopio | Por hito |
 | **L4** | Sistema: rayos end-to-end hasta un stub de DSP | Banco completo | Por hito |
 
 L0 usa Verilator porque es gratis y rápido; L1 usa xsim porque los cores del DDC son cajas negras
-que Verilator no puede elaborar. Un único runner cocotb cubre los dos backends — ver
-[D-05](../alcance/decisiones.md#d-05).
+que Verilator no puede elaborar.
+
+**Los dos niveles no comparten runner.** D-05 decía que un único runner de cocotb cubría los dos
+backends, y eso resultó ser falso: cocotb no tiene backend para xsim
+([P-09](../alcance/pendientes.md#p-09)). Lo que comparten es el **oráculo**, que sigue siendo el
+modelo dorado, y la métrica, que sigue siendo la comparación bit a bit. Cambia solo cómo llega el
+oráculo al simulador:
+
+| | L0 | L1 |
+|---|---|---|
+| Testbench | Python, `sim/tb/` | SystemVerilog, `sim/tb_sv/` |
+| Simulador | Verilator | xsim |
+| Cómo llega el oráculo | En proceso, vía cocotb | Por fichero `$readmemh`, de `tools/gen_l1_vectors.py` |
+| Cómo se lanza | `make sim` | `vivado -mode batch -source tcl/sim_l1.tcl` |
+
+Los vectores de L1 llevan un manifiesto con la huella SHA-256 de `config/params.toml`, y tanto el
+cargador de Python como `tcl/sim_l1.tcl` rechazan un caso cuya huella no coincida: comparar contra
+un oráculo generado con otros parámetros es peor que no comparar.
+
+El arnés de L1 —el lector de vectores y el comparador— se prueba a sí mismo en L0, sobre Verilator,
+en `sim/tests/test_l1_harness.py`: con vectores limpios tiene que dar cero discrepancias, y con un
+único bit cambiado tiene que dar exactamente una. Esa segunda mitad es la que importa, porque un
+comparador roto falla en verde.
 
 ## Suite de aceptación del DDC
 

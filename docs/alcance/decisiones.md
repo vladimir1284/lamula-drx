@@ -78,10 +78,28 @@ soporta VHDL**.
 | VHDL + GHDL + cocotb | Gratis, sin licencia | GHDL con cocotb vía VPI es más frágil; menos soporte |
 | Cualquiera + Vivado xsim | Un solo toolchain | Requiere licencia en el runner de CI; lento |
 
-Dos niveles de simulación, dos herramientas, un único runner cocotb por encima: **Verilator** para
-las unidades (motor de timing, SSI, gating, framing, reproductor de vectores) y **xsim** para la
-integración con IP de Xilinx, porque los cores del DDC son cajas negras que Verilator no puede
-elaborar.
+Dos niveles de simulación y dos herramientas: **Verilator** para las unidades (motor de timing,
+SSI, gating, framing, reproductor de vectores) y **xsim** para la integración con IP de Xilinx,
+porque los cores del DDC son cajas negras que Verilator no puede elaborar.
+
+!!! warning "Enmienda del 30 de agosto de 2026 — el runner único no existe"
+    Esta decisión decía «un único runner cocotb por encima» de los dos backends. **Es falso:**
+    cocotb no tiene backend para xsim y nunca lo ha tenido (hallazgo
+    [P-09](pendientes.md#p-09)). Lo que se mantiene de D-05 es la elección de herramientas —
+    SystemVerilog, Verilator en L0, xsim en L1— y lo que cae es el runner único.
+
+    En su lugar: **L0 sigue en cocotb sobre Verilator; L1 es SystemVerilog nativo sobre xsim**, y
+    el oráculo del modelo dorado (D-03, que no se toca) cruza la frontera **por fichero** en vez de
+    por VPI. `tools/gen_l1_vectors.py` escribe estímulo y salida esperada en formato `$readmemh`
+    con un manifiesto que lleva la huella de `config/params.toml`; `sim/tb_sv/` los lee y compara
+    bit a bit; `tcl/sim_l1.tcl` lo lanza.
+
+    Se eligió frente a comprar licencia de Questa o Riviera (que cocotb sí soporta) porque no
+    añade dependencia de licencia, y frente a escribir un backend de xsim para cocotb porque eso
+    son semanas sobre la interfaz VPI de xsim. El precio es que hay dos estilos de testbench en el
+    repositorio, y el mitigante es que el arnés de L1 —lector y comparador— **está verificado hoy
+    sobre Verilator** en `sim/tests/test_l1_harness.py`, incluida la prueba de que sabe fallar
+    cuando cambia un solo bit.
 
 ## D-06 · Xilinx-IP-first, HDL custom solo donde no hay IP { #d-06 }
 

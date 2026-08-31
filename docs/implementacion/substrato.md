@@ -73,14 +73,23 @@ obliga a justificarlo en el commit en lugar de que pase inadvertido.
 
 ## Simulación
 
-Runner único de doble backend en `sim/runner.py`, tal como pide
-[D-05](../alcance/decisiones.md#d-05).
+Dos niveles, dos caminos. El runner único que pedía [D-05](../alcance/decisiones.md#d-05) no
+existe: cocotb no tiene backend para xsim ([P-09](../alcance/pendientes.md#p-09), decidido el 30 de
+agosto de 2026). Lo compartido es el oráculo, no la herramienta.
 
-- **L0 — Verilator:** funciona. `make sim`.
-- **L1 — xsim:** **no funciona, y no por falta de trabajo:** cocotb no tiene backend para xsim. Ver
-  [P-09](../alcance/pendientes.md#p-09). El backend está declarado y falla con un mensaje explícito
-  que nombra el hallazgo, en vez de estar ausente en silencio; hay un test que comprueba justamente
-  eso.
+- **L0 — Verilator, bajo cocotb.** Funciona. `make sim`.
+- **L1 — SystemVerilog nativo, sobre xsim.** El oráculo del modelo dorado cruza **por fichero**:
+  `tools/gen_l1_vectors.py` escribe `stimulus.hex`, `expected_i.hex`, `expected_q.hex` y un
+  `manifest.json` con conteos, modo, transitorio de arranque y la huella SHA-256 de
+  `config/params.toml`. `sim/tb_sv/drx_l1_file_source.sv` los reproduce con handshake y
+  `sim/tb_sv/drx_l1_checker.sv` compara bit a bit. Lo lanza `tcl/sim_l1.tcl`.
+
+**El arnés de L1 está verificado sin Vivado.** `sim/tests/test_l1_harness.py` lo corre en Verilator
+sobre los vectores del propio modelo y comprueba las dos direcciones: cero discrepancias con
+vectores limpios y **exactamente una** cuando se invierte un bit de una muestra. La segunda es la
+que vale, porque el modo de fallo peligroso de un comparador es dar verde. Lo que no se ha ejecutado
+nunca es `tcl/sim_l1.tcl` —falta Vivado— y `sim/tb_sv/tb_l1_ddc.sv` no elabora todavía porque su
+DUT, `drx_ddc_top`, es trabajo de Z1; el `make check` lo linta para que no se pudra mientras tanto.
 
 ## Contrato DRx↔DSP v0.1
 
@@ -102,8 +111,9 @@ NCO: en Hz haría falta que el DSP conociera el `FS_HZ` del DRx, y eso rompería
 
 `tcl/build.tcl` implementa el flujo no-project de [D-07](../alcance/decisiones.md#d-07) —síntesis,
 implementación con el WNS como gate duro, informes y bitstream con `-bin_file`—, `tcl/ip.tcl`
-regenera la IP desde los XCI versionados y `tools/make_boot.sh` empaqueta el `BOOT.BIN` y comprueba
-la reproducibilidad empaquetando dos veces y comparando.
+regenera la IP desde los XCI versionados, `tcl/sim_l1.tcl` lanza la simulación L1 sobre xsim y
+`tools/make_boot.sh` empaqueta el `BOOT.BIN` y comprueba la reproducibilidad empaquetando dos veces
+y comparando.
 
 **Nada de esto se ha ejecutado nunca:** no hay Vivado en el entorno de desarrollo ni runner de CI
 con licencia. El job `gateware` del CI existe y está condicionado a que aparezca un runner
@@ -117,7 +127,7 @@ mismo que un `BOOT.BIN` reproducible byte a byte.
 | Estructura de repositorio | Hecho |
 | Paquete único de parámetros con `FS_HZ` | Hecho, con gate de regeneración y de constante hardcodeada |
 | Flujo Vivado no-project en Tcl | Escrito, **no ejecutado** (falta Vivado) |
-| Runner cocotb de doble backend | L0 hecho; L1 bloqueado por [P-09](../alcance/pendientes.md#p-09) |
+| Runner cocotb de doble backend | L0 hecho. El doble backend **no se hace así**: [P-09](../alcance/pendientes.md#p-09) decidido, L1 es SystemVerilog nativo con oráculo por fichero; arnés verificado, flujo xsim sin ejecutar |
 | Modelo dorado NumPy + generador de vectores | Hecho |
 | Congelado del esquema DRx↔DSP v0.1 | Hecho, con codegen para C, Rust y Python |
 | Gates de CI | Hechos salvo los que necesitan Vivado |

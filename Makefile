@@ -4,12 +4,13 @@
 #   make gen       regenera lo generado (parámetros, coeficientes, contrato)
 #   make figures   regenera las gráficas del tutorial desde el modelo dorado
 #   make sim       solo la suite L0 sobre Verilator
+#   make l1-vectors  regenera los vectores del oráculo de L1
 #   make clean
 
 PY := .venv/bin/python
 RUFF := .venv/bin/ruff
 
-.PHONY: check gen figures lint lint-hdl test sim clean venv
+.PHONY: check gen figures l1-vectors lint lint-hdl lint-hdl-tb test sim clean venv
 
 venv:
 	uv venv .venv
@@ -39,13 +40,30 @@ lint-hdl:
 	  $$(grep -v '^\s*\#' rtl/filelist.f | grep -v '^\s*$$') \
 	  --top-module drx_top
 
+# El arnés de L1 y su testbench son SystemVerilog que hoy no puede ejecutar
+# ningún simulador de este entorno (P-09: hace falta xsim). Lo que sí se puede
+# hacer es lintarlo, y así el fichero no se pudre entre Z0 y Z1.
+lint-hdl-tb:
+	verilator --lint-only -Wall --timing --timescale 1ps/1ps \
+	  sim/verilator_waivers.vlt \
+	  $$(grep -v '^\s*\#' rtl/filelist.f | grep -v '^\s*$$') \
+	  sim/tb_sv/drx_l1_file_source.sv \
+	  sim/tb_sv/drx_l1_checker.sv \
+	  sim/tb_sv/tb_l1_ddc.sv \
+	  --top-module tb_l1_ddc
+
+# Los vectores de L1 son salida de build, no fuente: se regeneran, no se
+# versionan. Lo que se versiona es el generador.
+l1-vectors:
+	$(PY) tools/gen_l1_vectors.py
+
 test:
 	$(PY) -m pytest -q
 
 sim:
 	$(PY) -m pytest sim/tests -q
 
-check: lint lint-hdl test
+check: lint lint-hdl lint-hdl-tb test
 
 clean:
 	rm -rf build
