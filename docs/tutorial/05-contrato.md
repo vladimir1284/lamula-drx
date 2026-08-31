@@ -89,6 +89,25 @@ programa de prueba en C.
 sizeof header=12 ray=36 status=28 config=48 config_ack=8 afc=16
 ```
 
+### Qué cuenta `payload_len`
+
+Esa cabecera común de 12 bytes lleva un `payload_len`, y conviene decir sin margen qué cuenta,
+porque las dos lecturas posibles producen tramas que parsean igual de bien:
+
+> `payload_len` son los bytes que siguen a **esa cabecera de 12 B**: la cabecera del mensaje más su
+> carga útil variable si la tiene.
+
+De ahí sale la propiedad que se busca: un lector de tramas hace **leer 12 B, leer `payload_len` B**
+y ya tiene el mensaje entero **sin conocer su tipo**. Un mensaje sin carga variable no lleva
+`payload_len = 0`, sino el tamaño de su struct: `status` 28, `config` 48, `config_ack` 8, `afc` 16.
+
+La lectura contraria —que `payload_len` cuente solo el I/Q y excluya los 36 bytes del struct `ray`—
+también es coherente consigo misma, y es exactamente por eso que hay que fijarla: un lector con esa
+lectura contra un escritor con esta consume 36 bytes de menos por rayo y se desincroniza en el
+segundo mensaje, con todo lo que venga después parseando como rayos plausibles. Lo fija
+`test_payload_len_cuenta_la_cabecera_del_mensaje` en `contract/tests/test_contract.py`, y el
+esquema lo dice con la aritmética escrita.
+
 ### Un rayo, de verdad
 
 ```c title="contract/generated/drx_dsp_v0_1.h (extracto)"
@@ -194,8 +213,9 @@ Byte a byte idénticos. Y se leen así:
 | `00` | `flags` | reservado en v0.1 |
 | `64 73 00 00` | `payload_len` | 0x7364 = 29 540 = 36 + 1844 × 4 canales × 4 bytes |
 
-Ese `payload_len` es la aritmética del contrato funcionando: la cabecera de 36 bytes más un radial
-completo de reflectividad en modo grueso.
+Ese `payload_len` es la aritmética del contrato funcionando: la cabecera de rayo de 36 bytes más un
+radial completo de reflectividad en modo grueso, contados desde el final de la cabecera común de 12
+bytes.
 
 El test lo hace para **todos** los mensajes, con valores deterministas por posición de campo:
 
@@ -225,6 +245,22 @@ que es lo que atrapa un error de codegen.
 O sea: un error del **generador** se detecta aquí; un error de cómo Rust dispone la estructura en
 memoria, no. Ese test le toca al proyecto DSP, y es una de las cosas concretas que hay que pedirles
 cuando se les entregue la v0.1.
+
+Ese test ya existe en el lado DSP, comprobando tamaños y desplazamientos con `offset_of!` contra su
+copia vendorizada.
+
+### Cómo se consume el `.rs` desde un crate
+
+`contract/generated/drx_dsp_v0_1.rs` se declara como módulo, no se incluye con `include!`:
+
+```rust
+#[path = "../vendor/drx_dsp_v0_1.rs"]
+mod drx_dsp_v0_1;
+```
+
+El fichero abre con el atributo interno `#![allow(dead_code)]`, y un atributo interno no es legal
+donde expande `include!`. El error que sale por ese camino se lee como un fallo del codegen y no lo
+es: es la forma de consumirlo. Queda escrito aquí para que nadie lo depure dos veces.
 
 ## Cómo añadir un campo
 

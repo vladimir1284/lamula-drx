@@ -16,7 +16,7 @@ make venv && make check
 | Sin constantes de reloj | `tools/check_hardcoded_clock.py` | verde |
 | Lint de Python | Ruff 0.14.5 | verde |
 | Lint de HDL | Verilator 5.006, `-Wall` | verde |
-| Regresión | pytest 8.4.2 | **65 tests, verde** |
+| Regresión | pytest 8.4.2 | **69 tests, verde** |
 | Síntesis e implementación | Vivado | **no ejecutado**, falta la herramienta |
 | `BOOT.BIN` reproducible | bootgen | **no ejecutado**, falta la herramienta |
 
@@ -162,7 +162,7 @@ Z4.
 
 ## La regresión completa
 
-65 tests, todos en verde:
+69 tests, todos en verde:
 
 ```
 model/tests/test_bloques.py::test_nco_emite_en_la_frecuencia_normalizada_del_if PASSED
@@ -232,7 +232,7 @@ fw/tests/test_params_header.py::test_el_firmware_ve_los_mismos_parametros_que_el
 fw/tests/test_params_header.py::test_el_firmware_compila_tambien_para_la_plataforma_objetivo PASSED
 ```
 
-## Lo que estos 65 tests no demuestran
+## Lo que estos 69 tests no demuestran
 
 Merece un apartado propio, porque la diferencia entre «CI verde» y «funciona» es donde se pierden los
 proyectos.

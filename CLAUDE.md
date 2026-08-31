@@ -16,7 +16,7 @@ con el RCP ni con ORPG.
 
 ## Estado, a 30 de agosto de 2026
 
-**Fase Z0 — substrato. En curso.** Ya hay código, y corre: `make check` deja 65 tests en verde sobre
+**Fase Z0 — substrato. En curso.** Ya hay código, y corre: `make check` deja 69 tests en verde sobre
 Verilator, gcc y NumPy. Lo construido está explicado en el tutorial de `docs/tutorial/` e
 inventariado en `docs/implementacion/substrato.md`; el resumen es:
 

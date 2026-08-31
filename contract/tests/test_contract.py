@@ -179,3 +179,53 @@ def test_los_tipos_de_mensaje_son_unicos():
     ids = [m["type_id"] for m in _schema()["message"]]
     assert len(ids) == len(set(ids))
     assert 0 not in ids, "0 se reserva para detectar un byte de tipo sin inicializar"
+
+
+# Tamaños de `payload_len` esperados para los mensajes sin carga útil variable.
+# Son literales a propósito: si alguien reinterpreta `payload_len` como «solo la
+# carga variable», estos números pasan a 0 y el test lo dice en voz alta.
+PAYLOAD_LEN_SIN_CARGA_VARIABLE = {"status": 28, "config": 48, "config_ack": 8, "afc": 16}
+
+
+def _payload_len(py_class, variable_bytes: int = 0) -> int:
+    """La regla del contrato: struct del mensaje más su carga variable, si la tiene."""
+    return py_class.SIZE + variable_bytes
+
+
+def test_payload_len_cuenta_la_cabecera_del_mensaje():
+    """Fija la lectura de `payload_len`: cuenta el struct del mensaje, no solo el I/Q.
+
+    Es la ambigüedad que levantó el lado DSP al escribir su consumidor. Las dos
+    lecturas producen tramas que parsean, así que un desacuerdo aquí no se detecta
+    solo: un lector con la otra lectura consume 36 bytes de menos por rayo y se
+    desincroniza en el segundo mensaje.
+    """
+    module = _py_module()
+
+    # La cabecera común son 12 B y `payload_len` NO se cuenta a sí mismo.
+    assert module.Header.SIZE == 12
+
+    # Mensaje con carga variable: un radial de 1844 bins x 4 canales, pares (I,Q)
+    # de int16 = 4 bytes por bin y canal. Es el ejemplo de docs/tutorial/05-contrato.md.
+    bins, n_channels, bytes_por_muestra = 1844, 4, 4
+    esperado = _payload_len(module.Ray, bins * n_channels * bytes_por_muestra)
+    assert module.Ray.SIZE == 36
+    assert esperado == 29540, "el ejemplo trabajado del tutorial dejó de cuadrar"
+
+    # Mensajes sin carga variable: el tamaño de su struct, nunca 0.
+    for name, expected in PAYLOAD_LEN_SIN_CARGA_VARIABLE.items():
+        py_class = getattr(module, "".join(p.capitalize() for p in name.split("_")))
+        assert _payload_len(py_class) == expected, f"payload_len de {name}"
+        assert _payload_len(py_class) != 0
+
+
+def test_el_esquema_deja_payload_len_sin_ambiguedad():
+    """La redacción normativa es la del esquema; que no derive de vuelta a la ambigua."""
+    doc = next(
+        field["doc"]
+        for field in _schema()["header"]["fields"]
+        if field["name"] == "payload_len"
+    )
+    assert "12 B" in doc, "el esquema no dice respecto a qué cabecera cuenta"
+    assert "nunca 0" in doc, "el esquema no fija el caso sin carga variable"
+    assert _py_module().Error.BAD_LENGTH == 4

@@ -24,7 +24,7 @@ typedef struct __attribute__((packed)) {
   uint8_t version_minor;  /* Compatible hacia atrás dentro del mismo major. */
   uint8_t msg_type;  /* Ver la tabla de tipos de mensaje. */
   uint8_t flags;  /* Reservado en v0.1; tiene que valer 0. */
-  uint32_t payload_len;  /* Bytes de carga útil detrás de la cabecera del mensaje. */
+  uint32_t payload_len;  /* Bytes que siguen a ESTA cabecera de 12 B: la cabecera del mensaje más su carga útil variable si la tiene. Un lector de tramas hace por tanto: leer 12 B, leer payload_len B, y ya tiene el mensaje entero sin conocer su tipo. Un ray de 1844 bins x 4 canales vale 36 + 1844x4x4 = 29540; un mensaje sin carga variable vale el tamaño de su struct (status 28, config 48, config_ack 8, afc 16), nunca 0. */
 } drx_dsp_header_t;
 _Static_assert(sizeof(drx_dsp_header_t) == 12, "layout de drx_dsp_header_t");
 
@@ -120,7 +120,7 @@ typedef enum {
   DRX_DSP_ERROR_PRF_RANGE_ILLEGAL = 1,  /* PRF y extensión de rango incompatibles (D-09). */
   DRX_DSP_ERROR_UNSUPPORTED_VERSION = 2,  /* version_major desconocido. */
   DRX_DSP_ERROR_UNKNOWN_MESSAGE = 3,  /* msg_type desconocido. */
-  DRX_DSP_ERROR_BAD_LENGTH = 4,  /* payload_len no cuadra con el mensaje. */
+  DRX_DSP_ERROR_BAD_LENGTH = 4,  /* payload_len no cuadra: no coincide con el tamaño del struct del msg_type recibido más su carga útil variable si la tiene. */
   DRX_DSP_ERROR_CELL_MODE_INVALID = 5,  /* cell_mode fuera de {0,1}. */
   DRX_DSP_ERROR_PULSE_WIDTH_INVALID = 6,  /* Índice de ancho de pulso fuera de tabla. */
   DRX_DSP_ERROR_CHANNEL_MASK_INVALID = 7,  /* Máscara de canales vacía o fuera de rango. */

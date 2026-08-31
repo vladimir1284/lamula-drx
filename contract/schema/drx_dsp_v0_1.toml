@@ -56,7 +56,7 @@ doc = "Reservado en v0.1; tiene que valer 0."
 [[header.fields]]
 name = "payload_len"
 type = "u32"
-doc = "Bytes de carga útil detrás de la cabecera del mensaje."
+doc = "Bytes que siguen a ESTA cabecera de 12 B: la cabecera del mensaje más su carga útil variable si la tiene. Un lector de tramas hace por tanto: leer 12 B, leer payload_len B, y ya tiene el mensaje entero sin conocer su tipo. Un ray de 1844 bins x 4 canales vale 36 + 1844x4x4 = 29540; un mensaje sin carga variable vale el tamaño de su struct (status 28, config 48, config_ack 8, afc 16), nunca 0."
 
 # ---------------------------------------------------------------------------
 # Mensajes. `dir` es el sentido: "up" del DRx al DSP, "down" del DSP al DRx.
@@ -172,7 +172,7 @@ values = [
   { name = "prf_range_illegal", value = 1, doc = "PRF y extensión de rango incompatibles (D-09)." },
   { name = "unsupported_version", value = 2, doc = "version_major desconocido." },
   { name = "unknown_message", value = 3, doc = "msg_type desconocido." },
-  { name = "bad_length", value = 4, doc = "payload_len no cuadra con el mensaje." },
+  { name = "bad_length", value = 4, doc = "payload_len no cuadra: no coincide con el tamaño del struct del msg_type recibido más su carga útil variable si la tiene." },
   { name = "cell_mode_invalid", value = 5, doc = "cell_mode fuera de {0,1}." },
   { name = "pulse_width_invalid", value = 6, doc = "Índice de ancho de pulso fuera de tabla." },
   { name = "channel_mask_invalid", value = 7, doc = "Máscara de canales vacía o fuera de rango." },

@@ -26,7 +26,7 @@ pub struct Header {
     pub msg_type: u8,
     /// Reservado en v0.1; tiene que valer 0.
     pub flags: u8,
-    /// Bytes de carga útil detrás de la cabecera del mensaje.
+    /// Bytes que siguen a ESTA cabecera de 12 B: la cabecera del mensaje más su carga útil variable si la tiene. Un lector de tramas hace por tanto: leer 12 B, leer payload_len B, y ya tiene el mensaje entero sin conocer su tipo. Un ray de 1844 bins x 4 canales vale 36 + 1844x4x4 = 29540; un mensaje sin carga variable vale el tamaño de su struct (status 28, config 48, config_ack 8, afc 16), nunca 0.
     pub payload_len: u32,
 }
 pub const HEADER_SIZE: usize = 12;
@@ -190,7 +190,7 @@ pub mod error {
     pub const UNSUPPORTED_VERSION: u8 = 2;
     /// msg_type desconocido.
     pub const UNKNOWN_MESSAGE: u8 = 3;
-    /// payload_len no cuadra con el mensaje.
+    /// payload_len no cuadra: no coincide con el tamaño del struct del msg_type recibido más su carga útil variable si la tiene.
     pub const BAD_LENGTH: u8 = 4;
     /// cell_mode fuera de {0,1}.
     pub const CELL_MODE_INVALID: u8 = 5;
