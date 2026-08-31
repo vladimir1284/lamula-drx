@@ -180,8 +180,8 @@ que es [P-08](#p-08).
 
 ### P-08 · `fs` es un grado de libertad, y bien elegida disuelve P-01 { #p-08 }
 
-**Estado:** abierto, con una propuesta concreta · **Dueño:** dirección técnica + compra ·
-**Bloquea:** el cierre de [D-04](decisiones.md#d-04).
+**Estado:** abierto, con una propuesta concreta y sin datos externos pendientes · **Dueño:**
+dirección técnica + compra · **Bloquea:** el cierre de [D-04](decisiones.md#d-04).
 
 Los convertidores del FMC213 son de 250 MSPS, pero **nada obliga a operarlos a 250 MHz**. El tamaño
 de celda es `R · c / (2·fs)`: si `fs` es libre, se elige `fs` para que la celda caiga donde se
@@ -234,17 +234,54 @@ Lo que trae de regalo:
 
 Ninguno se puede comprobar desde este repositorio:
 
-- **Rate mínimo del convertidor del FMC213.** Es el riesgo real de bajar a 143,9 MHz: los
-  convertidores JESD204B de gama alta tienen frecuencia de muestreo **mínima** especificada, y una
-  pieza pensada para 250 MSPS puede quedarse fuera de spec a 143,9. **Hay que leer la hoja de datos
-  antes que nada**; si el mínimo lo impide, los candidatos de la tabla por encima de 200 MHz siguen
-  en pie.
+- ~~**Rate mínimo del convertidor del FMC213.**~~ **Resuelto el 30 de agosto de 2026: 143,9 MHz
+  está dentro de especificación, con margen.** Ver el análisis debajo de esta lista.
 - ~~**Plan de frecuencia intermedia.**~~ **Resuelto el 30 de agosto de 2026: el IF es de 60 MHz**,
   como ya decía [contexto](contexto.md). Encaja — ver el análisis debajo de esta lista.
 - **JESD204B.** La tasa de línea baja con `fs`, lo que va a favor, pero hay que confirmar que el
   modo del convertidor admite ese rate y que SYSREF sigue siendo submúltiplo entero del LMFC.
 - **Ancho de banda.** Con pulsos de 0,8 / 1,66 / 3,3 µs el ancho de banda es de ~1,25 MHz como
   máximo, así que no es restricción a ninguna de estas frecuencias.
+
+### El convertidor admite 143,9 MHz, y en el modo de dos lanes
+
+El ADC del FMC213 son **dos TI ADS42JB69** —dual, 16 bits, 250 MSPS, JESD204B— que dan los cuatro
+canales de la tarjeta; el DAC es el AD9129 que ya nombra el plan. La tabla de condiciones
+recomendadas del ADS42JB49/JB69 (SLAS900F, §7.3) especifica el rate de muestreo con **mínimo y
+máximo**, y depende del modo de serialización:
+
+| Modo SERDES | LMFS | Lanes por ADC | Rate de muestreo | Línea a 143,9 MHz |
+|---|---|---|---|---|
+| 10x | L=4, M=2, F=1, S=1 | 2 | **60 – 250 MSPS** | 1,439 Gbps |
+| 20x | L=2, M=2, F=2, S=1 | 1 | **40 – 156,25 MSPS** | 2,878 Gbps |
+
+143,9 MHz cae dentro de los dos, y no marginalmente: son 2,4 veces el mínimo del modo 10x. El
+riesgo que esta lista marcaba como «el real» de bajar a 143,9 MHz **no existe**. Los máximos de
+línea del propio convertidor son 2,5 Gbps en 10x y 3,125 Gbps en 20x, y la especificación de
+tiempos de subida cubre `600 Mbps ≤ bit rate ≤ 3,125 Gbps`, así que las dos líneas de la tabla
+están dentro.
+
+Y trae una consecuencia que no estaba en el análisis anterior: a 250 MHz el modo 20x **no es
+utilizable** —su máximo son 156,25 MSPS— y hay que ir a 10x, o sea 4 lanes por ADC, **8
+transceptores** para los cuatro canales. A 143,9 MHz los dos modos están disponibles, y el 20x
+hace la tarjeta entera con **4 transceptores** a 2,878 Gbps. Es la mitad de MGTs en la portadora
+ZU9, y afecta a la selección de la portadora en [P-03](#p-03).
+
+Lo que queda por confirmar, y **no es bloqueante para el ADR**:
+
+- **Que el PLL del FMC213 sintetiza 143,9 MHz.** VadaTech describe un «wide-band PLL» con
+  referencia por panel frontal, portadora FMC o referencia de a bordo, pero **no publica la pieza**
+  en la ficha pública (la hoja de datos del FMC213 devuelve HTTP 403). La nota de aplicación del
+  ADC usa un LMK04828 como ejemplo; si el FMC213 lleva ese, 143,9 MHz sale con VCO a 2446,3 MHz
+  (= 143,9 × 17, dentro del rango de VCO0) y N entero desde 10 MHz con PFD de 100 kHz. **La
+  objeción de ruido de fase se desplaza aquí**: PFD de 100 kHz sube el ruido en banda del PLL2
+  frente a un PFD de 10 MHz, y el presupuesto de jitter es de ~100 fs rms. Hay que pedir a
+  VadaTech la pieza del PLL y su configuración.
+- **SYSREF.** El ADC exige `f_SYSREF = f_clk / (n · K · F)` con `1 < K < 32` y K > 16 recomendado.
+  A 143,9 MHz en modo 20x (F = 2) con K = 32: 2,2484 MHz. Divisor entero desde el reloj de
+  dispositivo, sin fracciones. No hay problema aritmético a ninguna de las `fs` candidatas.
+- **Jitter de apertura.** El ADS42JB69 especifica 85 fs rms, coherente con el análisis de IF de
+  arriba.
 
 ### El IF de 60 MHz encaja en 143,9 MHz sin muestreo subnyquist
 
@@ -272,15 +309,16 @@ esta pieza es barato.
 se deriva de `FS_HZ`. Sí cambian R₁ y R₂, que son parámetros de la cadena de diezmado, no
 arquitectura.
 
-**Condición de cierre:** confirmación del rate mínimo del convertidor —es lo único que queda— y un
-ADR que sustituya a D-04 fijando `fs`, R₁ y R₂ juntos. Si el convertidor no baja a 143,9 MHz, el plan B es
-247 MHz con R₁ = 206 / R₂ = 412 (54 m de error, reloj en rejilla de 1 MHz, cadena única); y si
-tampoco, la Opción B de P-01.
+**Condición de cierre:** un ADR que sustituya a D-04 fijando `fs`, R₁ y R₂ juntos. **El rate mínimo
+del convertidor ya está confirmado y no se opone**, así que no queda ningún dato externo pendiente
+para escribirlo. Los planes de repliegue siguen documentados por si el PLL del FMC213 no sintetiza
+143,9 MHz: 247 MHz con R₁ = 206 / R₂ = 412 (54 m de error, reloj en rejilla de 1 MHz, cadena única)
+y, en último caso, la Opción B de P-01.
 
 ### P-09 · cocotb no tiene backend para xsim, y D-05 lo daba por hecho { #p-09 }
 
-**Estado:** abierto, descubierto el 30 de agosto de 2026 al construir el substrato ·
-**Dueño:** equipo · **Bloquea:** el nivel L1 del [plan de testing](../pruebas/plan-testing.md).
+**Estado:** **decidido** el 30 de agosto de 2026 · **Dueño:** equipo · **Cierre pendiente de** la
+primera ejecución real sobre xsim, que necesita Vivado (supuesto A7).
 
 [D-05](decisiones.md#d-05) dice que un único runner de cocotb cubre los dos backends, Verilator para
 L0 y xsim para L1. **Verilator sí; xsim no.** Los runners que trae cocotb 1.9.2 son `icarus`,
@@ -291,13 +329,12 @@ Esto importa porque L1 es exactamente el nivel que valida lo que Verilator **no 
 IP del DDC. Sin L1 no hay comparación bit a bit contra el DDS/CIC/FIR Compiler reales, que es el
 hito ZM1 entero.
 
-Opciones, ordenadas por coste creciente. **Todo lo que sigue es inferencia**, no hay ninguna
-probada en este entorno:
+Opciones, ordenadas por coste creciente. La 1 es la adoptada:
 
-1. **Testbenches SystemVerilog nativos para xsim en L1, fuera de cocotb.** El oráculo sigue siendo
+1. **Testbenches SystemVerilog nativos para xsim en L1, fuera de cocotb.** ← **adoptada** El oráculo sigue siendo
    el modelo dorado: se le hace escribir vectores de entrada y de salida esperada a fichero, y el
    testbench de xsim los lee y compara. Se pierde el «un solo runner» de D-05 y se gana no depender
-   de ninguna licencia nueva. Es la opción recomendada.
+   de ninguna licencia nueva.
 2. **Licencia de Questa o Riviera.** cocotb los soporta y elaboran IP de Xilinx. Coste de licencia
    por puesto, y hay que verificar que las bibliotecas compiladas de Xilinx están disponibles para
    esa versión.
@@ -307,9 +344,30 @@ probada en este entorno:
 4. **Escribir un backend de xsim para cocotb.** Semanas de trabajo sobre la interfaz VPI de xsim,
    fuera del alcance de este proyecto.
 
-**Condición de cierre:** decisión escrita sobre cuál de las opciones se toma, y una enmienda a D-05
-que corrija la frase del runner único. Mientras tanto `sim/runner.py` declara el backend L1 y falla
-con un mensaje que nombra este hallazgo, en vez de estar mudo.
+**Decisión: la opción 1.** L1 sale de cocotb y pasa a testbenches nativos de SystemVerilog sobre
+xsim, con el modelo dorado como oráculo cruzando por fichero. La enmienda está escrita en
+[D-05](decisiones.md#d-05). Lo construido el mismo día:
+
+| Pieza | Qué hace | ¿Verificado? |
+|---|---|---|
+| `model/drx_model/l1_vectors.py` | Exporta estímulo y salida esperada en `$readmemh`, con manifiesto y SHA-256 | Sí, en `make check` |
+| `tools/gen_l1_vectors.py` | Genera los casos de las dos plataformas y los dos modos | Sí |
+| `sim/tb_sv/drx_l1_file_source.sv` | Lee un `.hex` y lo entrega como stream con handshake | Sí, sobre Verilator |
+| `sim/tb_sv/drx_l1_checker.sv` | Compara bit a bit contra el modelo y cuenta discrepancias | Sí, sobre Verilator |
+| `sim/tb_sv/tb_l1_harness.sv` + `sim/tests/test_l1_harness.py` | Auto-prueba del arnés: cero discrepancias con vectores limpios, **exactamente una** con un bit cambiado | Sí |
+| `sim/tb_sv/tb_l1_ddc.sv` | El testbench de ZM1 | Lint sí; **no elabora**: `drx_ddc_top` es de Z1 |
+| `tcl/sim_l1.tcl` | Flujo xsim: manifiesto, IP de los XCI, plusargs | **No ejecutado**, no hay Vivado |
+
+El orden importa: el comparador está probado **antes** de que exista el DUT, y probado en la
+dirección que engaña —un comparador que no compara da verde con cualquier cosa—, así que el día que
+Z1 conecte el DDC, un verde de L1 significa algo.
+
+**Lo que sigue abierto** es la ejecución: `tcl/sim_l1.tcl` está escrito y revisado pero no ha
+corrido nunca, igual que `tcl/build.tcl`. Se cierra en la misma sesión de máquina con Vivado que
+cierra ZM0.
+
+`sim/runner.py` se queda siendo el runner de L0 y su backend L1 sigue fallando explícito, ahora
+apuntando al flujo correcto en vez de a un bloqueo.
 
 ## Supuestos de entorno a verificar
 
