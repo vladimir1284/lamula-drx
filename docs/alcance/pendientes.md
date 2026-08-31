@@ -163,10 +163,8 @@ existentes a ese sitio.
 reescritos como URL absolutas al sitio DSP, así que no depende de dónde se publique—, y
 `lamula-dsp/docs/drx-plan.md` pasa a ser una página de redirección que apunta aquí. La página se
 conserva en vez de borrarse para no romper los enlaces existentes, y la entrada del nav de aquel
-sitio dice «(movido al sitio del DRx)» para que se vea antes de hacer clic.
-
-Queda un cabo, y es de aquel repositorio: el commit está hecho pero **no empujado**, así que el
-sitio DSP sigue sirviendo la copia vieja hasta que alguien haga push.
+sitio dice «(movido al sitio del DRx)» para que se vea antes de hacer clic. Empujado y desplegado el mismo día: los dos sitios sirven ya
+la versión nueva.
 
 ### P-07 · Conformidad con la rejilla de NEXRAD — trasladado al RCP { #p-07 }
 
