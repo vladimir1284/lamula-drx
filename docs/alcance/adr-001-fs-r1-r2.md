@@ -135,8 +135,10 @@ cambió por esto. Después, `make figures`, porque las gráficas del tutorial la
 
 - **Z1 puede empezar.** La arquitectura de la cadena de diezmado deja de estar bloqueada, que es lo
   que P-01 y P-08 estaban reteniendo.
-- **Menos presión de recursos y de timing** que con R = 208: los factores se descomponen en etapas
-  más cómodas y el reloj es más bajo en las dos plataformas.
+- **Menos presión de recursos** que con R = 208: los factores se descomponen en etapas más cómodas
+  para una cadena CIC. En la **ZU9** el reloj además baja de 250 a 143,9 MHz, que es holgura de
+  timing real; en la **ZedBoard no baja** —99,998988 MHz son los 100 MHz de hoy menos 10 ppm— y eso
+  es deliberado, por lo dicho arriba sobre el realismo del reloj.
 - **La tasa de línea JESD204B baja** con `fs`, lo que va a favor del margen; queda por confirmar que
   el modo elegido del convertidor admite ese rate y que SYSREF sigue siendo submúltiplo entero del
   LMFC. A 143,9 MHz en modo 20x con K = 32 y F = 2, SYSREF sale a 2,2484 MHz por división entera del
