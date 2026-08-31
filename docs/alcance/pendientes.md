@@ -239,20 +239,41 @@ Ninguno se puede comprobar desde este repositorio:
   pieza pensada para 250 MSPS puede quedarse fuera de spec a 143,9. **Hay que leer la hoja de datos
   antes que nada**; si el mínimo lo impide, los candidatos de la tabla por encima de 200 MHz siguen
   en pie.
-- **Plan de frecuencia intermedia.** A 143,9 MHz, `fs/2` = 71,95 MHz. Un IF de 30 MHz entra holgado
-  en la primera zona de Nyquist; uno de 60 MHz entra pero con menos margen para el filtro
-  antialias. Hace falta el IF real del radar, que no está en este repositorio.
+- ~~**Plan de frecuencia intermedia.**~~ **Resuelto el 30 de agosto de 2026: el IF es de 60 MHz**,
+  como ya decía [contexto](contexto.md). Encaja — ver el análisis debajo de esta lista.
 - **JESD204B.** La tasa de línea baja con `fs`, lo que va a favor, pero hay que confirmar que el
   modo del convertidor admite ese rate y que SYSREF sigue siendo submúltiplo entero del LMFC.
 - **Ancho de banda.** Con pulsos de 0,8 / 1,66 / 3,3 µs el ancho de banda es de ~1,25 MHz como
   máximo, así que no es restricción a ninguna de estas frecuencias.
 
+### El IF de 60 MHz encaja en 143,9 MHz sin muestreo subnyquist
+
+Con `fs` = 143,9 MHz la mitad de Nyquist queda en 71,95 MHz, así que los 60 MHz del IF caen en la
+**primera zona de Nyquist**: se muestrea directo, sin submuestreo y sin inversión espectral.
+
+- **Banda de señal:** 59,375 – 60,625 MHz, con el pulso más corto (0,8 µs, ~1,25 MHz de ancho).
+- **Filtro antialias:** lo que pliega sobre 60 MHz es la energía en `fs − IF` = **83,9 MHz**. El
+  filtro tiene que pasar hasta 60,6 y rechazar en 83,9 — una razón de transición de 1,38, cómoda
+  para un paso-banda de IF convencional.
+- **Armónicos del IF:** el segundo (120 MHz) pliega a 23,9 MHz y el tercero (180 MHz) a 36,1 MHz.
+  Ninguno cae sobre la banda útil.
+- **Jitter de apertura:** a 60 MHz, 100 fs rms limitan la SNR a 88,5 dB, y 200 fs a 82,5 dB. No es
+  restrictivo, pero es la razón por la que conviene no subir el IF.
+- **NCO:** 60 / 143,9 = 0,416956 de `fs`. Es una palabra de fase cualquiera para el DDS Compiler,
+  sin nada especial.
+
+**Lo que se descarta a propósito:** poner el IF en `fs/4` para tener un mezclador sin
+multiplicadores exigiría `fs` = 240 MHz exactos, y ahí la mejor celda es 249,827 m — 318 m de error
+acumulado, más de una celda entera desplazada a 460 km. No compensa: por
+[D-06](decisiones.md#d-06) el mezclador sale del DDS Compiler más un multiplicador complejo, que en
+esta pieza es barato.
+
 **Impacto en el RTL: ninguno por el lado de `fs`, si se cumple [D-02](decisiones.md#d-02)** — todo
 se deriva de `FS_HZ`. Sí cambian R₁ y R₂, que son parámetros de la cadena de diezmado, no
 arquitectura.
 
-**Condición de cierre:** confirmación del rate mínimo del convertidor y del plan de IF, y un ADR que
-sustituya a D-04 fijando `fs`, R₁ y R₂ juntos. Si el convertidor no baja a 143,9 MHz, el plan B es
+**Condición de cierre:** confirmación del rate mínimo del convertidor —es lo único que queda— y un
+ADR que sustituya a D-04 fijando `fs`, R₁ y R₂ juntos. Si el convertidor no baja a 143,9 MHz, el plan B es
 247 MHz con R₁ = 206 / R₂ = 412 (54 m de error, reloj en rejilla de 1 MHz, cadena única); y si
 tampoco, la Opción B de P-01.
 
