@@ -145,9 +145,9 @@ especificación, y el precedente del loopback dice que eso no basta.
 
 **Condición de cierre:** ruta al repositorio o copia del código, anotada aquí.
 
-### P-06 · Dos copias vivas del project plan de la ZU9 { #p-06 }
+### P-06 · Dos copias vivas del project plan de la ZU9 — cerrado { #p-06 }
 
-**Estado:** abierto · **Dueño:** equipo · **Severidad:** baja, pero divergirá.
+**Estado:** **cerrado** el 30 de agosto de 2026 · **Dueño:** equipo.
 
 El plan ZU9 existe en dos sitios publicados: `docs/referencia/project-plan-zu9.md` en este
 repositorio y `docs/drx-plan.md` en `lamula-dsp`, que sigue en el nav de ese sitio. El fuente del
@@ -158,8 +158,15 @@ Mientras las dos copias existan, un cambio en una no se refleja en la otra. La o
 `drx-plan.md` del sitio DSP se planteó y se decidió **no tocarlo** por ahora, porque rompe enlaces
 existentes a ese sitio.
 
-**Condición de cierre:** o se retira la copia del sitio DSP dejando una redirección, o se declara
-explícitamente cuál de las dos es la canónica y se anota en las dos.
+**Resolución:** las dos cosas. La copia canónica es la de este repositorio,
+`docs/referencia/project-plan-zu9.md` —que además es la que tiene los enlaces a `algorithms/`
+reescritos como URL absolutas al sitio DSP, así que no depende de dónde se publique—, y
+`lamula-dsp/docs/drx-plan.md` pasa a ser una página de redirección que apunta aquí. La página se
+conserva en vez de borrarse para no romper los enlaces existentes, y la entrada del nav de aquel
+sitio dice «(movido al sitio del DRx)» para que se vea antes de hacer clic.
+
+Queda un cabo, y es de aquel repositorio: el commit está hecho pero **no empujado**, así que el
+sitio DSP sigue sirviendo la copia vieja hasta que alguien haga push.
 
 ### P-07 · Conformidad con la rejilla de NEXRAD — trasladado al RCP { #p-07 }
 
