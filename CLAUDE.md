@@ -16,8 +16,8 @@ con el RCP ni con ORPG.
 ## Estado, a 30 de agosto de 2026
 
 **Fase Z0 — substrato. En curso.** Ya hay código, y corre: `make check` deja 65 tests en verde sobre
-Verilator, gcc y NumPy. Lo construido está descrito punto por punto en
-`docs/implementacion/substrato.md`; el resumen es:
+Verilator, gcc y NumPy. Lo construido está explicado en el tutorial de `docs/tutorial/` e
+inventariado en `docs/implementacion/substrato.md`; el resumen es:
 
 - Paquete único de parámetros en `config/params.toml`, con generación a SystemVerilog, C y Tcl, gate
   de regeneración y gate de constante de reloj hardcodeada — los dos fallan la build.

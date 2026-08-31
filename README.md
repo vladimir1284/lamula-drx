@@ -30,7 +30,9 @@ y Python, el diseño vacío de RTL y los gates de CI que no necesitan Vivado. El
 pero **nunca se ha ejecutado**, y el `BOOT.BIN` reproducible —que es el hito ZM0— sigue pendiente por
 la misma razón.
 
-Qué hay exactamente y cómo se corre: `docs/implementacion/substrato.md`.
+Para **entender** lo construido, el tutorial: `docs/tutorial/` — siete páginas en orden, con enlaces a
+la documentación de cada herramienta externa y con las gráficas y los números que produce el
+repositorio hoy. Para el inventario seco de estado: `docs/implementacion/substrato.md`.
 
 ```sh
 make venv     # entorno de Python

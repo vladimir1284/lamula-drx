@@ -40,7 +40,8 @@ re-cierre de temporización, no una reescritura.
 
 | Si eres… | Lee primero |
 |---|---|
-| Desarrollador que se incorpora | [Contexto](alcance/contexto.md) → [Decisiones congeladas](alcance/decisiones.md) → [Fases](implementacion/fases.md) |
+| **Alguien que quiere entender lo que hay construido** | El **[tutorial](tutorial/index.md)** — siete páginas en orden, con las gráficas y los números que produce el repositorio hoy |
+| Desarrollador que se incorpora | [Contexto](alcance/contexto.md) → [Decisiones congeladas](alcance/decisiones.md) → [Fases](implementacion/fases.md) → [Tutorial](tutorial/index.md) |
 | Especialista de dominio / QA | [Plan de testing](pruebas/plan-testing.md) → [Modelo dorado](pruebas/modelo-dorado.md) → [Pendientes](alcance/pendientes.md) |
 | Responsable de compra de hardware | [Pendientes](alcance/pendientes.md) → [Frontera y cobertura](plataforma/zedboard.md) |
 | Auditor del alcance original | [Project Plan ZU9](referencia/project-plan-zu9.md) |

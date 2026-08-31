@@ -1,8 +1,13 @@
 # Substrato Z0: qué existe y cómo se corre
 
-Esta página describe lo que hay **construido y verde** en el repositorio, y cómo ejecutarlo. La
+Esta página es el **inventario**: qué hay construido, en qué estado y cómo ejecutarlo. La
 planificación está en [Fases Z0–Z5](fases.md) y la disposición de directorios en
-[Estructura del repositorio](estructura-repo.md); aquí solo va el estado ejecutable.
+[Estructura del repositorio](estructura-repo.md).
+
+!!! tip "Si lo que quieres es entenderlo, no inventariarlo"
+    El **[tutorial](../tutorial/index.md)** recorre lo mismo en siete páginas en orden, explicando por
+    qué existe cada pieza, con enlaces a la documentación de cada herramienta externa y con las
+    gráficas y los números reales que produce el modelo. Esta página asume que ya sabes de qué va.
 
 ## Arranque
 

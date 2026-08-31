@@ -14,8 +14,10 @@ Lee, en este orden:
 
 ## Lo primero que hay que hacer
 
-La **fase Z0** ya está construida en su mayor parte: `docs/implementacion/substrato.md` dice qué
-existe, qué falta y cómo se corre. Léela antes de tocar nada.
+La **fase Z0** ya está construida en su mayor parte. Para entender lo que hay, lee el tutorial de
+`docs/tutorial/` —siete páginas en orden, con las gráficas y los números reales—; para el inventario
+seco de qué existe y qué falta, `docs/implementacion/substrato.md`. Cualquiera de las dos, pero
+léelas antes de tocar nada.
 
 Antes de commitear, `make check` tiene que pasar limpio. Corre los mismos gates que el CI: los tres
 `--check` de regeneración, el gate de constante de reloj, el lint de Python y de HDL, y la regresión
@@ -54,6 +56,9 @@ el modelo de entrega acelerado por agentes no funciona, y reconstruirlo al final
 - **No cambies `R₁`, `R₂` ni `fs` sin el ADR que sustituya a D-04.** [P-01](docs/alcance/pendientes.md#p-01)
   y [P-08](docs/alcance/pendientes.md#p-08) siguen abiertos. Cuando se cierren, el cambio es de dos
   líneas en `config/params.toml` más `make gen`: esa es la razón de que ese fichero exista.
+- **Si cambias el modelo, regenera las figuras del tutorial** con `make figures`. Las gráficas de
+  `docs/assets/` las dibuja `tools/gen_docs_figures.py` ejecutando el modelo dorado: si no las
+  regeneras, la documentación enseña una respuesta de filtro que el código ya no produce.
 - **La huella del oráculo no se actualiza a la ligera.** `model/tests/test_chain.py` fija el SHA-256
   de la salida del modelo para un vector conocido. Si un cambio la mueve, di en el commit por qué
   cambió el oráculo — no la actualices en silencio.

@@ -2,13 +2,14 @@
 #
 #   make check     todo lo que corre el CI en el job de substrato
 #   make gen       regenera lo generado (parámetros, coeficientes, contrato)
+#   make figures   regenera las gráficas del tutorial desde el modelo dorado
 #   make sim       solo la suite L0 sobre Verilator
 #   make clean
 
 PY := .venv/bin/python
 RUFF := .venv/bin/ruff
 
-.PHONY: check gen lint lint-hdl test sim clean venv
+.PHONY: check gen figures lint lint-hdl test sim clean venv
 
 venv:
 	uv venv .venv
@@ -18,6 +19,12 @@ gen:
 	$(PY) tools/gen_params.py
 	$(PY) tools/gen_coeffs.py
 	$(PY) tools/gen_contract.py
+
+# Las figuras del tutorial salen del propio modelo. No hay gate de CI sobre los
+# SVG —matplotlib no garantiza salida byte a byte entre versiones— pero sí hay
+# tests que comprueban numéricamente lo que las figuras enseñan.
+figures:
+	$(PY) tools/gen_docs_figures.py
 
 lint:
 	$(PY) tools/gen_params.py --check

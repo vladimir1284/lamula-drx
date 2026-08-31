@@ -26,6 +26,8 @@ theme:
 
 markdown_extensions:
   - admonition
+  - pymdownx.arithmatex:
+      generic: true
   - attr_list
   - tables
   - pymdownx.superfences:
@@ -36,6 +38,10 @@ markdown_extensions:
   - pymdownx.highlight
   - toc:
       permalink: true
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 nav:
   - Inicio: index.md
@@ -48,6 +54,15 @@ nav:
       - Dilatación temporal (FS_HZ): plataforma/dilatacion-temporal.md
       - Fuente de muestras (SSA): plataforma/fuente-de-muestras.md
       - Presupuesto de recursos: plataforma/recursos.md
+  - Tutorial:
+      - Cómo leer esto: tutorial/index.md
+      - 1 · El paquete de parámetros: tutorial/01-parametros.md
+      - 2 · Aritmética de punto fijo: tutorial/02-punto-fijo.md
+      - 3 · La cadena DDC: tutorial/03-ddc.md
+      - 4 · Simulación: tutorial/04-simulacion.md
+      - 5 · El contrato DRx↔DSP: tutorial/05-contrato.md
+      - 6 · Gateware: tutorial/06-gateware.md
+      - 7 · Resultados: tutorial/07-resultados.md
   - Implementación:
       - Fases Z0–Z5: implementacion/fases.md
       - Estructura del repositorio: implementacion/estructura-repo.md
