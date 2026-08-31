@@ -1,0 +1,206 @@
+# Contrato DRx↔DSP, v0.1 — CONGELADO EN Z0 (D-08).
+#
+# Es la ÚNICA interfaz externa del DRx: no habla con el RCP ni con ORPG. Este
+# fichero es la única fuente de verdad del formato de cable, y de él se generan
+# las dos implementaciones (C para el DRx, Rust para el DSP). No se escribe
+# ninguna de las dos a mano.
+#
+# Congelado unilateralmente según D-08: si el equipo DSP no está listo, se congela
+# una v0.1 versionada y se negocia sobre algo concreto en lugar de sobre nada.
+# Cualquier cambio de formato sube `version_minor` y actualiza los tests.
+#
+# Reglas del formato:
+#   * Little-endian, empaquetado, sin relleno implícito. Todo relleno es un campo.
+#   * Solo enteros en el cable. Nada de coma flotante: el DRx y el DSP tienen que
+#     estar de acuerdo bit a bit y los formatos flotantes no lo garantizan entre
+#     arquitecturas y compiladores distintos.
+#   * Los ángulos viajan como cuenta CRUDA del encoder, no en grados. La
+#     conversión a grados necesita constantes de calibración, y ese es trabajo del
+#     consumidor: el DRx no debe perder información redondeando.
+
+[meta]
+name = "drx_dsp"
+version_major = 0
+version_minor = 1
+magic = 0x4C4D4452  # "LMDR" en ASCII, little-endian
+endianness = "little"
+
+# ---------------------------------------------------------------------------
+# Cabecera común a todos los mensajes.
+# ---------------------------------------------------------------------------
+[[header.fields]]
+name = "magic"
+type = "u32"
+doc = "0x4C4D4452. Si no coincide, el flujo no es de este contrato."
+
+[[header.fields]]
+name = "version_major"
+type = "u8"
+doc = "Incompatible al cambiar."
+
+[[header.fields]]
+name = "version_minor"
+type = "u8"
+doc = "Compatible hacia atrás dentro del mismo major."
+
+[[header.fields]]
+name = "msg_type"
+type = "u8"
+doc = "Ver la tabla de tipos de mensaje."
+
+[[header.fields]]
+name = "flags"
+type = "u8"
+doc = "Reservado en v0.1; tiene que valer 0."
+
+[[header.fields]]
+name = "payload_len"
+type = "u32"
+doc = "Bytes de carga útil detrás de la cabecera del mensaje."
+
+# ---------------------------------------------------------------------------
+# Mensajes. `dir` es el sentido: "up" del DRx al DSP, "down" del DSP al DRx.
+# ---------------------------------------------------------------------------
+
+[[message]]
+name = "ray"
+type_id = 1
+dir = "up"
+doc = """Cabecera de un rayo. Detrás van `bins`·`n_channels` pares (I,Q) de int16
+entrelazados como I0 Q0 I1 Q1..., canal más rápido que bin."""
+
+fields = [
+  { name = "seq", type = "u32", doc = "Contador de rayos, envuelve. Detecta pérdidas." },
+  { name = "timestamp_ns", type = "u64", doc = "Instante del trigger, reloj del DRx." },
+  { name = "trigger_count", type = "u32", doc = "Disparos desde el arranque." },
+  { name = "azimuth_raw", type = "u32", doc = "Cuenta cruda del encoder SSI de azimut." },
+  { name = "elevation_raw", type = "u32", doc = "Cuenta cruda del encoder SSI de elevación." },
+  { name = "prf_div", type = "u32", doc = "Divisor de PRF vigente. PRF = FS_HZ/prf_div." },
+  { name = "bins", type = "u16", doc = "Bins de rango en este rayo." },
+  { name = "pulse_width_idx", type = "u8", doc = "Índice en la tabla de anchos de pulso." },
+  { name = "pulse_mode", type = "u8", doc = "Modo de pulso vigente." },
+  { name = "cell_mode", type = "u8", doc = "0 = celda fina, 1 = celda gruesa." },
+  { name = "n_channels", type = "u8", doc = "Canales presentes en la carga útil." },
+  { name = "channel_mask", type = "u8", doc = "Qué canales físicos son, bit por canal." },
+  { name = "ray_flags", type = "u8", doc = "Ver la tabla de banderas de rayo." },
+]
+
+[[message]]
+name = "status"
+type_id = 2
+dir = "up"
+doc = "Status y BITE. Se emite periódicamente y ante cualquier cambio de estado."
+
+fields = [
+  { name = "uptime_s", type = "u32", doc = "Segundos desde el arranque del firmware." },
+  { name = "bite_flags", type = "u32", doc = "Ver la tabla de banderas de BITE." },
+  { name = "ssa_underruns", type = "u32", doc = "Underruns de la fuente de muestras." },
+  { name = "dma_overruns", type = "u32", doc = "Overruns del camino DMA." },
+  { name = "ssi_errors", type = "u32", doc = "Timeouts y tramas malas de los encoders." },
+  { name = "ddc_overflows", type = "u32", doc = "Muestras saturadas a la salida del DDC." },
+  { name = "last_error", type = "u8", doc = "Último código de error del plano de control." },
+  { name = "pad0", type = "u8", doc = "Relleno explícito; vale 0." },
+  { name = "pad1", type = "u16", doc = "Relleno explícito; vale 0." },
+]
+
+[[message]]
+name = "config"
+type_id = 3
+dir = "down"
+doc = """Configuración completa. Se aplica de forma atómica: o entra entera o se
+rechaza entera y el estado anterior se preserva."""
+
+fields = [
+  { name = "seq", type = "u32", doc = "Se devuelve tal cual en el config_ack." },
+  { name = "prf_div", type = "u32", doc = "Divisor de PRF. PRF = FS_HZ/prf_div." },
+  { name = "range_bins", type = "u16", doc = "Bins de rango pedidos." },
+  { name = "pulse_width_idx", type = "u8", doc = "Índice en la tabla de anchos de pulso." },
+  { name = "pulse_mode", type = "u8", doc = "Modo de pulso." },
+  { name = "cell_mode", type = "u8", doc = "0 = celda fina, 1 = celda gruesa." },
+  { name = "channel_mask", type = "u8", doc = "Canales a capturar." },
+  { name = "scan_mode", type = "u8", doc = "0 = split cut, 1 = batch cut, 2 = doppler cut." },
+  { name = "pad0", type = "u8", doc = "Relleno explícito; vale 0." },
+  { name = "trigger_delay_0", type = "u32", doc = "Retardo del trigger 0, en ciclos de fs." },
+  { name = "trigger_delay_1", type = "u32", doc = "Retardo del trigger 1, en ciclos de fs." },
+  { name = "trigger_delay_2", type = "u32", doc = "Retardo del trigger 2, en ciclos de fs." },
+  { name = "trigger_delay_3", type = "u32", doc = "Retardo del trigger 3, en ciclos de fs." },
+  { name = "trigger_width_0", type = "u32", doc = "Ancho del trigger 0, en ciclos de fs." },
+  { name = "trigger_width_1", type = "u32", doc = "Ancho del trigger 1, en ciclos de fs." },
+  { name = "trigger_width_2", type = "u32", doc = "Ancho del trigger 2, en ciclos de fs." },
+  { name = "trigger_width_3", type = "u32", doc = "Ancho del trigger 3, en ciclos de fs." },
+]
+
+[[message]]
+name = "config_ack"
+type_id = 4
+dir = "up"
+doc = "Respuesta a un config. `error` distinto de 0 significa que NO se aplicó nada."
+
+fields = [
+  { name = "seq", type = "u32", doc = "El `seq` del config al que responde." },
+  { name = "error", type = "u8", doc = "Código de error; 0 es aceptado." },
+  { name = "pad0", type = "u8", doc = "Relleno explícito; vale 0." },
+  { name = "pad1", type = "u16", doc = "Relleno explícito; vale 0." },
+]
+
+[[message]]
+name = "afc"
+type_id = 5
+dir = "down"
+doc = """Corrección AFC: nueva palabra de fase del NCO, calculada por el DSP.
+
+Viaja como palabra de fase absoluta y no como offset en Hz a propósito: en Hz
+haría falta que el DSP conociera `FS_HZ` del DRx, y eso rompería D-02 en cuanto
+las dos plataformas divergieran."""
+
+fields = [
+  { name = "nco_phase_inc", type = "u64", doc = "Palabra de fase absoluta del NCO." },
+  { name = "apply_at_seq", type = "u32", doc = "Rayo a partir del cual aplicar; 0 = ya." },
+  { name = "pad0", type = "u32", doc = "Relleno explícito; vale 0." },
+]
+
+# ---------------------------------------------------------------------------
+# Enumeraciones.
+# ---------------------------------------------------------------------------
+
+[[enum]]
+name = "error"
+type = "u8"
+doc = "Códigos de rechazo del plano de control."
+values = [
+  { name = "ok", value = 0, doc = "Aceptado." },
+  { name = "prf_range_illegal", value = 1, doc = "PRF y extensión de rango incompatibles (D-09)." },
+  { name = "unsupported_version", value = 2, doc = "version_major desconocido." },
+  { name = "unknown_message", value = 3, doc = "msg_type desconocido." },
+  { name = "bad_length", value = 4, doc = "payload_len no cuadra con el mensaje." },
+  { name = "cell_mode_invalid", value = 5, doc = "cell_mode fuera de {0,1}." },
+  { name = "pulse_width_invalid", value = 6, doc = "Índice de ancho de pulso fuera de tabla." },
+  { name = "channel_mask_invalid", value = 7, doc = "Máscara de canales vacía o fuera de rango." },
+  { name = "scan_mode_invalid", value = 8, doc = "Modo de barrido desconocido." },
+  { name = "not_configured", value = 9, doc = "Llegó un mandato antes de la primera configuración." },
+]
+
+[[enum]]
+name = "ray_flag"
+type = "u8"
+doc = "Banderas por rayo. Un rayo con problemas se MARCA, no se descarta."
+values = [
+  { name = "azel_invalid", value = 1, doc = "Lectura de encoder inválida en este rayo." },
+  { name = "ddc_overflow", value = 2, doc = "Hubo saturación en el DDC dentro del rayo." },
+  { name = "truncated", value = 4, doc = "El rayo salió corto." },
+  { name = "first_after_config", value = 8, doc = "Primer rayo con la configuración nueva." },
+]
+
+[[enum]]
+name = "bite_flag"
+type = "u32"
+doc = "Catálogo de fallos del plan de testing."
+values = [
+  { name = "ssa_underrun", value = 1, doc = "Underrun de la fuente de muestras." },
+  { name = "dma_overrun", value = 2, doc = "Overrun del camino DMA." },
+  { name = "ssi_timeout", value = 4, doc = "Timeout de encoder SSI." },
+  { name = "ssi_frame_error", value = 8, doc = "Trama SSI corta, larga o salto de Gray." },
+  { name = "mmcm_unlocked", value = 16, doc = "Pérdida de lock del MMCM." },
+  { name = "link_down", value = 32, doc = "Enlace Ethernet caído." },
+  { name = "config_rejected", value = 64, doc = "Se rechazó una configuración." },
+]

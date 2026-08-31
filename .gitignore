@@ -19,6 +19,9 @@ runs/
 *.elf
 *.xsa
 
+# Entorno de Python del repositorio
+.venv/
+
 # Python (modelo dorado, cocotb)
 __pycache__/
 *.pyc

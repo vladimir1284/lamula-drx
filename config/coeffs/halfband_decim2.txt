@@ -1,0 +1,34 @@
+# GENERADO por tools/gen_coeffs.py. NO EDITAR A MANO.
+#
+# Semibanda de la etapa ÷2 del modo grueso (250 m). Es lo que hace que
+# R2 = 2·R1 sea una etapa añadida y no una segunda cadena de diezmado.
+#
+# taps=23 decim=2 coeff_bits=18
+# Bandas (norm. a fs/R1): paso<=0.15 eliminada>=0.25 alias>=0.35
+# Rizado de banda de paso ~1,2 dB en el borde: aceptable para Z0, lo afina
+# Z1 contra el cierre de recursos del FIR Compiler.
+# Ganancia de continua entera: 328067
+
+-61
+19
+-180
+-465
+1104
+4001
+4
+-13792
+-14731
+26746
+95853
+131071
+95853
+26746
+-14731
+-13792
+4
+4001
+1104
+-465
+-180
+19
+-61

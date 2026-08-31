@@ -1,0 +1,17 @@
+// Waivers de lint para Verilator.
+//
+// Cada waiver lleva su razón. Un waiver sin razón es deuda; con razón es una
+// decisión. Este fichero se pasa a `verilator --lint-only` y al build de sim.
+
+`verilator_config
+
+// drx_ssa_pkg define el formato del interfaz SSA (D-01). En Z0 no hay todavía
+// ninguna implementación que lo consuma, así que sus anchos aparecen sin usar.
+// El waiver desaparece solo en Z1, cuando `vector_source` los use.
+lint_off -rule UNUSEDPARAM -file "*/drx_ssa_pkg.sv"
+
+// drx_params_pkg es el paquete de parámetros: por definición contiene valores
+// que un top concreto no usa (el latido no usa los factores del DDC). Exigir que
+// todo top use todos los parámetros obligaría a trocear el paquete, que es
+// justamente lo que D-02 prohíbe.
+lint_off -rule UNUSEDPARAM -file "*/drx_params_pkg.sv"

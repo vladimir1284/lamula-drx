@@ -14,10 +14,12 @@ Lee, en este orden:
 
 ## Lo primero que hay que hacer
 
-La **fase Z0**: repositorio, flujo Vivado no-project en Tcl, paquete único de parámetros con
-`FS_HZ`, runner cocotb de doble backend, modelo dorado en NumPy, y el congelado del esquema DRx↔DSP
-v0.1. Nada de funcionalidad. El hito es CI verde sobre un diseño vacío que produce un `BOOT.BIN`
-reproducible byte a byte.
+La **fase Z0** ya está construida en su mayor parte: `docs/implementacion/substrato.md` dice qué
+existe, qué falta y cómo se corre. Léela antes de tocar nada.
+
+Antes de commitear, `make check` tiene que pasar limpio. Corre los mismos gates que el CI: los tres
+`--check` de regeneración, el gate de constante de reloj, el lint de Python y de HDL, y la regresión
+entera.
 
 No empieces por el DDC. El substrato primero no es burocracia: sin flujo guionizado y sin regresión,
 el modelo de entrega acelerado por agentes no funciona, y reconstruirlo al final cuesta un mes.
@@ -46,6 +48,15 @@ el modelo de entrega acelerado por agentes no funciona, y reconstruirlo al final
 - **El contrato DRx↔DSP es la única interfaz externa.** El DRx no habla con el RCP ni con ORPG. El
   esquema vive en `contract/` como fuente única y genera código para los dos lados; no escribas las
   dos implementaciones a mano.
+- **Nada generado se edita a mano.** `rtl/generated/`, `fw/include/drx_params.h`,
+  `tcl/generated/`, `config/coeffs/` y `contract/generated/` son salida de `tools/gen_*.py`. Se
+  cambia la fuente y se regenera con `make gen`; el CI falla si el árbol y la fuente no coinciden.
+- **No cambies `R₁`, `R₂` ni `fs` sin el ADR que sustituya a D-04.** [P-01](docs/alcance/pendientes.md#p-01)
+  y [P-08](docs/alcance/pendientes.md#p-08) siguen abiertos. Cuando se cierren, el cambio es de dos
+  líneas en `config/params.toml` más `make gen`: esa es la razón de que ese fichero exista.
+- **La huella del oráculo no se actualiza a la ligera.** `model/tests/test_chain.py` fija el SHA-256
+  de la salida del modelo para un vector conocido. Si un cambio la mueve, di en el commit por qué
+  cambió el oráculo — no la actualices en silencio.
 - **Cada PR que cambie algo que se comporta distinto en la ZU9 actualiza
   `docs/portabilidad/registro-delta.md` en el mismo PR.**
 

@@ -1,0 +1,8 @@
+# Dependencias del modelo dorado, del banco de simulación y de las herramientas.
+# Versiones pinadas: el modelo dorado es el oráculo y no puede cambiar de
+# resultado porque una dependencia se actualice sola.
+numpy==2.3.4
+scipy==1.16.3
+cocotb==1.9.2
+pytest==8.4.2
+ruff==0.14.5

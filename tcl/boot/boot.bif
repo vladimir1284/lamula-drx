@@ -1,0 +1,14 @@
+// Descriptor de BOOT.BIN para bootgen.
+//
+// FASE Z0: el ELF del firmware todavía no existe (fw/ es Z4). Este fichero está
+// escrito para que el paso de empaquetado esté decidido y guionizado desde el
+// principio; `tools/make_boot.sh` explica qué falta.
+//
+// El orden importa: FSBL primero, luego el bitstream, luego la aplicación.
+
+the_ROM_image:
+{
+  [bootloader] fsbl.elf
+  drx_top.bin
+  drx_app.elf
+}

@@ -1,0 +1,94 @@
+# LAMULA DRx — paquete único de parámetros
+#
+# Esta es la ÚNICA fuente de verdad temporal y numérica del proyecto (D-02).
+# `rtl/`, `fw/`, `sim/` y `model/` consumen este fichero; ninguno define su propia copia:
+#
+#   rtl/   ← rtl/generated/drx_params_pkg.sv   (generado por tools/gen_params.py)
+#   fw/    ← fw/include/drx_params.h           (generado por tools/gen_params.py)
+#   sim/   ← model.drx_model.params            (lee este fichero directamente)
+#   model/ ← model.drx_model.params            (lee este fichero directamente)
+#
+# Regenerar tras cualquier cambio:  python3 tools/gen_params.py
+# El CI falla si los ficheros generados no coinciden con este.
+
+schema_version = 1
+
+# ---------------------------------------------------------------------------
+# Invariantes de dilatación (D-02)
+#
+# Todo lo de esta sección es IDÉNTICO en ZedBoard y en ZU9. Es lo que hace que
+# los testbenches, los vectores y los valores esperados sean bit a bit los
+# mismos en las dos plataformas. Si añades algo aquí, tiene que ser invariante;
+# si depende de `fs`, va en [platform] y se deriva.
+# ---------------------------------------------------------------------------
+[invariant]
+# IF normalizado = IF / fs. 60/250 en ZU9, 24/100 en ZedBoard: idéntico.
+if_norm_num = 6
+if_norm_den = 25
+
+# Factores de diezmado. D-04, congelada PROVISIONALMENTE.
+#
+#   AVISO: P-01 y P-08 están abiertos y los dos apuntan a que estos valores
+#   cambian. R2 = 416 declara una celda de 249 m, que ORPG descarta (lista
+#   blanca, no banda de tolerancia). Los candidatos vivos son R1/R2 = 120/240
+#   con fs = 143,9 MHz (P-08) y R2 = 417 con cadena propia (P-01, opción B).
+#   NO los toques sin el ADR que sustituya a D-04. Cambiarlos aquí es un diff
+#   de dos líneas más `python3 tools/gen_params.py`: ese es exactamente el
+#   motivo por el que viven en este fichero y no en el RTL.
+r1 = 208
+r2 = 416
+
+# Conteo de bins por modo, tal como sale de D-04.
+bins_mode_fine = 3689
+bins_mode_coarse = 1844
+
+# Canales.
+n_rx_ch = 4
+n_tx_burst_ch = 2
+
+# Anchos de datos.
+sample_bits = 16    # muestra de ADC por la SSA
+iq_bits = 16        # I y Q a la salida del DDC, por componente
+nco_phase_bits = 32
+nco_out_bits = 16
+
+# PRF: valores de REGISTRO, idénticos en las dos plataformas. La PRF de pared
+# es fs / prf_div y por tanto sí se dilata.
+prf_div_min = 208333    # 1200 Hz a 250 MHz
+prf_div_max = 1250000   #  200 Hz a 250 MHz
+
+# Ancho de pulso en CICLOS de fs: idéntico en las dos plataformas (0,8 / 1,66 /
+# 3,3 µs a 250 MHz; 2,0 / 4,15 / 8,25 µs a 100 MHz).
+pulse_width_cycles = [200, 415, 825]
+
+n_triggers = 4
+
+# ---------------------------------------------------------------------------
+# Descomposición de la cadena de diezmado
+#
+# r1 = cic_rate * fir_decim. El modo grueso añade una etapa ÷2 (D-04: r2 = 2·r1).
+# Z1 es dueña de estos valores; aquí están para que el modelo dorado y el RTL
+# lean la misma descomposición.
+# ---------------------------------------------------------------------------
+[chain]
+cic_stages = 5
+cic_rate = 52
+cic_diff_delay = 1
+fir_decim = 4
+fir_taps = 63
+coarse_extra_decim = 2
+
+# ---------------------------------------------------------------------------
+# Plataformas. Lo único que cambia entre ellas es `fs_hz` y la pieza.
+# ---------------------------------------------------------------------------
+[platform.zedboard]
+fs_hz = 100_000_000
+part = "xc7z020clg484-1"
+board = "Digilent ZedBoard rev. D"
+is_target = false
+
+[platform.zu9]
+fs_hz = 250_000_000
+part = "xczu9eg-ffvb1156-2-e"
+board = "portadora ZU9 + 2x VadaTech FMC213 (no comprada)"
+is_target = true

@@ -1,0 +1,101 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  substrato:
+    name: Gates de substrato
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Instalar Verilator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y verilator
+
+      - name: Entorno de Python
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python -r requirements-dev.txt
+
+      # --- Gates de fuente única de verdad ---------------------------------
+      # Los tres comprueban lo mismo desde ángulos distintos: que no exista una
+      # segunda copia de algo que solo puede tener una.
+
+      - name: Paquete de parámetros al día
+        run: .venv/bin/python tools/gen_params.py --check
+
+      - name: Coeficientes congelados al día
+        run: .venv/bin/python tools/gen_coeffs.py --check
+
+      - name: Contrato DRx↔DSP al día
+        run: .venv/bin/python tools/gen_contract.py --check
+
+      - name: Sin constantes de reloj hardcodeadas
+        run: .venv/bin/python tools/check_hardcoded_clock.py
+
+      # --- Lint -------------------------------------------------------------
+
+      - name: Lint de Python
+        run: .venv/bin/ruff check .
+
+      - name: Lint de HDL
+        run: |
+          verilator --lint-only -Wall --timing \
+            sim/verilator_waivers.vlt \
+            $(grep -v '^\s*#' rtl/filelist.f | grep -v '^\s*$') \
+            --top-module drx_top
+
+      # --- Regresión --------------------------------------------------------
+      # Cubre el modelo dorado, la suite L0 sobre Verilator, los tests de
+      # contrato C↔Python y la auto-comprobación de parámetros del firmware en
+      # las dos plataformas.
+
+      - name: Regresión
+        run: .venv/bin/python -m pytest -q
+
+  gateware:
+    name: Síntesis y BOOT.BIN
+    # Vivado no corre en un runner alojado por GitHub: hace falta uno propio con
+    # la licencia y la instalación. Mientras no exista, este job no se ejecuta y
+    # el flujo de tcl/ queda ESCRITO PERO NO EJECUTADO — está declarado en
+    # docs/alcance/pendientes.md, no escondido.
+    if: ${{ vars.HAS_VIVADO_RUNNER == 'true' }}
+    runs-on: [self-hosted, vivado]
+    needs: substrato
+    strategy:
+      matrix:
+        platform: [zedboard, zu9]
+    steps:
+      - uses: actions/checkout@v4
+
+      # El cierre de temporización se corre TAMBIÉN con el FS_HZ real de la ZU9
+      # aunque no haya placa: es la única forma de que la deuda de la entrada D2
+      # del registro delta no se descubra el día que llegue el hardware.
+      - name: Síntesis e implementación
+        run: |
+          vivado -mode batch -source tcl/build.tcl -tclargs \
+            -platform ${{ matrix.platform }} -step bitstream \
+            -outdir build/gw/${{ matrix.platform }}
+
+      - name: BOOT.BIN reproducible
+        if: matrix.platform == 'zedboard'
+        run: tools/make_boot.sh zedboard
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gateware-${{ matrix.platform }}
+          path: |
+            build/gw/${{ matrix.platform }}/*.rpt
+            build/gw/${{ matrix.platform }}/*.bit

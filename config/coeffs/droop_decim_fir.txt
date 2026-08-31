@@ -1,0 +1,75 @@
+# GENERADO por tools/gen_coeffs.py. NO EDITAR A MANO.
+#
+# FIR compensador de droop del CIC + antialias del diezmado final.
+# Estos son los coeficientes que se cargan en el FIR Compiler y los que
+# usa el modelo dorado: un solo juego, o el oráculo deja de serlo.
+#
+# CIC: N=5 R=52 M=1
+# FIR: taps=63 decim=4 coeff_bits=18
+# Bandas (norm. a la fs de entrada del FIR): paso<=0.09 eliminada>=0.14 alias>=0.160
+# Escala de cuantización: pico float=2.372930894e-01
+# Ganancia de continua entera: 552725
+
+44
+-33
+-112
+-150
+-108
+17
+166
+244
+183
+28
+-77
+-4
+191
+219
+-256
+-1249
+-2175
+-1988
+143
+3930
+7492
+7906
+2859
+-7334
+-18593
+-23885
+-16111
+8094
+45606
+86832
+118948
+131071
+118948
+86832
+45606
+8094
+-16111
+-23885
+-18593
+-7334
+2859
+7906
+7492
+3930
+143
+-1988
+-2175
+-1249
+-256
+219
+191
+-4
+-77
+28
+183
+244
+166
+17
+-108
+-150
+-112
+-33
+44

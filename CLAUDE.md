@@ -15,9 +15,25 @@ con el RCP ni con ORPG.
 
 ## Estado, a 30 de agosto de 2026
 
-**Fase Z0 — substrato. No empezada.** El repositorio contiene documentación y nada más: no hay RTL,
-ni firmware, ni flujo Tcl, ni testbenches, ni modelo dorado. El primer trabajo de código es
-literalmente el primer punto de `docs/implementacion/fases.md`.
+**Fase Z0 — substrato. En curso.** Ya hay código, y corre: `make check` deja 65 tests en verde sobre
+Verilator, gcc y NumPy. Lo construido está descrito punto por punto en
+`docs/implementacion/substrato.md`; el resumen es:
+
+- Paquete único de parámetros en `config/params.toml`, con generación a SystemVerilog, C y Tcl, gate
+  de regeneración y gate de constante de reloj hardcodeada — los dos fallan la build.
+- Modelo dorado en NumPy: NCO, mezclador, CIC de Hogenauer, FIR de coeficientes congelados, enrejado
+  en rango y generador de vectores con degradaciones. Con huella SHA-256 del oráculo en los tests.
+- Runner cocotb con L0 sobre Verilator en verde. **L1 sobre xsim no existe**: cocotb no tiene ese
+  backend, y eso es el hallazgo nuevo P-09.
+- Contrato DRx↔DSP v0.1 congelado, con codegen para C, Rust y Python y test de contrato que compara
+  bytes entre C y Python.
+- RTL: diseño vacío a propósito (latido derivado de `FS_HZ`) más el paquete del interfaz SSA.
+- Firmware: auto-comprobación de parámetros que compila para las dos plataformas.
+
+**Lo que no está hecho, y es lo que impide cerrar el hito ZM0:** el flujo Tcl de Vivado está escrito
+y revisado pero **nunca ejecutado** —no hay Vivado en el entorno ni runner de CI con licencia— y por
+tanto no hay bitstream ni `BOOT.BIN` reproducible byte a byte. Ver los supuestos A7 y A8 en
+`docs/alcance/pendientes.md`.
 
 Lo que sí está hecho y verificado:
 
@@ -44,14 +60,19 @@ de ZedBoard y el project plan original de 34 semanas para la ZU9.
 
 ## Lo primero que hay que hacer
 
-**Fase Z0**, en este orden: estructura de repositorio, flujo Vivado no-project en Tcl, paquete único
-de parámetros con `FS_HZ`, runner cocotb de doble backend, modelo dorado en NumPy, y el congelado del
-esquema DRx↔DSP v0.1. Nada de funcionalidad. El hito es CI verde sobre un diseño vacío que produce un
-`BOOT.BIN` reproducible byte a byte.
+Cerrar lo que le falta a Z0, en este orden:
+
+1. **Conseguir una máquina con Vivado** y ejecutar `tcl/build.tcl` para las dos plataformas. Hasta
+   que eso pase, el flujo está escrito pero no probado y ZM0 no se puede declarar.
+2. **Decidir P-09**: qué hace L1 ahora que se sabe que cocotb no habla con xsim.
+3. **Empaquetar el `BOOT.BIN`** y comprobar la reproducibilidad con `tools/make_boot.sh`.
 
 **No empieces por el DDC.** El substrato primero no es burocracia: sin flujo guionizado y sin
 regresión el modelo de entrega acelerado por agentes no funciona, y reconstruirlo al final cuesta un
 mes.
+
+Y no toques `R₁`/`R₂` ni `fs` en `config/params.toml` hasta que haya ADR: P-01 y P-08 siguen
+abiertos. Cuando lo haya, el cambio es de dos líneas más `python3 tools/gen_params.py`.
 
 ## Lo que está bloqueado, y por quién
 
@@ -73,9 +94,17 @@ documentado en `lamula-rcp/spike-fase0/RESULTADO-rda-orpg.md` de que eso no bast
 # sitio de documentación
 uvx --with 'mkdocs-material==9.*' mkdocs serve
 uvx --with 'mkdocs-material==9.*' mkdocs build --strict   # tiene que pasar limpio antes de commitear
-```
 
-Todavía no hay comandos de build de gateware ni de firmware: los crea Z0.
+# substrato
+make venv          # crea .venv con requirements-dev.txt (pinado)
+make check         # todos los gates del CI que corren sin Vivado
+make gen           # regenera parámetros, coeficientes y contrato
+make sim           # solo la suite L0 sobre Verilator
+
+# gateware: NO EJECUTADO NUNCA, hace falta Vivado
+vivado -mode batch -source tcl/build.tcl -tclargs -platform zedboard -step bitstream
+tools/make_boot.sh zedboard
+```
 
 ## Advertencia que hay que repetir
 

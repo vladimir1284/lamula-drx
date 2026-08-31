@@ -1,0 +1,24 @@
+# Configuración de herramientas de Python. NO es un paquete instalable: `model/`
+# y `sim/` se consumen desde el path, no desde site-packages, para que no exista
+# una copia instalada que pueda quedar desincronizada del árbol.
+#
+# Entorno:  uv venv .venv && uv pip install -r requirements-dev.txt
+
+[tool.pytest.ini_options]
+# `sim/tb` va en el path porque cocotb pasa el sys.path del proceso padre
+# al simulador: es así como el backend encuentra los testbenches.
+pythonpath = ["model", "sim", "sim/tb"]
+testpaths = ["model/tests", "sim/tests", "contract/tests", "fw/tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Salida de codegen: se revisa el generador, no lo generado.
+extend-exclude = ["contract/generated", "build", ".venv", "site"]
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, orden de imports, modernización y bugbear. El modelo
+# dorado es el oráculo: un import sin usar o un mutable por defecto ahí valen
+# más caros que en cualquier otro sitio del repositorio.
+select = ["E", "F", "I", "UP", "B", "W"]

@@ -277,6 +277,40 @@ ADR que sustituya a D-04 fijando `fs`, R₁ y R₂ juntos. Si el convertidor no 
 247 MHz con R₁ = 206 / R₂ = 412 (54 m de error, reloj en rejilla de 1 MHz, cadena única); y si
 tampoco, la Opción B de P-01.
 
+### P-09 · cocotb no tiene backend para xsim, y D-05 lo daba por hecho { #p-09 }
+
+**Estado:** abierto, descubierto el 30 de agosto de 2026 al construir el substrato ·
+**Dueño:** equipo · **Bloquea:** el nivel L1 del [plan de testing](../pruebas/plan-testing.md).
+
+[D-05](decisiones.md#d-05) dice que un único runner de cocotb cubre los dos backends, Verilator para
+L0 y xsim para L1. **Verilator sí; xsim no.** Los runners que trae cocotb 1.9.2 son `icarus`,
+`questa`, `ghdl`, `nvc`, `riviera`, `verilator` y `xcelium`. No hay xsim, y no es una omisión de la
+versión pinada: cocotb nunca ha soportado el simulador de Vivado.
+
+Esto importa porque L1 es exactamente el nivel que valida lo que Verilator **no puede** elaborar: la
+IP del DDC. Sin L1 no hay comparación bit a bit contra el DDS/CIC/FIR Compiler reales, que es el
+hito ZM1 entero.
+
+Opciones, ordenadas por coste creciente. **Todo lo que sigue es inferencia**, no hay ninguna
+probada en este entorno:
+
+1. **Testbenches SystemVerilog nativos para xsim en L1, fuera de cocotb.** El oráculo sigue siendo
+   el modelo dorado: se le hace escribir vectores de entrada y de salida esperada a fichero, y el
+   testbench de xsim los lee y compara. Se pierde el «un solo runner» de D-05 y se gana no depender
+   de ninguna licencia nueva. Es la opción recomendada.
+2. **Licencia de Questa o Riviera.** cocotb los soporta y elaboran IP de Xilinx. Coste de licencia
+   por puesto, y hay que verificar que las bibliotecas compiladas de Xilinx están disponibles para
+   esa versión.
+3. **Netlist funcional post-síntesis simulada en Verilator.** Vivado puede exportar la IP como
+   netlist; Verilator podría elaborarla. Requiere Vivado igualmente, es lento y el resultado ya no
+   es la IP sino su síntesis. Poco atractivo.
+4. **Escribir un backend de xsim para cocotb.** Semanas de trabajo sobre la interfaz VPI de xsim,
+   fuera del alcance de este proyecto.
+
+**Condición de cierre:** decisión escrita sobre cuál de las opciones se toma, y una enmienda a D-05
+que corrija la frase del runner único. Mientras tanto `sim/runner.py` declara el backend L1 y falla
+con un mensaje que nombra este hallazgo, en vez de estar mudo.
+
 ## Supuestos de entorno a verificar
 
 Estos son supuestos del plan de ZedBoard. Todo número marcado como *estimación* en este sitio es una
@@ -290,6 +324,8 @@ inferencia a partir de hojas de datos y **debe verificarse en banco** antes de c
 | A4 | El RTL custom se puede escribir en SystemVerilog, sin mandato VHDL | Decisión de equipo — ver [D-05](decisiones.md#d-05) |
 | A5 | La placa/MCU auxiliar para SSI tiene al menos un periférico SPI esclavo o PIO a ≥2 MHz | Hoja de datos del MCU |
 | A6 | Hay acceso a un osciloscopio de ≥100 MHz para medir jitter de trigger | Inventario de laboratorio |
+| A7 | Existe un runner de CI con Vivado y licencia para el job `gateware` | Hoy **no existe**: el job está condicionado a la variable `HAS_VIVADO_RUNNER`, y sin él ni el flujo de `tcl/` ni el `BOOT.BIN` se han ejecutado nunca |
+| A8 | La versión de Vivado está pinada en el runner | Sin pinarla el `BOOT.BIN` no puede ser reproducible byte a byte, que es el hito ZM0 |
 
 ## Presupuesto de 1GbE: confirmado, con una salvedad
 
