@@ -11,7 +11,7 @@
 package drx_params_pkg;
 
   localparam int SCHEMA_VERSION = 1;
-  localparam string PARAMS_SHA256 = "e90ab8bb9c31092b8cab9c74acc55f0c917f5db1e544915f775296748a10b95a";
+  localparam string PARAMS_SHA256 = "32f277ddd53e943f63e7352663ba588ddb4637284284f9b8756149d5e9379499";
 
   // -------------------------------------------------------------------------
   // Plataforma seleccionada. Se sobreescribe en la línea de comandos de síntesis

@@ -6,7 +6,7 @@
 
 namespace eval ::drx {
   variable SCHEMA_VERSION 1
-  variable PARAMS_SHA256 e90ab8bb9c31092b8cab9c74acc55f0c917f5db1e544915f775296748a10b95a
+  variable PARAMS_SHA256 32f277ddd53e943f63e7352663ba588ddb4637284284f9b8756149d5e9379499
 
   # zedboard: Digilent ZedBoard rev. D
   variable FS_HZ_ZEDBOARD 100000000

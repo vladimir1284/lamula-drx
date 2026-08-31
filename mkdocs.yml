@@ -49,6 +49,7 @@ nav:
       - Contexto: alcance/contexto.md
       - Decisiones congeladas: alcance/decisiones.md
       - Pendientes y hallazgos abiertos: alcance/pendientes.md
+      - ADR-001 · fs, R₁ y R₂ (propuesta): alcance/adr-001-fs-r1-r2.md
   - Plataforma:
       - Frontera y cobertura: plataforma/zedboard.md
       - Dilatación temporal (FS_HZ): plataforma/dilatacion-temporal.md

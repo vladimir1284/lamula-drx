@@ -37,6 +37,13 @@ DDC se compara bit a bit contra el modelo. Detalle en [Modelo dorado](../pruebas
 
 ## D-04 · Factores de diezmado R₁ = 208, R₂ = 416 { #d-04 }
 
+!!! danger "Propuesta de sustitución sobre la mesa"
+    [ADR-001](adr-001-fs-r1-r2.md) propone `fs` = 143,9 MHz con R₁ = 120 y R₂ = 240, y está
+    pendiente de firma. Mientras no se firme, esta decisión sigue vigente **provisionalmente** y
+    `config/params.toml` no se toca. Los motivos están en [P-01](pendientes.md#p-01) y
+    [P-08](pendientes.md#p-08); el resumen es que R₂ = 416 declara una celda de 249 m y ORPG
+    descarta el radial en vez de degradarlo.
+
 A 250 MSPS cada muestra cubre 0,5996 m de rango, y **no existe un R entero que dé exactamente
 125 m ni 250 m**. Se adopta R₁ = 208 y R₂ = 416, lo que da celdas de 124,71 m y 249,41 m — error
 de −0,24 %, unos 0,6 m en la celda grande — y mantiene R₂ = 2·R₁, es decir una sola cadena con una

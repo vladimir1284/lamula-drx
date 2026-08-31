@@ -32,9 +32,11 @@ if_norm_den = 25
 #   cambian. R2 = 416 declara una celda de 249 m, que ORPG descarta (lista
 #   blanca, no banda de tolerancia). Los candidatos vivos son R1/R2 = 120/240
 #   con fs = 143,9 MHz (P-08) y R2 = 417 con cadena propia (P-01, opción B).
-#   NO los toques sin el ADR que sustituya a D-04. Cambiarlos aquí es un diff
-#   de dos líneas más `python3 tools/gen_params.py`: ese es exactamente el
-#   motivo por el que viven en este fichero y no en el RTL.
+#   NO los toques sin el ADR que sustituya a D-04. Ese ADR ya está redactado y
+#   espera firma: docs/alcance/adr-001-fs-r1-r2.md, que propone 120/240 con
+#   fs = 143,9 MHz y lleva escrito el diff exacto de este fichero. Aplicarlo es
+#   ese diff más `python3 tools/gen_params.py`: ese es exactamente el motivo por
+#   el que estos valores viven aquí y no en el RTL.
 r1 = 208
 r2 = 416
 

@@ -74,7 +74,7 @@ bins, cuatro por encima del tope).
 
     La evidencia ya es suficiente para decir que **R₂ = 416 declarado como 249 es la opción
     equivocada**, pero sustituir D-04 pide un ADR firmado por los especialistas, no una edición de
-    este documento. Y antes de escribir ese ADR hay que resolver [P-08](#p-08): si `fs` puede
+    este documento. Ese ADR ya está redactado y espera firma: [ADR-001](adr-001-fs-r1-r2.md). Y antes de escribir ese ADR hay que resolver [P-08](#p-08): si `fs` puede
     moverse a 249,427325 MHz, R₂ = 416 pasa a dar 250 m exactos y el dilema desaparece sin tocar
     los factores de diezmado.
 
@@ -214,8 +214,11 @@ Lo que trae de regalo:
   etapas cómodas.
 - **R₂ = 2·R₁ intacto:** se conserva la cadena única con etapa ÷2. Una sola cadena de diezmado, no
   dos.
-- **Menos presión de recursos y de timing**, y en ZedBoard el factor de dilatación baja de 2,5 a
-  1,439, lo que acerca la plataforma de desarrollo a la de destino.
+- **Menos presión de recursos y de timing.** ~~Y en ZedBoard el factor de dilatación baja de 2,5 a
+  1,439.~~ **Corregido el 30 de agosto de 2026:** eso exigiría un `fs` de ZedBoard de 100 MHz, y con
+  `if_norm` = 600/1439 los 100 MHz son ilegales —el IF no caería en hercios enteros, que es una
+  condición que comprueba el paquete de parámetros en las dos plataformas. Ver
+  [ADR-001](adr-001-fs-r1-r2.md), que propone 71,95 MHz y dilatación exactamente 2.
 
 ### Alternativas evaluadas
 
@@ -309,7 +312,8 @@ esta pieza es barato.
 se deriva de `FS_HZ`. Sí cambian R₁ y R₂, que son parámetros de la cadena de diezmado, no
 arquitectura.
 
-**Condición de cierre:** un ADR que sustituya a D-04 fijando `fs`, R₁ y R₂ juntos. **El rate mínimo
+**Condición de cierre:** un ADR que sustituya a D-04 fijando `fs`, R₁ y R₂ juntos. **Escrito el 30
+de agosto de 2026 y pendiente de firma:** [ADR-001](adr-001-fs-r1-r2.md). **El rate mínimo
 del convertidor ya está confirmado y no se opone**, así que no queda ningún dato externo pendiente
 para escribirlo. Los planes de repliegue siguen documentados por si el PLL del FMC213 no sintetiza
 143,9 MHz: 247 MHz con R₁ = 206 / R₂ = 412 (54 m de error, reloj en rejilla de 1 MHz, cadena única)
