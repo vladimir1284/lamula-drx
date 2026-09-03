@@ -1,7 +1,7 @@
 /* GENERADO por tools/gen_contract.py a partir de
  * contract/schema/drx_dsp_v0_1.toml. NO EDITAR A MANO.
  *
- * Contrato DRx↔DSP v0.1 — lado DRx.
+ * Contrato DRx↔DSP v0.2 — lado DRx.
  *
  * Little-endian, empaquetado, sin relleno implícito. Los _Static_assert
  * de abajo fallan la compilación si el compilador añade relleno: es el
@@ -15,7 +15,7 @@
 
 #define DRX_DSP_MAGIC 0x4C4D4452u
 #define DRX_DSP_VERSION_MAJOR 0
-#define DRX_DSP_VERSION_MINOR 1
+#define DRX_DSP_VERSION_MINOR 2
 
 /* Cabecera común a todo mensaje. */
 typedef struct __attribute__((packed)) {
@@ -134,6 +134,7 @@ typedef enum {
   DRX_DSP_RAY_FLAG_DDC_OVERFLOW = 2,  /* Hubo saturación en el DDC dentro del rayo. */
   DRX_DSP_RAY_FLAG_TRUNCATED = 4,  /* El rayo salió corto. */
   DRX_DSP_RAY_FLAG_FIRST_AFTER_CONFIG = 8,  /* Primer rayo con la configuración nueva. */
+  DRX_DSP_RAY_FLAG_TX_POL_V = 16,  /* Este pulso se transmitió en V; a cero, se transmitió en H. Sólo tiene sentido con polarización alternante H/V; en canal único o simultánea (STAR) el bit no se usa y vale 0. */
 } drx_dsp_ray_flag_t;
 
 /* Catálogo de fallos del plan de testing. */

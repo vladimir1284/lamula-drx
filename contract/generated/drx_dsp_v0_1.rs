@@ -1,7 +1,7 @@
 // GENERADO por tools/gen_contract.py a partir de
 // contract/schema/drx_dsp_v0_1.toml. NO EDITAR A MANO.
 //
-// Contrato DRx↔DSP v0.1 — lado DSP.
+// Contrato DRx↔DSP v0.2 — lado DSP.
 //
 // Little-endian, empaquetado. Los `assert!` de tamaño viven en los tests
 // del proyecto DSP; aquí van como constantes para que se puedan comprobar.
@@ -10,7 +10,7 @@
 
 pub const MAGIC: u32 = 0x4C4D4452;
 pub const VERSION_MAJOR: u8 = 0;
-pub const VERSION_MINOR: u8 = 1;
+pub const VERSION_MINOR: u8 = 2;
 
 /// Cabecera común a todo mensaje.
 #[repr(C, packed)]
@@ -214,6 +214,8 @@ pub mod ray_flag {
     pub const TRUNCATED: u8 = 4;
     /// Primer rayo con la configuración nueva.
     pub const FIRST_AFTER_CONFIG: u8 = 8;
+    /// Este pulso se transmitió en V; a cero, se transmitió en H. Sólo tiene sentido con polarización alternante H/V; en canal único o simultánea (STAR) el bit no se usa y vale 0.
+    pub const TX_POL_V: u8 = 16;
 }
 
 /// Catálogo de fallos del plan de testing.

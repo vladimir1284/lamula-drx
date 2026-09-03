@@ -21,7 +21,7 @@
 [meta]
 name = "drx_dsp"
 version_major = 0
-version_minor = 1
+version_minor = 2
 magic = 0x4C4D4452  # "LMDR" en ASCII, little-endian
 endianness = "little"
 
@@ -189,6 +189,7 @@ values = [
   { name = "ddc_overflow", value = 2, doc = "Hubo saturación en el DDC dentro del rayo." },
   { name = "truncated", value = 4, doc = "El rayo salió corto." },
   { name = "first_after_config", value = 8, doc = "Primer rayo con la configuración nueva." },
+  { name = "tx_pol_v", value = 16, doc = "Este pulso se transmitió en V; a cero, se transmitió en H. Sólo tiene sentido con polarización alternante H/V; en canal único o simultánea (STAR) el bit no se usa y vale 0." },
 ]
 
 [[enum]]
