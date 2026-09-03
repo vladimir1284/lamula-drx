@@ -21,7 +21,7 @@
 [meta]
 name = "drx_dsp"
 version_major = 0
-version_minor = 2
+version_minor = 3
 magic = 0x4C4D4452  # "LMDR" en ASCII, little-endian
 endianness = "little"
 
@@ -178,6 +178,19 @@ values = [
   { name = "channel_mask_invalid", value = 7, doc = "Máscara de canales vacía o fuera de rango." },
   { name = "scan_mode_invalid", value = 8, doc = "Modo de barrido desconocido." },
   { name = "not_configured", value = 9, doc = "Llegó un mandato antes de la primera configuración." },
+]
+
+[[enum]]
+name = "channel"
+type = "u8"
+doc = "Bit por canal físico presente en channel_mask. El orden de channels[] en el payload de ray sigue el orden ascendente de los bits puestos en channel_mask; cada canal aporta los mismos `bins` que el resto del rayo."
+values = [
+  { name = "rx_0", value = 1, doc = "Canal Rx IF 0." },
+  { name = "rx_1", value = 2, doc = "Canal Rx IF 1." },
+  { name = "rx_2", value = 4, doc = "Canal Rx IF 2." },
+  { name = "rx_3", value = 8, doc = "Canal Rx IF 3." },
+  { name = "tx_burst_0", value = 16, doc = "Canal de burst de Tx 0. Trae energía sólo durante la ventana del pulso transmitido; el resto de sus bins es ruido/silencio." },
+  { name = "tx_burst_1", value = 32, doc = "Canal de burst de Tx 1. Misma convención que tx_burst_0." },
 ]
 
 [[enum]]

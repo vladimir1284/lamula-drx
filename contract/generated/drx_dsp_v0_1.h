@@ -1,7 +1,7 @@
 /* GENERADO por tools/gen_contract.py a partir de
  * contract/schema/drx_dsp_v0_1.toml. NO EDITAR A MANO.
  *
- * Contrato DRx↔DSP v0.2 — lado DRx.
+ * Contrato DRx↔DSP v0.3 — lado DRx.
  *
  * Little-endian, empaquetado, sin relleno implícito. Los _Static_assert
  * de abajo fallan la compilación si el compilador añade relleno: es el
@@ -15,7 +15,7 @@
 
 #define DRX_DSP_MAGIC 0x4C4D4452u
 #define DRX_DSP_VERSION_MAJOR 0
-#define DRX_DSP_VERSION_MINOR 2
+#define DRX_DSP_VERSION_MINOR 3
 
 /* Cabecera común a todo mensaje. */
 typedef struct __attribute__((packed)) {
@@ -127,6 +127,16 @@ typedef enum {
   DRX_DSP_ERROR_SCAN_MODE_INVALID = 8,  /* Modo de barrido desconocido. */
   DRX_DSP_ERROR_NOT_CONFIGURED = 9,  /* Llegó un mandato antes de la primera configuración. */
 } drx_dsp_error_t;
+
+/* Bit por canal físico presente en channel_mask. El orden de channels[] en el payload de ray sigue el orden ascendente de los bits puestos en channel_mask; cada canal aporta los mismos `bins` que el resto del rayo. */
+typedef enum {
+  DRX_DSP_CHANNEL_RX_0 = 1,  /* Canal Rx IF 0. */
+  DRX_DSP_CHANNEL_RX_1 = 2,  /* Canal Rx IF 1. */
+  DRX_DSP_CHANNEL_RX_2 = 4,  /* Canal Rx IF 2. */
+  DRX_DSP_CHANNEL_RX_3 = 8,  /* Canal Rx IF 3. */
+  DRX_DSP_CHANNEL_TX_BURST_0 = 16,  /* Canal de burst de Tx 0. Trae energía sólo durante la ventana del pulso transmitido; el resto de sus bins es ruido/silencio. */
+  DRX_DSP_CHANNEL_TX_BURST_1 = 32,  /* Canal de burst de Tx 1. Misma convención que tx_burst_0. */
+} drx_dsp_channel_t;
 
 /* Banderas por rayo. Un rayo con problemas se MARCA, no se descarta. */
 typedef enum {
