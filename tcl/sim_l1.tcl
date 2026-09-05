@@ -96,7 +96,12 @@ set tb_sources [list \
 cd $opt(outdir)
 
 set part [::drx::get PART $opt(platform)]
-create_project -in_memory -part $part
+# Proyecto en disco, no -in_memory: launch_simulation necesita la estructura de
+# ficheros del proyecto (xsim.compile/elaborate/simulate escriben ahí) y falla
+# con «No open project» sobre un proyecto en memoria. Vive dentro de
+# $opt(outdir), que ya es directorio de build, así que sigue sin dejar estado
+# fuera de build/ (D-07).
+create_project sim_l1 -part $part -force
 
 # La IP se lee de los XCI versionados, igual que en tcl/build.tcl: una sola
 # fuente de verdad para los cores, y simulación contra exactamente lo que se
@@ -133,16 +138,22 @@ set_property -name {xsim.elaborate.xelab.more_options} \
              -value $xelab_options -objects [current_fileset -simset]
 
 set plusargs [list \
-  "+stimulus_path=[file join $opt(vectors) stimulus.hex]" \
-  "+stimulus_count=$n_stimulus" \
-  "+expected_i_path=[file join $opt(vectors) expected_i.hex]" \
-  "+expected_q_path=[file join $opt(vectors) expected_q.hex]" \
-  "+expected_count=$n_expected" \
-  "+settling=$settling" \
-  "+mode=$mode_arg"]
+  "stimulus_path=[file join $opt(vectors) stimulus.hex]" \
+  "stimulus_count=$n_stimulus" \
+  "expected_i_path=[file join $opt(vectors) expected_i.hex]" \
+  "expected_q_path=[file join $opt(vectors) expected_q.hex]" \
+  "expected_count=$n_expected" \
+  "settling=$settling" \
+  "mode=$mode_arg"]
+
+# xsim exige el flag -testplusarg delante de cada uno; pasarlos como tokens
+# +clave=valor sueltos rompe su parser de opciones posicionales a partir del
+# séptimo (xsim --help documenta -testplusarg para esto).
+set testplusarg_opts {}
+foreach pa $plusargs { lappend testplusarg_opts "-testplusarg" $pa }
 
 set_property -name {xsim.simulate.xsim.more_options} \
-             -value [join $plusargs " "] -objects [current_fileset -simset]
+             -value [join $testplusarg_opts " "] -objects [current_fileset -simset]
 
 launch_simulation
 run all

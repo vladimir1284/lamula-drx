@@ -327,8 +327,9 @@ y, en último caso, la Opción B de P-01.
 
 ### P-09 · cocotb no tiene backend para xsim, y D-05 lo daba por hecho { #p-09 }
 
-**Estado:** **decidido** el 30 de agosto de 2026 · **Dueño:** equipo · **Cierre pendiente de** la
-primera ejecución real sobre xsim, que necesita Vivado (supuesto A7).
+**Estado:** **decidido** el 30 de agosto de 2026, **primera ejecución real el 5 de septiembre de
+2026** (máquina de desarrollo con Vivado, no el runner de CI de A7) · **Dueño:** equipo · **Cierre
+pendiente de** resolver el hallazgo de xsim de más abajo.
 
 [D-05](decisiones.md#d-05) dice que un único runner de cocotb cubre los dos backends, Verilator para
 L0 y xsim para L1. **Verilator sí; xsim no.** Los runners que trae cocotb 1.9.2 son `icarus`,
@@ -366,18 +367,53 @@ xsim, con el modelo dorado como oráculo cruzando por fichero. La enmienda está
 | `sim/tb_sv/drx_l1_checker.sv` | Compara bit a bit contra el modelo y cuenta discrepancias | Sí, sobre Verilator |
 | `sim/tb_sv/tb_l1_harness.sv` + `sim/tests/test_l1_harness.py` | Auto-prueba del arnés: cero discrepancias con vectores limpios, **exactamente una** con un bit cambiado | Sí |
 | `sim/tb_sv/tb_l1_ddc.sv` | El testbench de ZM1 | Lint sí; **no elabora**: `drx_ddc_top` es de Z1 |
-| `tcl/sim_l1.tcl` | Flujo xsim: manifiesto, IP de los XCI, plusargs | **No ejecutado**, no hay Vivado |
+| `tcl/sim_l1.tcl` | Flujo xsim: manifiesto, IP de los XCI, plusargs | Ejecutado el 5-sep-2026; ver hallazgo debajo |
 
 El orden importa: el comparador está probado **antes** de que exista el DUT, y probado en la
 dirección que engaña —un comparador que no compara da verde con cualquier cosa—, así que el día que
 Z1 conecte el DDC, un verde de L1 significa algo.
 
-**Lo que sigue abierto** es la ejecución: `tcl/sim_l1.tcl` está escrito y revisado pero no ha
-corrido nunca, igual que `tcl/build.tcl`. Se cierra en la misma sesión de máquina con Vivado que
-cierra ZM0.
-
 `sim/runner.py` se queda siendo el runner de L0 y su backend L1 sigue fallando explícito, ahora
 apuntando al flujo correcto en vez de a un bloqueo.
+
+#### Hallazgo, 5 de septiembre de 2026: primera ejecución real, dos bugs corregidos y uno abierto
+
+Primera vez con Vivado disponible (máquina de desarrollo, no CI). `tcl/sim_l1.tcl` nunca había
+corrido, y no corrió limpio a la primera: la primera ejecución real encontró dos defectos propios
+del script, ninguno relacionado con que `drx_ddc_top` todavía no exista.
+
+1. **`create_project -in_memory` no soporta `launch_simulation`.** Falla con `ERROR: [Common 17-53]
+   User Exception: No open project`. `tcl/build.tcl` sí puede usar `-in_memory` porque
+   `synth_design`/`write_bitstream` no lo necesitan, pero el flujo de simulación de xsim sí escribe
+   estructura de proyecto en disco. **Corregido:** proyecto real (`create_project sim_l1 -part
+   $part -force`) dentro de `$opt(outdir)`, que ya es directorio de build — no se rompe D-07.
+2. **Los plusargs se pasaban como tokens `+clave=valor` sueltos.** El parser de opciones de xsim
+   los trata como posicionales y rompe a partir del séptimo (`ERROR: [Common 17-165] Too many
+   positional options when parsing '+mode=0'`); `xsim --help` documenta que hace falta anteponer
+   `-testplusarg` a cada uno. **Corregido** en `tcl/sim_l1.tcl`.
+
+Con los dos fixes, la elaboración **funciona** —compila y elabora sin `drx_ddc_top`, exactamente
+como está diseñado para hacerlo en esta fase— pero `run all` revela un **tercer problema, sin
+resolver**: xsim aborta con
+
+```
+FATAL_ERROR: Vivado Simulator kernel has discovered an exceptional condition from which it cannot
+recover. Process will terminate. [...]
+Time: 0 ps  Iteration: 0  Process: /tb_l1_ddc/u_stimulus/Initial46_1
+  File: sim/tb_sv/drx_l1_file_source.sv
+```
+
+No es uno de los tres `$fatal` propios del código (ninguno de esos mensajes aparece en el log): es
+un choque interno del kernel de xsim, en el `initial` que hace `$value$plusargs` seguido de
+`$readmemh`. Como ese mismo módulo **está verificado sobre Verilator** (`test_l1_harness.py`), la
+hipótesis de trabajo es una incompatibilidad específica de esta versión de xsim (2022.2) con la
+combinación de `string` dinámico + `$readmemh`, no un bug de lógica del arnés — pero no está
+confirmado. Sin root cause todavía; el mensaje del propio xsim sugiere abrir un WebCase con Xilinx
+si hiciera falta escalar.
+
+**Lo que sigue abierto:** este tercer problema. Hasta resolverlo, L1 no puede llegar al punto de
+comparar contra el DDC ni siquiera en el caso trivial (DDC ausente), así que P-09 no se puede cerrar
+del todo aunque la ejecución ya no falle por los dos primeros motivos.
 
 ## Supuestos de entorno a verificar
 
