@@ -38,6 +38,16 @@ Trabajo:
 **Hito ZM0:** CI verde sobre un diseño vacío. Un `git push` produce un `BOOT.BIN` reproducible byte
 a byte.
 
+!!! info "Estado a 5 de septiembre de 2026"
+    El flujo completo (`tcl/build.tcl`, `tcl/sim_l1.tcl`, `tools/make_boot.sh`) ya corrió de punta a
+    punta, a mano, en una máquina de desarrollo con Vivado 2022.2 — bitstream con WNS = 5,850 ns,
+    simulación L1 sin bugs de infraestructura conocidos (ver
+    [P-09](../alcance/pendientes.md#p-09)), empaquetado de `BOOT.BIN` fallando exactamente donde
+    corresponde por los entregables de Z4 que aún no existen. **El hito tal como está definido
+    arriba sigue sin cumplirse**: todavía no hay runner de CI con Vivado (`HAS_VIVADO_RUNNER`, ver
+    A7/A8 en `pendientes.md`), así que el `git push` no produce el `BOOT.BIN` — lo produce una
+    persona ejecutando el flujo a mano.
+
 !!! info "Por qué el CI va primero y no al final"
     El modelo de entrega acelerado por agentes es el argumento central de viabilidad para un equipo
     de tres personas, y ese modelo no funciona si el diseño vive en un proyecto GUI de Vivado: los

@@ -14,10 +14,10 @@ con el RCP ni con ORPG.
   16 bits, 250 MSPS, JESD204B). **Aún no comprada.**
 - **Plataforma de desarrollo actual:** Digilent ZedBoard, XC7Z020-CLG484-1.
 
-## Estado, a 30 de agosto de 2026
+## Estado, a 5 de septiembre de 2026
 
-**Fase Z0 — substrato. En curso.** Ya hay código, y corre: `make check` deja 69 tests en verde sobre
-Verilator, gcc y NumPy. Lo construido está explicado en el tutorial de `docs/tutorial/` e
+**Fase Z0 — substrato. Casi cerrada.** Ya hay código, y corre: `make check` deja 69 tests en verde
+sobre Verilator, gcc y NumPy. Lo construido está explicado en el tutorial de `docs/tutorial/` e
 inventariado en `docs/implementacion/substrato.md`; el resumen es:
 
 - Paquete único de parámetros en `config/params.toml`, con generación a SystemVerilog, C y Tcl, gate
@@ -26,17 +26,32 @@ inventariado en `docs/implementacion/substrato.md`; el resumen es:
   en rango y generador de vectores con degradaciones. Con huella SHA-256 del oráculo en los tests.
 - Runner cocotb con L0 sobre Verilator en verde. **L1 no pasa por cocotb** —no tiene backend para
   xsim, hallazgo P-09, ya decidido—: es SystemVerilog nativo con el oráculo cruzando por fichero.
-  El arnés (lector de vectores y comparador bit a bit) está verificado sobre Verilator; el flujo
-  `tcl/sim_l1.tcl` no se ha ejecutado porque falta Vivado.
+  El arnés (lector de vectores y comparador bit a bit) está verificado sobre Verilator 5.006 y sobre
+  xsim; `tcl/sim_l1.tcl` ya corrió de punta a punta el 5-sep-2026 (ver más abajo).
 - Contrato DRx↔DSP v0.1 congelado, con codegen para C, Rust y Python y test de contrato que compara
   bytes entre C y Python.
 - RTL: diseño vacío a propósito (latido derivado de `FS_HZ`) más el paquete del interfaz SSA.
 - Firmware: auto-comprobación de parámetros que compila para las dos plataformas.
 
-**Lo que no está hecho, y es lo que impide cerrar el hito ZM0:** el flujo Tcl de Vivado está escrito
-y revisado pero **nunca ejecutado** —no hay Vivado en el entorno ni runner de CI con licencia— y por
-tanto no hay bitstream ni `BOOT.BIN` reproducible byte a byte. Ver los supuestos A7 y A8 en
-`docs/alcance/pendientes.md`.
+**El 5 de septiembre de 2026, primera máquina con Vivado (desarrollo, no CI):** se instaló Vivado ML
+Standard 2022.2 (WebPACK) y se ejecutó, por primera vez, todo el flujo que hasta entonces estaba
+«escrito y revisado pero nunca ejecutado»:
+
+- `tcl/build.tcl -platform zedboard -step bitstream`: síntesis + place & route + bitstream,
+  **WNS = 5,850 ns** (timing cerrado, con margen).
+- `tcl/sim_l1.tcl`: encontró y corrigió tres bugs propios de la infraestructura de simulación (no
+  del diseño) — dos en el propio `tcl/sim_l1.tcl`, uno de compatibilidad de xsim con
+  `$value$plusargs`. Detalle completo en [P-09](docs/alcance/pendientes.md#p-09). Con los tres
+  fixes, llega exactamente al abort **diseñado** para esta fase: falta `drx_ddc_top` (Z1).
+- `tools/make_boot.sh zedboard`: se comporta como está documentado, falla limpio por los
+  entregables de Z4 que aún no existen (`fsbl.elf`, `drx_app.elf`).
+
+**Lo que sigue sin estar hecho:** todo lo anterior fue manual, en una máquina de desarrollo — **no
+hay todavía un runner de CI con Vivado**, así que el hito ZM0 tal como lo define
+`docs/implementacion/fases.md` (`git push` produce un `BOOT.BIN` reproducible byte a byte, sin
+intervención humana) sigue sin cumplirse. El job `gateware` de `.github/workflows/ci.yml` ya existe
+y está listo, condicionado a `vars.HAS_VIVADO_RUNNER` y a un runner `[self-hosted, vivado]` que
+todavía no se ha montado. Ver los supuestos A7 y A8 en `docs/alcance/pendientes.md`.
 
 Lo que sí está hecho y verificado:
 
@@ -63,17 +78,18 @@ de ZedBoard y el project plan original de 34 semanas para la ZU9.
 
 ## Lo primero que hay que hacer
 
-Cerrar lo que le falta a Z0, en este orden:
+El flujo ya se demostró a mano (ver arriba). Lo que falta para cerrar Z0 del todo:
 
-1. **Conseguir una máquina con Vivado** y ejecutar `tcl/build.tcl` para las dos plataformas. Hasta
-   que eso pase, el flujo está escrito pero no probado y ZM0 no se puede declarar.
-2. **Ejecutar L1 en esa misma máquina**: `tcl/sim_l1.tcl`. P-09 ya está decidido y el arnés
-   verificado; falta la primera corrida real sobre xsim.
-3. **Empaquetar el `BOOT.BIN`** y comprobar la reproducibilidad con `tools/make_boot.sh`.
+1. **Montar el runner de CI `[self-hosted, vivado]`** y poner `HAS_VIVADO_RUNNER=true` — el job
+   `gateware` ya está escrito en `.github/workflows/ci.yml`, solo falta la máquina. Sin esto, ZM0
+   sigue siendo «se demostró en una máquina, no lo garantiza el CI», que no es lo mismo.
+2. Con eso resuelto, **Z1 (`drx_ddc_top`) queda desbloqueado**: el substrato (flujo guionizado +
+   regresión de L0 y L1) ya existe y ya corrió de verdad, así que empezar por el DDC ahora ya no es
+   saltarse el orden — antes de la sesión del 5-sep-2026 sí lo era, por eso la regla existía.
 
-**No empieces por el DDC.** El substrato primero no es burocracia: sin flujo guionizado y sin
-regresión el modelo de entrega acelerado por agentes no funciona, y reconstruirlo al final cuesta un
-mes.
+El argumento de fondo sigue siendo el mismo: sin flujo guionizado y sin regresión el modelo de
+entrega acelerado por agentes no funciona, y reconstruirlo al final cuesta un mes. Ya no falta
+construirlo — falta automatizarlo en CI.
 
 Y no toques `R₁`/`R₂` ni `fs` en `config/params.toml` hasta que haya ADR: P-01 y P-08 siguen
 abiertos. Cuando lo haya, el cambio es de dos líneas más `python3 tools/gen_params.py`.
@@ -108,8 +124,10 @@ make check         # todos los gates del CI que corren sin Vivado
 make gen           # regenera parámetros, coeficientes y contrato
 make sim           # solo la suite L0 sobre Verilator
 
-# gateware: NO EJECUTADO NUNCA, hace falta Vivado
+# gateware: ejecutado a mano el 5-sep-2026 en una máquina de desarrollo con Vivado
+# 2022.2; el runner de CI con Vivado todavía no existe (A7)
 vivado -mode batch -source tcl/build.tcl -tclargs -platform zedboard -step bitstream
+vivado -mode batch -source tcl/sim_l1.tcl -tclargs -platform zedboard -case tono_if__fine
 tools/make_boot.sh zedboard
 ```
 

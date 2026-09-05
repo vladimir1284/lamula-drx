@@ -456,8 +456,8 @@ inferencia a partir de hojas de datos y **debe verificarse en banco** antes de c
 | A4 | El RTL custom se puede escribir en SystemVerilog, sin mandato VHDL | Decisión de equipo — ver [D-05](decisiones.md#d-05) |
 | A5 | La placa/MCU auxiliar para SSI tiene al menos un periférico SPI esclavo o PIO a ≥2 MHz | Hoja de datos del MCU |
 | A6 | Hay acceso a un osciloscopio de ≥100 MHz para medir jitter de trigger | Inventario de laboratorio |
-| A7 | Existe un runner de CI con Vivado y licencia para el job `gateware` | Hoy **no existe**: el job está condicionado a la variable `HAS_VIVADO_RUNNER`, y sin él ni el flujo de `tcl/` ni el `BOOT.BIN` se han ejecutado nunca |
-| A8 | La versión de Vivado está pinada en el runner | Sin pinarla el `BOOT.BIN` no puede ser reproducible byte a byte, que es el hito ZM0 |
+| A7 | Existe un runner de CI con Vivado y licencia para el job `gateware` | Hoy **sigue sin existir**: el job está condicionado a la variable `HAS_VIVADO_RUNNER`. Lo que sí cambió el 5-sep-2026: el flujo de `tcl/` (`build.tcl`, `sim_l1.tcl`) y `tools/make_boot.sh` **se ejecutaron manualmente**, con éxito, en una máquina de desarrollo fuera de CI — ver el hallazgo bajo [P-09](#p-09). Falta registrar ese runner `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` para que el hito ZM0 quede automatizado por CI, no solo demostrado a mano |
+| A8 | La versión de Vivado está pinada en el runner | Sigue sin pinarse porque el runner no existe. La instalación manual de esta sesión fue Vivado ML Standard **2022.2** — candidata obvia a version-pin cuando se monte el runner — pero pinarla en CI es trabajo aparte |
 
 ## Presupuesto de 1GbE: confirmado, con una salvedad
 
