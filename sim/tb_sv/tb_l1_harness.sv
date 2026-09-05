@@ -47,8 +47,7 @@ module tb_l1_harness #(
   drx_l1_file_source #(
       .WIDTH(WIDTH),
       .MAX_SAMPLES(MAX_SAMPLES),
-      .PATH_FMT("expected_i_path=%s"),
-      .COUNT_FMT("expected_count=%d")
+      .KIND("expected_i")
   ) u_src_i (
       .clk(clk),
       .rst_n(rst_n),
@@ -62,8 +61,7 @@ module tb_l1_harness #(
   drx_l1_file_source #(
       .WIDTH(WIDTH),
       .MAX_SAMPLES(MAX_SAMPLES),
-      .PATH_FMT("expected_q_path=%s"),
-      .COUNT_FMT("expected_count=%d")
+      .KIND("expected_q")
   ) u_src_q (
       .clk(clk),
       .rst_n(rst_n),

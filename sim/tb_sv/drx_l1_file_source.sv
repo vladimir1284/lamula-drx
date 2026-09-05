@@ -10,12 +10,19 @@
 // `rtl/filelist.f`.
 //
 // Configuración por plusargs, no por parámetros de elaboración: así el mismo
-// binario elaborado corre todos los casos. Los formatos van completos como
-// parámetro en vez de componerse con concatenación de strings, que no todos los
-// simuladores aceptan dentro de `$value$plusargs`.
+// binario elaborado corre todos los casos.
 //
 //   +stimulus_path=<ruta al .hex>
 //   +stimulus_count=<número de muestras a entregar>
+//
+// xsim (hallazgo P-09, 5-sep-2026): `$value$plusargs` revienta el kernel
+// (`FATAL_ERROR: ... exceptional condition`, no un `$fatal` propio) si el
+// argumento de formato no es un literal del propio código fuente — un
+// `parameter string`, aunque sea constante de elaboración, ya lo rompe.
+// Reproducido en aislado con Vivado 2022.2: mismo `$value$plusargs`, mismo
+// valor, la única diferencia es literal vs. parámetro. Por eso el formato ya
+// no se parametriza: KIND selecciona en runtime, con un `case`, entre
+// llamadas que llevan el literal escrito a mano en cada rama.
 
 `ifndef DRX_L1_FILE_SOURCE_SV
 `define DRX_L1_FILE_SOURCE_SV
@@ -23,10 +30,9 @@
 module drx_l1_file_source #(
     parameter int WIDTH = 16,
     parameter int MAX_SAMPLES = 1 << 17,
-    // Formatos de plusarg completos. Permiten varias instancias (estímulo, I, Q)
-    // en el mismo testbench sin que se pisen.
-    parameter string PATH_FMT  = "stimulus_path=%s",
-    parameter string COUNT_FMT = "stimulus_count=%d"
+    // Cerrado a los tres usos reales del arnés (stimulus en tb_l1_ddc.sv;
+    // expected_i/expected_q en tb_l1_harness.sv), no una enumeración abierta.
+    parameter string KIND = "stimulus"  // "stimulus" | "expected_i" | "expected_q"
 ) (
     input  logic                    clk,
     input  logic                    rst_n,
@@ -44,12 +50,21 @@ module drx_l1_file_source #(
   int    index;
 
   initial begin
-    if (!$value$plusargs(PATH_FMT, path)) begin
-      $fatal(1, "falta el plusarg +%s", PATH_FMT);
-    end
-    if (!$value$plusargs(COUNT_FMT, count)) begin
-      $fatal(1, "falta el plusarg +%s", COUNT_FMT);
-    end
+    case (KIND)
+      "stimulus": begin
+        if (!$value$plusargs("stimulus_path=%s", path)) $fatal(1, "falta el plusarg +stimulus_path");
+        if (!$value$plusargs("stimulus_count=%d", count)) $fatal(1, "falta el plusarg +stimulus_count");
+      end
+      "expected_i": begin
+        if (!$value$plusargs("expected_i_path=%s", path)) $fatal(1, "falta el plusarg +expected_i_path");
+        if (!$value$plusargs("expected_count=%d", count)) $fatal(1, "falta el plusarg +expected_count");
+      end
+      "expected_q": begin
+        if (!$value$plusargs("expected_q_path=%s", path)) $fatal(1, "falta el plusarg +expected_q_path");
+        if (!$value$plusargs("expected_count=%d", count)) $fatal(1, "falta el plusarg +expected_count");
+      end
+      default: $fatal(1, "KIND desconocido: %s", KIND);
+    endcase
     if (count > MAX_SAMPLES) begin
       $fatal(1, "%0d muestras no caben en MAX_SAMPLES=%0d", count, MAX_SAMPLES);
     end

@@ -328,8 +328,10 @@ y, en último caso, la Opción B de P-01.
 ### P-09 · cocotb no tiene backend para xsim, y D-05 lo daba por hecho { #p-09 }
 
 **Estado:** **decidido** el 30 de agosto de 2026, **primera ejecución real el 5 de septiembre de
-2026** (máquina de desarrollo con Vivado, no el runner de CI de A7) · **Dueño:** equipo · **Cierre
-pendiente de** resolver el hallazgo de xsim de más abajo.
+2026** (máquina de desarrollo con Vivado, no el runner de CI de A7), **los tres bugs de
+infraestructura encontrados en esa ejecución ya corregidos y reconfirmados el mismo día**, sobre
+xsim y sobre Verilator 5.006 · **Dueño:** equipo · **Cierre pendiente de** que Z1 escriba
+`drx_ddc_top`; la infraestructura de L1 ya no tiene bugs conocidos.
 
 [D-05](decisiones.md#d-05) dice que un único runner de cocotb cubre los dos backends, Verilator para
 L0 y xsim para L1. **Verilator sí; xsim no.** Los runners que trae cocotb 1.9.2 son `icarus`,
@@ -363,7 +365,7 @@ xsim, con el modelo dorado como oráculo cruzando por fichero. La enmienda está
 |---|---|---|
 | `model/drx_model/l1_vectors.py` | Exporta estímulo y salida esperada en `$readmemh`, con manifiesto y SHA-256 | Sí, en `make check` |
 | `tools/gen_l1_vectors.py` | Genera los casos de las dos plataformas y los dos modos | Sí |
-| `sim/tb_sv/drx_l1_file_source.sv` | Lee un `.hex` y lo entrega como stream con handshake | Sí, sobre Verilator |
+| `sim/tb_sv/drx_l1_file_source.sv` | Lee un `.hex` y lo entrega como stream con handshake | Sí, sobre Verilator 5.006 (reconfirmado el 5-sep-2026 tras el cambio de interfaz a `KIND`) y sobre xsim |
 | `sim/tb_sv/drx_l1_checker.sv` | Compara bit a bit contra el modelo y cuenta discrepancias | Sí, sobre Verilator |
 | `sim/tb_sv/tb_l1_harness.sv` + `sim/tests/test_l1_harness.py` | Auto-prueba del arnés: cero discrepancias con vectores limpios, **exactamente una** con un bit cambiado | Sí |
 | `sim/tb_sv/tb_l1_ddc.sv` | El testbench de ZM1 | Lint sí; **no elabora**: `drx_ddc_top` es de Z1 |
@@ -376,11 +378,11 @@ Z1 conecte el DDC, un verde de L1 significa algo.
 `sim/runner.py` se queda siendo el runner de L0 y su backend L1 sigue fallando explícito, ahora
 apuntando al flujo correcto en vez de a un bloqueo.
 
-#### Hallazgo, 5 de septiembre de 2026: primera ejecución real, dos bugs corregidos y uno abierto
+#### Hallazgo, 5 de septiembre de 2026: primera ejecución real, tres bugs de infraestructura, los tres corregidos
 
 Primera vez con Vivado disponible (máquina de desarrollo, no CI). `tcl/sim_l1.tcl` nunca había
-corrido, y no corrió limpio a la primera: la primera ejecución real encontró dos defectos propios
-del script, ninguno relacionado con que `drx_ddc_top` todavía no exista.
+corrido, y no corrió limpio a la primera: la primera ejecución real encontró tres defectos propios
+del arnés de simulación, ninguno relacionado con que `drx_ddc_top` todavía no exista.
 
 1. **`create_project -in_memory` no soporta `launch_simulation`.** Falla con `ERROR: [Common 17-53]
    User Exception: No open project`. `tcl/build.tcl` sí puede usar `-in_memory` porque
@@ -393,8 +395,8 @@ del script, ninguno relacionado con que `drx_ddc_top` todavía no exista.
    `-testplusarg` a cada uno. **Corregido** en `tcl/sim_l1.tcl`.
 
 Con los dos fixes, la elaboración **funciona** —compila y elabora sin `drx_ddc_top`, exactamente
-como está diseñado para hacerlo en esta fase— pero `run all` revela un **tercer problema, sin
-resolver**: xsim aborta con
+como está diseñado para hacerlo en esta fase— pero `run all` revelaba un tercer problema: xsim
+abortaba con
 
 ```
 FATAL_ERROR: Vivado Simulator kernel has discovered an exceptional condition from which it cannot
@@ -403,17 +405,43 @@ Time: 0 ps  Iteration: 0  Process: /tb_l1_ddc/u_stimulus/Initial46_1
   File: sim/tb_sv/drx_l1_file_source.sv
 ```
 
-No es uno de los tres `$fatal` propios del código (ninguno de esos mensajes aparece en el log): es
-un choque interno del kernel de xsim, en el `initial` que hace `$value$plusargs` seguido de
-`$readmemh`. Como ese mismo módulo **está verificado sobre Verilator** (`test_l1_harness.py`), la
-hipótesis de trabajo es una incompatibilidad específica de esta versión de xsim (2022.2) con la
-combinación de `string` dinámico + `$readmemh`, no un bug de lógica del arnés — pero no está
-confirmado. Sin root cause todavía; el mensaje del propio xsim sugiere abrir un WebCase con Xilinx
-si hiciera falta escalar.
+No era uno de los tres `$fatal` propios del código (ninguno de esos mensajes aparecía en el log):
+era un choque interno del kernel de xsim.
 
-**Lo que sigue abierto:** este tercer problema. Hasta resolverlo, L1 no puede llegar al punto de
-comparar contra el DDC ni siquiera en el caso trivial (DDC ausente), así que P-09 no se puede cerrar
-del todo aunque la ejecución ya no falle por los dos primeros motivos.
+3. **`$value$plusargs` con un `parameter string` como formato revienta el kernel de xsim.**
+   `drx_l1_file_source.sv` parametrizaba el formato completo (`PATH_FMT`/`COUNT_FMT`, p. ej.
+   `"stimulus_path=%s"`) para poder reutilizar el módulo con distintas claves de plusarg en
+   `tb_l1_harness.sv` (`expected_i_path`/`expected_q_path`). xsim 2022.2 no tolera que ese argumento
+   de formato sea un parámetro — aunque sea constante de elaboración — y revienta el kernel en vez
+   de dar un error de Tcl o de SV. Aislado en 6 líneas fuera del repo: el mismo
+   `$value$plusargs("stimulus_path=%s", path)` funciona con el literal escrito a mano y revienta si
+   ese literal llega por un `parameter string`; confirmado con Vivado 2022.2 en esta máquina. No hay
+   AR de Xilinx encontrado que lo documente; es un hallazgo propio, no una incompatibilidad
+   conocida y publicada.
+
+   **Corregido:** se quitaron `PATH_FMT`/`COUNT_FMT`. En su lugar, un `parameter string KIND`
+   —cerrado a los tres usos reales (`"stimulus"`, `"expected_i"`, `"expected_q"`)— selecciona en
+   runtime, con un `case`, entre llamadas a `$value$plusargs` que llevan el literal escrito a mano
+   en cada rama. Aislado el mismo patrón con dos instancias de distinto `KIND` en el mismo
+   `top`: ambas resuelven bien, sin crash. Aplicado a `sim/tb_sv/drx_l1_file_source.sv` y a sus dos
+   sitios de instanciación (`tb_l1_ddc.sv`, `tb_l1_harness.sv`).
+
+Con los tres fixes, `tcl/sim_l1.tcl` corre de punta a punta por primera vez sin ningún `ERROR` ni
+`FATAL_ERROR` de xsim: compila, elabora, y `run all` llega exactamente al comportamiento **diseñado
+para esta fase** —el testbench aborta porque falta `drx_ddc_top` (trabajo de Z1), y como el DUT
+nunca produce muestras, la red de seguridad de timeout de `tb_l1_ddc.sv` también dispara a los 40 ms
+como está previsto—. `EXIT_CODE=0` del propio `vivado -mode batch`: los `$fatal` de SystemVerilog no
+se propagan como error de Tcl, así que ese código no certifica por sí solo que L1 pasó; lo que
+certifica el diseño correcto de la fase es la ausencia de `FATAL_ERROR`/`ERROR` y la presencia
+exacta de `Fatal: tb_l1_ddc: falta drx_ddc_top...` en el log.
+
+El cambio de interfaz de `drx_l1_file_source.sv` (parámetro `KIND` en vez de
+`PATH_FMT`/`COUNT_FMT`) se reconfirmó corriendo `sim/tests/test_l1_harness.py` sobre Verilator
+**5.006** —la versión que ya tenía verificado el proyecto, compilada desde fuente porque el
+`apt install verilator` de Ubuntu 22.04 solo trae la 4.038, demasiado vieja para `--timing`—: los
+dos casos (vectores limpios y con un bit corrupto) siguen en verde, igual que toda `sim/tests`
+completa. **P-09 no tiene ningún bug conocido pendiente**; lo único que falta para el hito ZM1 es
+que Z1 escriba `drx_ddc_top`.
 
 ## Supuestos de entorno a verificar
 

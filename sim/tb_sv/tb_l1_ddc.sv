@@ -50,8 +50,7 @@ module tb_l1_ddc;
 
   drx_l1_file_source #(
       .WIDTH(SAMPLE_BITS),
-      .PATH_FMT("stimulus_path=%s"),
-      .COUNT_FMT("stimulus_count=%d")
+      .KIND("stimulus")
   ) u_stimulus (
       .clk(clk),
       .rst_n(rst_n),
