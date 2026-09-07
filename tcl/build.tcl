@@ -69,7 +69,10 @@ set_property target_language Verilog [current_project]
 read_verilog -sv [read_filelist [file join $repo_root rtl filelist.f] $repo_root]
 
 # IP versionada como XCI. En Z0 no hay ninguna; el bucle queda listo para Z1.
-set xci_files [glob -nocomplain [file join $repo_root ip *.xci]]
+# `create_ip -dir` crea un subdirectorio por core (`ip/<module_name>/*.xci`),
+# no `ip/*.xci` directamente — confirmado generando IP de verdad con
+# tcl/gen_ip.tcl (ver el hallazgo en tcl/sim_l1.tcl).
+set xci_files [glob -nocomplain [file join $repo_root ip * *.xci]]
 if {[llength $xci_files]} {
   read_ip $xci_files
   generate_target all [get_ips]

@@ -333,6 +333,13 @@ infraestructura encontrados en esa ejecución ya corregidos y reconfirmados el m
 xsim y sobre Verilator 5.006 · **Dueño:** equipo · **Cierre pendiente de** que Z1 escriba
 `drx_ddc_top`; la infraestructura de L1 ya no tiene bugs conocidos.
 
+!!! info "Estado, 6/7-sep-2026: drx_ddc_top escrito Y EJECUTADO contra IP real — ver P-10"
+    Esta nota decía "no ejecutado" porque se escribió antes de descubrir que esta misma máquina de
+    desarrollo sí tiene Vivado 2022.2 y Verilator 5.006 instalados (solo faltaban en `PATH`). Ya
+    corrió de verdad, varias veces, contra IP real generada con `tcl/gen_ip.tcl` y simulada con
+    `tcl/sim_l1.tcl` sobre xsim. El detalle completo — tres bugs reales encontrados y corregidos, y
+    uno que sigue abierto — está en [P-10](#p-10).
+
 [D-05](decisiones.md#d-05) dice que un único runner de cocotb cubre los dos backends, Verilator para
 L0 y xsim para L1. **Verilator sí; xsim no.** Los runners que trae cocotb 1.9.2 son `icarus`,
 `questa`, `ghdl`, `nvc`, `riviera`, `verilator` y `xcelium`. No hay xsim, y no es una omisión de la
@@ -442,6 +449,64 @@ El cambio de interfaz de `drx_l1_file_source.sv` (parámetro `KIND` en vez de
 dos casos (vectores limpios y con un bit corrupto) siguen en verde, igual que toda `sim/tests`
 completa. **P-09 no tiene ningún bug conocido pendiente**; lo único que falta para el hito ZM1 es
 que Z1 escriba `drx_ddc_top`.
+
+### P-10 · `drx_ddc_top` contra IP real: tres bugs corregidos, uno abierto { #p-10 }
+
+**Estado:** parcialmente cerrado, 6/7 de septiembre de 2026 · **Dueño:** equipo · **Cierre
+pendiente de** el hallazgo de amplitud de abajo.
+
+Primera ejecución real de `tcl/gen_ip.tcl` + `tcl/sim_l1.tcl` contra el DDC de un canal
+(`rtl/drx_ddc_top.sv`, `rtl/drx_ddc_mixer.sv`, `rtl/drx_round.sv`, `rtl/drx_saturate.sv`), sobre
+Vivado 2022.2 real en esta máquina de desarrollo (ver nota bajo P-09). Caso de aceptación:
+`tono_if__fine`, 65536 muestras de estímulo, 315 muestras esperadas.
+
+**Corregido, los tres con causa raíz confirmada por simulación, no por conjetura:**
+
+1. **El DDS Compiler libre no entrega fase 0 en su primera muestra válida.** Con el mezclador ya
+   corregido para no atar `nco_ready` a contrapresión (el NCO no congela su acumulador de fase
+   aunque nadie consuma, así que contrapresurearlo pierde pasos de fase para siempre — ver el
+   aviso de cabecera de `drx_ddc_mixer.sv`), la primera muestra seguía sin ser `(32767, 0)`.
+   Búsqueda inversa exacta contra la LUT del propio modelo (`Nco.lut()`) identificó la muestra
+   real como el índice 656 de esa tabla — un desfase de fase fijo y reproducible (igual con
+   `Has_TREADY` que sin él, así que no es la FIFO de contrapresión: es intrínseco al arranque del
+   Phase Generator). **Corregido en `tcl/gen_ip.tcl`**: `Has_TREADY {false}` (el mezclador nunca
+   contrapresura al NCO, así que esa FIFO no compraba nada) más `Phase_offset {Fixed}` con
+   `POFF1` calculado para cancelar el índice 656 en la propia IP — la corrección va en la fuente
+   de la fase, no en un giro complejo aguas abajo (un giro sobre valores de LUT ya cuantizados no
+   puede reconstruir el valor exacto de la LUT en el índice correcto; se probó y dejaba un sesgo
+   de ±1 LSB en régimen permanente que no cerraba).
+2. **El transitorio de arranque del CIC no coincidía con el modelo, mucho más allá de lo que
+   explica un desfase de fase.** `model/drx_model/cic.py` calculaba con latencia cero (recursión
+   matemática instantánea); el CIC Compiler real es una tubería de N integradores + N peines con
+   latencia de silicio de verdad. Ajuste numérico contra los valores reales de xsim: anteponer
+   exactamente `rate - 1` muestras de relleno de tubería antes de que el modelo empiece a acumular
+   reproduce el transitorio real bit a bit (residuo nulo salvo el hallazgo #3 de abajo).
+   **Corregido en el modelo dorado** (`Cic.pipeline_fill`, cambio deliberado y autorizado, huellas
+   `GOLDEN` de `model/tests/test_chain.py` actualizadas con la fecha y el motivo) — no en el RTL,
+   porque el RTL ya se comporta como la IP real; era el modelo el que idealizaba la latencia.
+3. **`nco_ready` sin conexión tras quitar `Has_TREADY`**: `dds_compiler_nco` ya no tiene puerto
+   `m_axis_data_tready` una vez generado sin TREADY. `rtl/drx_ddc_top.sv` ya no lo conecta; la
+   salida `nco_ready` del mezclador (que sigue existiendo, atada a `1'b1`) queda explícitamente sin
+   uso, igual que `s_last`.
+
+**Abierto — no es un bug de RTL/Tcl, es una diferencia de convención entre el modelo y la IP:**
+
+Con los tres fixes de arriba, `tono_if__fine` pasó de 312-313/315 discrepancias (con errores de
+hasta 5× en el transitorio) a **306/315, pero todas de ±1 LSB** — el transitorio ya cierra bit a
+bit. El residuo uniforme viene de que el DDS Compiler en modo `Amplitude_Mode {Full_Range}` apunta
+a un pico de `2^(N-1) - 2` (confirmado con el ejemplo numérico de pg141 v6.0 p.51: para 8 bits da
+126 = 0b01111110, exactamente lo que dice el manual), mientras que `fixed.limits()` del modelo
+asume el máximo estándar de complemento a dos, `2^(N-1) - 1`. No se encontró una configuración de
+`Amplitude_Mode` que dé exactamente el pico del modelo (`Unit_Circle` da la mitad; Taylor Series
+Correction podría acercarse pero no se confirmó que llegue a `2^15-1` exactamente, y añade
+complejidad real). Cerrar esto necesita otra decisión igual de deliberada que la del hallazgo #2 —
+ajustar la convención de amplitud del NCO en el modelo, o encontrar una configuración de IP que
+coincida exactamente — y no se ha tomado todavía.
+
+Aparte, `sim/tests/test_l1_harness.py` y `test_l0_heartbeat.py` (cocotb sobre Verilator) fallan con
+`%Error: Exiting due to ... warning(s)` por un `UNUSEDPARAM` en `rtl/generated/drx_ddc_ip_pkg.sv`
+al elaborar `tb_l1_harness` — un hallazgo aparte, sin relación con los tres de arriba, todavía sin
+investigar.
 
 ## Supuestos de entorno a verificar
 

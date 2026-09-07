@@ -14,9 +14,13 @@ PARAMS = load("zedboard")
 #: ese es exactamente el aviso que se quiere: el oráculo no puede cambiar de valor
 #: sin que alguien lo decida a propósito. Para regenerarlas tras un cambio
 #: deliberado, ejecuta el propio test y copia la huella que reporte.
+#: 2026-09-06: movidas al añadir `Cic.pipeline_fill` (rate-1 muestras de
+#: relleno de tubería, ver `cic.py`) — la IP real de Xilinx tiene latencia de
+#: silicio en el transitorio que la recursión de latencia cero no tenía;
+#: confirmado bit a bit contra xsim en Z1 para el caso `tono_if__fine`.
 GOLDEN = {
-    MODE_FINE: (192, "edf20575a4b82e3b96a2bd4333b60e0922e69cd1554ab7504154eb2aadcd6cca"),
-    MODE_COARSE: (96, "d51dee4c0b61b30ea7a93dd6dd3aa5ca0d1c56e2f37b8979913d5ec4bef76feb"),
+    MODE_FINE: (192, "6b858ab7e0a6a735a82c164e2366830c256faaa9c1961d2e476990c37d3cd2b3"),
+    MODE_COARSE: (96, "203f9a40b2bd03d4b66afc006602acf9b45eeb1dc6c16f6707c79cf95b0ce20e"),
 }
 
 

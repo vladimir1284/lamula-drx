@@ -18,12 +18,27 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "model"))
 
+from drx_model import chain as chain_mod  # noqa: E402
+from drx_model import fixed  # noqa: E402
 from drx_model.params import PARAMS_TOML, Params, load_all  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SV_OUT = ROOT / "rtl" / "generated" / "drx_params_pkg.sv"
 H_OUT = ROOT / "fw" / "include" / "drx_params.h"
 TCL_OUT = ROOT / "tcl" / "generated" / "drx_params.tcl"
+
+# `tcl/gen_ip.tcl` es quien genera de verdad este paquete, con los anchos de
+# TDATA reales que reporta la IP de Xilinx ya configurada (ver el aviso de
+# cabecera de ese script: no salen de una fórmula de taps/coeficientes).
+# `gen_params.py` solo escribe un valor de arranque —y nunca lo pisa si ya
+# existe— para que `rtl/drx_ddc_top.sv` tenga algo que importar y
+# `make lint-hdl`/`make lint-hdl-tb` no rompan en un checkout limpio, antes de
+# que nadie haya corrido Vivado: Verilator exige resolver todo `import` de
+# paquete aunque el módulo que lo hace no se elabore desde ningún top (a
+# diferencia de una instancia de módulo no usada, que si no se elabora no
+# hace falta que resuelva). Los números de este valor de arranque no los usa
+# ningún cálculo real hasta entonces.
+DDC_IP_PKG_OUT = ROOT / "rtl" / "generated" / "drx_ddc_ip_pkg.sv"
 
 BANNER = (
     "GENERADO por tools/gen_params.py a partir de config/params.toml. NO EDITAR A MANO.\n"
@@ -35,6 +50,31 @@ def _toml_sha256() -> str:
     return hashlib.sha256(PARAMS_TOML.read_bytes()).hexdigest()
 
 
+def _chain_derived(sel: Params) -> dict:
+    """Constantes de ancho derivadas de la cadena, vía el propio modelo dorado.
+
+    `Ddc.__post_init__` construye `cic`/`fir`/`halfband` sin importar el modo,
+    así que una sola instancia basta. Se calculan aquí (no en SV/Tcl) para que
+    RTL y modelo lean el mismo número en vez de que el RTL reimplemente
+    `ceil(N*log2(RM))` con `$clog2` y arriesgue divergir de `fixed.growth_bits`.
+    """
+    ddc = chain_mod.Ddc(params=sel, mode=chain_mod.MODE_FINE)
+    cic_growth = ddc.cic.growth_bits
+    fir_growth = fixed.growth_bits(abs(ddc.fir.dc_gain))
+    hb_growth = fixed.growth_bits(abs(ddc.halfband.dc_gain))
+    return {
+        "cic_gain": ddc.cic.gain,
+        "cic_growth_bits": cic_growth,
+        "cic_register_bits": sel.sample_bits + cic_growth,
+        "fir_coeff_bits": ddc.fir.coeff_bits,
+        "fir_dc_gain": ddc.fir.dc_gain,
+        "fir_growth_bits": fir_growth,
+        "halfband_coeff_bits": ddc.halfband.coeff_bits,
+        "halfband_dc_gain": ddc.halfband.dc_gain,
+        "halfband_growth_bits": hb_growth,
+    }
+
+
 def _sv_platform_block(p: Params) -> str:
     return f"""
   // --- {p.name}: {p.board} ---
@@ -42,7 +82,7 @@ def _sv_platform_block(p: Params) -> str:
   localparam longint IF_HZ_{p.name.upper()} = {p.if_hz};"""
 
 
-def render_sv(platforms: dict[str, Params], sel: Params) -> str:
+def render_sv(platforms: dict[str, Params], sel: Params, derived: dict) -> str:
     inv = sel.invariant
     ch = sel.chain
     widths = "  localparam int " + ";\n  localparam int ".join(
@@ -121,13 +161,27 @@ package drx_params_pkg;
   localparam int FIR_TAPS = {ch['fir_taps']};
   localparam int COARSE_EXTRA_DECIM = {ch['coarse_extra_decim']};
 
+  // Anchos derivados de Hogenauer y de la ganancia de continua de cada FIR,
+  // calculados por `model/drx_model/chain.py`: Z1 los consume en
+  // `drx_round_sat` para que el punto de recorte de cada etapa sea el mismo
+  // número que usa el oráculo, no una copia a mano de la fórmula.
+  localparam longint CIC_GAIN = {derived['cic_gain']};
+  localparam int CIC_GROWTH_BITS = {derived['cic_growth_bits']};
+  localparam int CIC_REGISTER_BITS = {derived['cic_register_bits']};
+  localparam int FIR_COEFF_BITS = {derived['fir_coeff_bits']};
+  localparam longint FIR_DC_GAIN = {derived['fir_dc_gain']};
+  localparam int FIR_GROWTH_BITS = {derived['fir_growth_bits']};
+  localparam int HALFBAND_COEFF_BITS = {derived['halfband_coeff_bits']};
+  localparam longint HALFBAND_DC_GAIN = {derived['halfband_dc_gain']};
+  localparam int HALFBAND_GROWTH_BITS = {derived['halfband_growth_bits']};
+
 endpackage : drx_params_pkg
 
 `endif  // DRX_PARAMS_PKG_SV
 """
 
 
-def render_h(platforms: dict[str, Params], sel: Params) -> str:
+def render_h(platforms: dict[str, Params], sel: Params, derived: dict) -> str:
     inv = sel.invariant
     ch = sel.chain
     per_platform = "".join(
@@ -193,11 +247,25 @@ def render_h(platforms: dict[str, Params], sel: Params) -> str:
 #define DRX_FIR_TAPS {ch['fir_taps']}
 #define DRX_COARSE_EXTRA_DECIM {ch['coarse_extra_decim']}
 
+/* Anchos derivados de Hogenauer y de la ganancia de continua de cada FIR,
+ * calculados por model/drx_model/chain.py (ver tools/gen_params.py). */
+#define DRX_CIC_GAIN {derived['cic_gain']}LL
+#define DRX_CIC_GROWTH_BITS {derived['cic_growth_bits']}
+#define DRX_CIC_REGISTER_BITS {derived['cic_register_bits']}
+#define DRX_FIR_COEFF_BITS {derived['fir_coeff_bits']}
+#define DRX_FIR_DC_GAIN {derived['fir_dc_gain']}LL
+#define DRX_FIR_GROWTH_BITS {derived['fir_growth_bits']}
+#define DRX_HALFBAND_COEFF_BITS {derived['halfband_coeff_bits']}
+#define DRX_HALFBAND_DC_GAIN {derived['halfband_dc_gain']}LL
+#define DRX_HALFBAND_GROWTH_BITS {derived['halfband_growth_bits']}
+
 #endif /* DRX_PARAMS_H */
 """
 
 
-def render_tcl(platforms: dict[str, Params], sel: Params) -> str:
+def render_tcl(platforms: dict[str, Params], sel: Params, derived: dict) -> str:
+    inv = sel.invariant
+    ch = sel.chain
     lines = [
         f"# {BANNER.splitlines()[0]}",
         f"# {BANNER.splitlines()[1]}",
@@ -208,6 +276,34 @@ def render_tcl(platforms: dict[str, Params], sel: Params) -> str:
         "namespace eval ::drx {",
         f"  variable SCHEMA_VERSION {sel.schema_version}",
         f"  variable PARAMS_SHA256 {_toml_sha256()}",
+        "",
+        "  # Invariantes de dilatación y de la cadena de diezmado (D-02): idénticos",
+        "  # en las dos plataformas, y de aquí los toma tcl/gen_ip.tcl para",
+        "  # configurar la IP del DDC sin repetir un número a mano.",
+        f"  variable NCO_PHASE_BITS {inv['nco_phase_bits']}",
+        f"  variable NCO_OUT_BITS {inv['nco_out_bits']}",
+        f"  variable NCO_PHASE_INC {sel.nco_phase_inc}",
+        f"  variable SAMPLE_BITS {inv['sample_bits']}",
+        f"  variable IQ_BITS {inv['iq_bits']}",
+        f"  variable CIC_STAGES {ch['cic_stages']}",
+        f"  variable CIC_RATE {ch['cic_rate']}",
+        f"  variable CIC_DIFF_DELAY {ch['cic_diff_delay']}",
+        f"  variable FIR_DECIM {ch['fir_decim']}",
+        f"  variable FIR_TAPS {ch['fir_taps']}",
+        f"  variable COARSE_EXTRA_DECIM {ch['coarse_extra_decim']}",
+        "",
+        "  # Anchos derivados (Hogenauer, ganancia de continua de cada FIR),",
+        "  # calculados por model/drx_model/chain.py: mismo número que consume",
+        "  # rtl/generated/drx_params_pkg.sv, para tcl/gen_ip.tcl.",
+        f"  variable CIC_GAIN {derived['cic_gain']}",
+        f"  variable CIC_GROWTH_BITS {derived['cic_growth_bits']}",
+        f"  variable CIC_REGISTER_BITS {derived['cic_register_bits']}",
+        f"  variable FIR_COEFF_BITS {derived['fir_coeff_bits']}",
+        f"  variable FIR_DC_GAIN {derived['fir_dc_gain']}",
+        f"  variable FIR_GROWTH_BITS {derived['fir_growth_bits']}",
+        f"  variable HALFBAND_COEFF_BITS {derived['halfband_coeff_bits']}",
+        f"  variable HALFBAND_DC_GAIN {derived['halfband_dc_gain']}",
+        f"  variable HALFBAND_GROWTH_BITS {derived['halfband_growth_bits']}",
         "",
     ]
     for p in platforms.values():
@@ -239,6 +335,39 @@ def render_tcl(platforms: dict[str, Params], sel: Params) -> str:
     return "\n".join(lines)
 
 
+def render_ddc_ip_placeholder(derived: dict) -> str:
+    """Valor de arranque de `rtl/generated/drx_ddc_ip_pkg.sv`.
+
+    Solo se escribe si el fichero no existe (ver `DDC_IP_PKG_OUT`): en cuanto
+    alguien corre `tcl/gen_ip.tcl` contra Vivado, ese script lo sustituye por
+    los anchos reales y esta función deja de intervenir.
+    """
+    sample_bits = derived["cic_register_bits"] - derived["cic_growth_bits"]
+    fir_out_bits = sample_bits + derived["fir_coeff_bits"] + derived["fir_growth_bits"]
+    return f"""// VALOR DE ARRANQUE — `tcl/gen_ip.tcl` lo sustituye por los anchos reales en
+// cuanto corre contra Vivado (ver el aviso de esa cabecera). Estos números
+// son una cota razonable, no una medida: no los usa ningún cálculo real
+// mientras `drx_ddc_top.sv` no se elabore desde un top real.
+
+`ifndef DRX_DDC_IP_PKG_SV
+`define DRX_DDC_IP_PKG_SV
+
+package drx_ddc_ip_pkg;
+
+  localparam int DDS_TDATA_BITS = 32;
+  localparam int CIC_IN_BITS = {sample_bits};
+  localparam int CIC_TDATA_BITS = {derived['cic_register_bits']};
+  localparam int FIR_DROOP_IN_BITS = {sample_bits};
+  localparam int FIR_DROOP_TDATA_BITS = {fir_out_bits};
+  localparam int FIR_HALFBAND_IN_BITS = {sample_bits};
+  localparam int FIR_HALFBAND_TDATA_BITS = {fir_out_bits};
+
+endpackage : drx_ddc_ip_pkg
+
+`endif  // DRX_DDC_IP_PKG_SV
+"""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--check", action="store_true", help="no escribe; falla si hay desfase")
@@ -246,10 +375,11 @@ def main() -> int:
 
     platforms = load_all()
     sel = platforms["zedboard"]
+    derived = _chain_derived(sel)
     outputs = {
-        SV_OUT: render_sv(platforms, sel),
-        H_OUT: render_h(platforms, sel),
-        TCL_OUT: render_tcl(platforms, sel),
+        SV_OUT: render_sv(platforms, sel, derived),
+        H_OUT: render_h(platforms, sel, derived),
+        TCL_OUT: render_tcl(platforms, sel, derived),
     }
 
     stale = []
@@ -261,6 +391,12 @@ def main() -> int:
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
+
+    if not args.check and not DDC_IP_PKG_OUT.exists():
+        DDC_IP_PKG_OUT.parent.mkdir(parents=True, exist_ok=True)
+        DDC_IP_PKG_OUT.write_text(render_ddc_ip_placeholder(derived))
+        rel = DDC_IP_PKG_OUT.relative_to(ROOT)
+        print(f"escrito {rel} (valor de arranque; tcl/gen_ip.tcl lo sustituye)")
 
     if args.check:
         if stale:

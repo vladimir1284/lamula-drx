@@ -50,6 +50,21 @@ class Cic:
         """Ancho de registro de Hogenauer: B_in + crecimiento."""
         return self.in_bits + self.growth_bits
 
+    @property
+    def pipeline_fill(self) -> int:
+        """Muestras de relleno de tubería antes del primer resultado representativo.
+
+        El CIC Compiler de Xilinx es una tubería real de N integradores + N
+        peines, con latencia de silicio entre que entra una muestra y que su
+        efecto llega al último peine — `process()`, en cambio, calculaba con
+        latencia cero (recursión matemática instantánea). Medido contra la IP
+        real en Z1 (xsim, caso `tono_if__fine`, cadena ya con el desfase de
+        fase del NCO corregido): `rate - 1` muestras de relleno reproducen el
+        transitorio real bit a bit, con el único residuo del artefacto de
+        amplitud del NCO ya conocido (~1 LSB, ver `nco.py`).
+        """
+        return self.rate - 1
+
     def process(self, x: np.ndarray) -> np.ndarray:
         """Filtra y diezma. Devuelve enteros a `register_bits`, sin escalar.
 
@@ -58,7 +73,8 @@ class Cic:
         visible, no implícita.
         """
         bits = self.register_bits
-        acc = np.asarray(x, dtype=np.int64)
+        fill = np.zeros(self.pipeline_fill, dtype=np.int64)
+        acc = np.concatenate([fill, np.asarray(x, dtype=np.int64)])
 
         # Integradores. `cumsum` sobre int64 envuelve módulo 2**64, y como
         # 2**bits divide a 2**64, los `bits` bits bajos son los correctos: es la

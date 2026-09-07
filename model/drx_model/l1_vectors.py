@@ -153,10 +153,11 @@ def export_case(
 def _settling_in_samples(ddc: chain.Ddc) -> int:
     """Longitud del transitorio de la cadena, en muestras de ENTRADA.
 
-    CIC: `stages * diff_delay * rate`. FIR: su longitud, referida a la entrada
-    multiplicando por el diezmado que tiene delante.
+    CIC: `pipeline_fill` (la tubería real, ver `cic.py`) más `stages *
+    diff_delay * rate` (el propio transitorio del filtro). FIR: su longitud,
+    referida a la entrada multiplicando por el diezmado que tiene delante.
     """
-    cic = ddc.cic.stages * ddc.cic.diff_delay * ddc.cic.rate
+    cic = ddc.cic.pipeline_fill + ddc.cic.stages * ddc.cic.diff_delay * ddc.cic.rate
     fir = ddc.fir.coeffs.size * ddc.cic.rate
     total = cic + fir
     if ddc.mode == chain.MODE_COARSE:

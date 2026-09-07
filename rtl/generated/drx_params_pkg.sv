@@ -73,6 +73,20 @@ package drx_params_pkg;
   localparam int FIR_TAPS = 63;
   localparam int COARSE_EXTRA_DECIM = 2;
 
+  // Anchos derivados de Hogenauer y de la ganancia de continua de cada FIR,
+  // calculados por `model/drx_model/chain.py`: Z1 los consume en
+  // `drx_round_sat` para que el punto de recorte de cada etapa sea el mismo
+  // número que usa el oráculo, no una copia a mano de la fórmula.
+  localparam longint CIC_GAIN = 380204032;
+  localparam int CIC_GROWTH_BITS = 29;
+  localparam int CIC_REGISTER_BITS = 45;
+  localparam int FIR_COEFF_BITS = 18;
+  localparam longint FIR_DC_GAIN = 552725;
+  localparam int FIR_GROWTH_BITS = 20;
+  localparam int HALFBAND_COEFF_BITS = 18;
+  localparam longint HALFBAND_DC_GAIN = 328067;
+  localparam int HALFBAND_GROWTH_BITS = 19;
+
 endpackage : drx_params_pkg
 
 `endif  // DRX_PARAMS_PKG_SV

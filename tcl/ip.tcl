@@ -25,7 +25,10 @@ set part [::drx::get PART $opt(platform)]
 
 create_project -in_memory -part $part
 
-set xci_files [glob -nocomplain [file join $repo_root ip *.xci]]
+# `create_ip -dir` crea un subdirectorio por core (`ip/<module_name>/*.xci`),
+# no `ip/*.xci` directamente — confirmado generando IP de verdad con
+# tcl/gen_ip.tcl (ver el hallazgo en tcl/sim_l1.tcl).
+set xci_files [glob -nocomplain [file join $repo_root ip * *.xci]]
 if {![llength $xci_files]} {
   puts "no hay XCI en ip/: nada que regenerar (esperado en Z0)"
   exit 0

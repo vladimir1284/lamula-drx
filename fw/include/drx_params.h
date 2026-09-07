@@ -59,4 +59,16 @@
 #define DRX_FIR_TAPS 63
 #define DRX_COARSE_EXTRA_DECIM 2
 
+/* Anchos derivados de Hogenauer y de la ganancia de continua de cada FIR,
+ * calculados por model/drx_model/chain.py (ver tools/gen_params.py). */
+#define DRX_CIC_GAIN 380204032LL
+#define DRX_CIC_GROWTH_BITS 29
+#define DRX_CIC_REGISTER_BITS 45
+#define DRX_FIR_COEFF_BITS 18
+#define DRX_FIR_DC_GAIN 552725LL
+#define DRX_FIR_GROWTH_BITS 20
+#define DRX_HALFBAND_COEFF_BITS 18
+#define DRX_HALFBAND_DC_GAIN 328067LL
+#define DRX_HALFBAND_GROWTH_BITS 19
+
 #endif /* DRX_PARAMS_H */

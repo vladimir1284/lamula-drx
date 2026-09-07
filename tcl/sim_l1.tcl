@@ -92,6 +92,25 @@ set tb_sources [list \
   [file join $repo_root sim tb_sv drx_l1_checker.sv] \
   [file join $repo_root sim tb_sv tb_l1_ddc.sv]]
 
+# `rtl/generated/drx_ddc_ip_pkg.sv` ya viene en rtl/filelist.f (como
+# drx_params_pkg.sv). Antes de que exista `drx_ddc_top.sv` de verdad lleva un
+# valor de arranque que escribe tools/gen_params.py; en cuanto corre
+# tcl/gen_ip.tcl contra la IP real, ese script lo sustituye por los anchos
+# reales de TDATA — comprobar que no siga siendo el de arranque cuando
+# have_ddc es cierto es justo lo que hace este aviso.
+set have_ddc 0
+foreach src $rtl_sources {
+  if {[file tail $src] eq "drx_ddc_top.sv"} { set have_ddc 1 }
+}
+if {$have_ddc} {
+  set ip_pkg [file join $repo_root rtl generated drx_ddc_ip_pkg.sv]
+  if {[string match "*VALOR DE ARRANQUE*" [read [set fh [open $ip_pkg r]]]]} {
+    close $fh
+    error "rtl/generated/drx_ddc_ip_pkg.sv sigue siendo el valor de arranque; corre tcl/gen_ip.tcl antes de sim_l1.tcl"
+  }
+  close $fh
+}
+
 # --- elaboración y ejecución ------------------------------------------------
 cd $opt(outdir)
 
@@ -106,36 +125,70 @@ create_project sim_l1 -part $part -force
 # La IP se lee de los XCI versionados, igual que en tcl/build.tcl: una sola
 # fuente de verdad para los cores, y simulación contra exactamente lo que se
 # sintetiza. Sin XCI —el caso de Z0— el testbench no tiene DUT y falla solo.
-set xci_files [glob -nocomplain [file join $repo_root ip *.xci]]
+# HALLAZGO, primera ejecución real: `create_ip -dir` crea un subdirectorio
+# por core (`ip/<module_name>/<module_name>.xci`) — es el comportamiento
+# normal de Vivado, confirmado generando IP de verdad con tcl/gen_ip.tcl.
+# `ip/*.xci` (sin el subdirectorio) nunca encontraba nada; no se notó antes
+# porque en Z0 `ip/` estaba vacío y daba lo mismo. El mismo fallo está en
+# tcl/build.tcl y tcl/ip.tcl.
+set xci_files [glob -nocomplain [file join $repo_root ip * *.xci]]
 if {[llength $xci_files]} {
   read_ip $xci_files
   generate_target {simulation instantiation_template} [get_ips]
 }
 
-foreach src [concat $rtl_sources $tb_sources] {
-  read_verilog -sv $src
-}
+# HALLAZGO, primera ejecución real: `read_verilog` (pensado para el flujo
+# no-project de tcl/build.tcl) no deja los ficheros donde `launch_simulation`
+# los busca en un proyecto EN DISCO como este — el compilador de xvlog solo
+# veía tb_l1_ddc.sv y drx_params_pkg.sv (lo único que la rama `` `else `` de
+# antes necesitaba) y nunca llegaba a `drx_ddc_top.sv` ni a sus dependencias.
+# `add_files` contra el fileset de simulación es la forma correcta en modo
+# proyecto.
+add_files -norecurse -fileset [current_fileset -simset] [concat $rtl_sources $tb_sources]
 
 set_property top tb_l1_ddc [current_fileset -simset]
 
+# `have_ddc` ya se calculó arriba, antes de leer las fuentes, para poder
+# anteponer drx_ddc_ip_pkg.sv cuando hiciera falta.
+#
 # El define solo se pone si el DUT existe. Sin él el testbench aborta con un
 # mensaje que dice qué falta; con él puesto sobre un DUT inexistente el fallo
 # sería un «module not found» de xelab, que dice mucho menos.
-set have_ddc 0
-foreach src $rtl_sources {
-  if {[file tail $src] eq "drx_ddc_top.sv"} { set have_ddc 1 }
-}
 # La escala de tiempo se fija aquí y no en el testbench: declararla solo en un
 # módulo y no en el RTL mezcla escalas, y el periodo del reloj sale de FS_HZ en
 # picosegundos.
+#
+# HALLAZGO, primera ejecución real contra IP de verdad — dos capas del mismo
+# problema, no una:
+#
+# 1. `` `ifdef `` es una directiva de PREPROCESADOR, y en el flujo de dos
+#    pasos de xsim se resuelve en xvlog (compilación), no en xelab
+#    (elaboración). Poner `-d` solo en `xsim.elaborate.xelab.more_options`
+#    (como estaba) define la macro demasiado tarde para el propio xvlog.
+# 2. Aun pasando `-d` a xvlog vía `xsim.compile.xvlog.more_options`, launch_
+#    simulation hace ANTES su propio barrido de qué ficheros hacen falta
+#    («Fetching design files»), y ese barrido usa `verilog_define` del
+#    fileset — no las `more_options` del binario — para decidir qué rama de
+#    un `` `ifdef `` es la real. Sin ponerlo ahí, el barrido decide que
+#    `drx_ddc_top.sv` no hace falta (ve la rama `` `else ``) y ni siquiera lo
+#    pasa a xvlog, así que el error visible es «xelab: module not found» en
+#    vez de un error de compilación — engañoso, porque parece que falta el
+#    módulo cuando en realidad falta pasarlo a compilar.
+#
+# Las tres propiedades tienen que decir lo mismo para que no se repita esto.
 set xelab_options {-timescale 1ps/1ps}
+set xvlog_options {}
 if {$have_ddc} {
   lappend xelab_options -d DRX_HAVE_DDC
+  lappend xvlog_options -d DRX_HAVE_DDC
+  set_property verilog_define {DRX_HAVE_DDC} [current_fileset -simset]
 } else {
   puts "AVISO: no hay drx_ddc_top en rtl/filelist.f; el testbench abortará (trabajo de Z1)"
 }
 set_property -name {xsim.elaborate.xelab.more_options} \
              -value $xelab_options -objects [current_fileset -simset]
+set_property -name {xsim.compile.xvlog.more_options} \
+             -value $xvlog_options -objects [current_fileset -simset]
 
 set plusargs [list \
   "stimulus_path=[file join $opt(vectors) stimulus.hex]" \
