@@ -483,11 +483,10 @@ dos casos (vectores limpios y con un bit corrupto) siguen en verde, igual que to
 completa. **P-09 no tiene ningún bug conocido pendiente**; lo único que falta para el hito ZM1 es
 que Z1 escriba `drx_ddc_top`.
 
-### P-10 · `drx_ddc_top` contra IP real: tres bugs corregidos, uno abierto { #p-10 }
+### P-10 · `drx_ddc_top` contra IP real: cuatro bugs corregidos { #p-10 }
 
-**Estado:** parcialmente cerrado, 6/7 de septiembre de 2026 · **Dueño:** equipo · **Cierre
-pendiente de** una decisión de convenio de signo — causa ya localizada (`nco_sin` invertido, ver
-abajo), falta decidir si se corrige en el modelo o en la configuración de la IP.
+**Estado:** cerrado, 7 de septiembre de 2026 · **Dueño:** equipo. Queda un residuo nuevo y mucho
+menor sin investigar (±1 LSB en `tono_desplazado__fine`, ver el cierre más abajo) — no bloquea Z1.
 
 Primera ejecución real de `tcl/gen_ip.tcl` + `tcl/sim_l1.tcl` contra el DDC de un canal
 (`rtl/drx_ddc_top.sv`, `rtl/drx_ddc_mixer.sv`, `rtl/drx_round.sv`, `rtl/drx_saturate.sv`), sobre
@@ -594,10 +593,6 @@ pero el residuo uniforme sigue sin explicación confirmada.
       — Negative Sine"; `tcl/gen_ip.tcl` no toca ese parámetro hoy, así que corre con el valor de
       fábrica) y corregirlo ahí si el convenio del modelo es el que se quiere conservar.
 
-    Cualquiera de los dos cierra P-10 de un plumazo (I ya cierra; Q debería cerrar también en
-    cuanto el signo coincida). Queda para quien tome la decisión — no se aplicó ningún cambio de
-    signo sin ese paso.
-
     Para reproducir: las sondas usadas no están en el árbol (se revirtieron tras extraer los
     datos). Recrearlas es sencillo: `$display` sobre
     `g_branch[0/1].cic_rounded`/`fir_rounded` en `tb_l1_ddc.sv`, y dentro de `drx_ddc_mixer`,
@@ -605,6 +600,39 @@ pero el residuo uniforme sigue sin explicación confirmada.
     `rtl/drx_ddc_mixer.sv`); comparar contra `Nco.generate()` y los productos crudos
     `x·cos_w`/`−x·sin_w` calculados en Python para el mismo estímulo (`tools/gen_l1_vectors.py`,
     caso `tono_if`, semilla `SEED=20260830`).
+
+!!! success "Decisión tomada y aplicada, 7-sep-2026: se ajusta el modelo, no la IP"
+    Se decidió (vladimir, en sesión) conservar la configuración de la IP tal como está y ajustar el
+    modelo dorado para que coincida con el convenio de cuadratura real del DDS Compiler.
+    **Cambiado:** `Ddc.mix()` en `model/drx_model/chain.py` — `q = shift_round(x·sin_w, shift)` en
+    vez de `shift_round(-x·sin_w, shift)`. Se actualizó también el comentario de cabecera de
+    `rtl/drx_ddc_mixer.sv` (documentación, no lógica: el RTL no cambia, porque `prod_q <= -(...)`
+    ya hacía lo correcto una vez que se entiende que `nco_sin` trae el signo de `e^{+jwn}`) y la
+    fórmula/snippet de `docs/tutorial/03-ddc.md`, que citaba el código viejo literalmente.
+
+    **Validación contra xsim real, con los vectores L1 regenerados:**
+
+    - `tono_if__fine` (el caso de aceptación de arriba): **sigue en 306/315, sin cambio.** Esto no
+      es que el fix no sirva — es que este caso concreto es degenerado para probarlo: el tono está
+      exactamente en fase con el NCO, así que `Q` converge a ~0 en régimen permanente con
+      *cualquiera* de las dos convenciones de signo (negar algo que ya es ~0 sigue siendo ~0). El
+      mismo efecto ya se había visto en `model/tests/test_chain.py`: su huella `GOLDEN` tampoco se
+      movió con el cambio, por la misma razón — verificado a mano, no es una casualidad sospechosa.
+    - `tono_desplazado__fine` (tono corrido del IF, sí sensible al signo de `Q`): **156/315
+      discrepancias, todas de ±1 LSB en un solo canal** (ejemplos: `dut=(-747,-4220)
+      modelo=(-748,-4219)`, `dut=(3692,2259) modelo=(3692,2258)`) — nada parecido al sesgo
+      sistemático y consistente de antes (`(-1,+1)` en las 306 muestras). Es la confirmación real:
+      el fix de signo es correcto. El residuo de ±1 LSB que queda es de una magnitud completamente
+      distinta — consistente con el ruido de punto flotante de ±1-5 unidades ya visto al comparar
+      `nco_cos` entre modelo e IP (arriba, hallazgo #2: evaluar `cos`/`sin` en direcciones
+      espejadas por rutas de coma flotante distintas no da bit a bit lo mismo) — y queda como
+      pendiente aparte, mucho menor, sin investigar todavía.
+    - `make check`: 69/69 con las huellas `GOLDEN` de `tono_if` sin cambiar (ver arriba) y
+      `mkdocs build --strict` limpio tras tocar el tutorial.
+
+    **P-10 se da por cerrado** en cuanto a los tres bugs de RTL/Tcl y el convenio de signo del
+    mezclador. Lo que queda (el ±1 LSB residual en `tono_desplazado`) es un hallazgo nuevo, mucho
+    más pequeño, y no bloquea Z1.
 
 ~~El residuo uniforme vendría de que el DDS Compiler en modo `Amplitude_Mode {Full_Range}` apunta a
 un pico de `2^(N-1) - 2` (confirmado con el ejemplo numérico de pg141 v6.0 p.51: para 8 bits da

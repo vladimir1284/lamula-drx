@@ -1,8 +1,19 @@
 // Mezclador complejo (D-06: el HDL propio se reserva para esto; NCO, CIC y
 // FIR son IP de Xilinx). Baja `s_data` a banda base multiplicando por
-// cos/−sin del NCO — el mismo cálculo que `Ddc.mix()`:
+// cos/sin del NCO — el mismo cálculo que `Ddc.mix()`:
 //
-//   i[n] =  x[n]·cos(wn),   q[n] = −x[n]·sin(wn)
+//   i[n] = x[n]·cos(wn),   q[n] = x[n]·sin(wn)
+//
+// P-10, 7-sep-2026: esta nota decía `q[n] = −x[n]·sin(wn)` antes de medirlo
+// contra xsim real. El DDS Compiler entrega el seno con la convención de
+// signo de `e^{+jwn}`, no `e^{-jwn}` — confirmado bit a bit reconstruyendo
+// `nco_sin` a partir del producto crudo del mezclador (`prod_q`) contra un
+// estímulo conocido. `prod_q <= -(... * nco_sin)`, más abajo, SIGUE
+// llevando el signo menos explícito a propósito: ese menos cancela el
+// signo que ya trae `nco_sin` de la IP, y el resultado neto es
+// `+x·sin(wn)` en la convención de `Ddc.mix()`. No toques ese signo en el
+// RTL sin cambiar también el modelo — es el modelo el que se ajustó, no el
+// RTL, porque el RTL ya se comporta como la IP real.
 //
 // HALLAZGO, primera ejecución real contra IP de verdad (xsim, sonda de señal
 // sobre `nco_cos`/`nco_sin` en el primer `nco_valid` consumido): la primera

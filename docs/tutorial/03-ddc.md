@@ -77,11 +77,16 @@ def test_nco_emite_en_la_frecuencia_normalizada_del_if():
 
 ## Paso 2 — el mezclador
 
-Multiplicar la señal real por coseno y por −seno la baja a banda base y la convierte en compleja:
+Multiplicar la señal real por coseno y por seno la baja a banda base y la convierte en compleja:
 
 $$
-i[n] = x[n]\cos(\omega n), \qquad q[n] = -x[n]\sin(\omega n)
+i[n] = x[n]\cos(\omega n), \qquad q[n] = x[n]\sin(\omega n)
 $$
+
+El signo de `q` no es arbitrario ni una elección de libro de texto: es la convención de cuadratura
+que de verdad entrega el DDS Compiler de Xilinx (`e^{+j\omega n}`, no `e^{-j\omega n}`), confirmada
+bit a bit contra xsim en Z1 — ver [P-10](../alcance/pendientes.md#p-10). El modelo se ajustó para
+coincidir con la IP real, no al revés.
 
 En enteros, el producto de 16×16 bits crece a 32 y hay que volver a bajarlo quitando el fondo de
 escala del NCO:
@@ -91,7 +96,7 @@ def mix(self, x):
     cos_w, sin_w = self.nco.generate(x.size)
     shift = self.params.invariant["nco_out_bits"] - 1
     i = fixed.shift_round(x * cos_w, shift)
-    q = fixed.shift_round(-x * sin_w, shift)
+    q = fixed.shift_round(x * sin_w, shift)
     return i, q
 ```
 

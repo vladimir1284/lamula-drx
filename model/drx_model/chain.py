@@ -94,6 +94,12 @@ class Ddc:
     def mix(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Bajada a banda base. Devuelve `(i, q)` a `sample_bits`.
 
+        `q[n] = +x[n]·sin(wn)`, no `-x[n]·sin(wn)`: el DDS Compiler real
+        entrega el seno con el signo de la convención de cuadratura
+        `e^{+jwn}` (confirmado bit a bit contra xsim en Z1, `nco_sin` sale
+        invertido respecto al `-sin` que este modelo asumía antes — ver P-10).
+        No es una elección arbitraria del modelo: es lo que la IP hace.
+
         El producto crece a `sample_bits + nco_out_bits` y se vuelve a bajar
         quitando el fondo de escala del NCO, con redondeo al más cercano.
         """
@@ -101,7 +107,7 @@ class Ddc:
         cos_w, sin_w = self.nco.generate(x.size)
         shift = self.params.invariant["nco_out_bits"] - 1
         i = fixed.shift_round(x * cos_w, shift)
-        q = fixed.shift_round(-x * sin_w, shift)
+        q = fixed.shift_round(x * sin_w, shift)
         return i, q
 
     def _decimate(self, branch: np.ndarray) -> np.ndarray:
