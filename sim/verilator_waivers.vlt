@@ -15,3 +15,11 @@ lint_off -rule UNUSEDPARAM -file "*/drx_ssa_pkg.sv"
 // todo top use todos los parámetros obligaría a trocear el paquete, que es
 // justamente lo que D-02 prohíbe.
 lint_off -rule UNUSEDPARAM -file "*/drx_params_pkg.sv"
+
+// drx_ddc_ip_pkg (generado por tcl/gen_ip.tcl, no se edita a mano): todos sus
+// anchos SÍ se usan, en drx_ddc_top.sv vía `import drx_ddc_ip_pkg::*;`. Es un
+// falso positivo de Verilator 5.006: el warning se atribuye a instancias que
+// no importan el paquete (p. ej. tb_l1_harness.u_checker) en vez de reconocer
+// el uso real en drx_ddc_top. Confirmado el 7-sep-2026 al correr `make check`
+// con Vivado/Verilator ya en PATH.
+lint_off -rule UNUSEDPARAM -file "*/drx_ddc_ip_pkg.sv"

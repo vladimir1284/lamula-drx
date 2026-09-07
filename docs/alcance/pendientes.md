@@ -536,10 +536,25 @@ complejidad real). Cerrar esto necesita otra decisión igual de deliberada que l
 ajustar la convención de amplitud del NCO en el modelo, o encontrar una configuración de IP que
 coincida exactamente — y no se ha tomado todavía.
 
-Aparte, `sim/tests/test_l1_harness.py` y `test_l0_heartbeat.py` (cocotb sobre Verilator) fallan con
-`%Error: Exiting due to ... warning(s)` por un `UNUSEDPARAM` en `rtl/generated/drx_ddc_ip_pkg.sv`
-al elaborar `tb_l1_harness` — un hallazgo aparte, sin relación con los tres de arriba, todavía sin
-investigar.
+!!! success "Cerrado, 7-sep-2026: el `UNUSEDPARAM` y un segundo bug encontrado al investigarlo"
+    Con Vivado y Verilator ya en `PATH` en esta máquina, `make check` completo (el que corre los
+    dos simuladores, no solo `make sim`) reveló dos fallos reales, los dos ya corregidos:
+
+    1. **El `UNUSEDPARAM` de `rtl/generated/drx_ddc_ip_pkg.sv`** que hacía fallar
+       `sim/tests/test_l1_harness.py` y `test_l0_heartbeat.py` al elaborar contra Verilator 5.006
+       era un falso positivo: `drx_ddc_top.sv` sí usa cada uno de los anchos del paquete, vía
+       `import drx_ddc_ip_pkg::*;`, pero Verilator atribuye el warning a instancias que no lo
+       importan (`tb_l1_harness.u_checker`) en vez de reconocer el uso real. Mismo patrón que los
+       waivers ya existentes para `drx_ssa_pkg`/`drx_params_pkg` — añadido en
+       `sim/verilator_waivers.vlt`.
+    2. **`fw/src/drx_params_selftest.c` exigía contrato v0.1** — literal que se quedó sin tocar en
+       los dos bumps deliberados y ya autorizados por D-08 (v0.2 en `tx_pol_v`, v0.3 en el enum de
+       canales), así que `make check` en `fw/` fallaba con «version del contrato DRx<->DSP
+       inesperada» desde el 3-sep-2026 sin que nadie lo notara — ninguno de esos dos commits corrió
+       el `make check` de la raíz. Corregido a v0.3.
+
+    Con los dos fixes, `make check` vuelve a estar en verde, 69/69. Sin relación con el hallazgo de
+    amplitud de arriba.
 
 ## Supuestos de entorno a verificar
 
