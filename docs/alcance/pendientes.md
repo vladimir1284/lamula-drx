@@ -486,8 +486,8 @@ que Z1 escriba `drx_ddc_top`.
 ### P-10 · `drx_ddc_top` contra IP real: tres bugs corregidos, uno abierto { #p-10 }
 
 **Estado:** parcialmente cerrado, 6/7 de septiembre de 2026 · **Dueño:** equipo · **Cierre
-pendiente de** el residuo de ±1 LSB de abajo, causa todavía desconocida (la hipótesis de amplitud
-del 7-sep se probó y se descartó).
+pendiente de** una decisión de convenio de signo — causa ya localizada (`nco_sin` invertido, ver
+abajo), falta decidir si se corrige en el modelo o en la configuración de la IP.
 
 Primera ejecución real de `tcl/gen_ip.tcl` + `tcl/sim_l1.tcl` contra el DDC de un canal
 (`rtl/drx_ddc_top.sv`, `rtl/drx_ddc_mixer.sv`, `rtl/drx_round.sv`, `rtl/drx_saturate.sv`), sobre
@@ -548,11 +548,63 @@ pero el residuo uniforme sigue sin explicación confirmada.
     originales. La cita de pg141 sobre el pico de `Full_Range` describe el envolvente de diseño del
     modo, no el factor de escala real de cada muestra de la LUT — no aplica aquí.
 
-    **El residuo de ±1 LSB en `tono_if__fine` sigue sin causa conocida.** Con la NCO descartada como
-    origen (su LUT ya es exacta contra lo medido), el siguiente paso es mirar aguas abajo — CIC,
-    FIR droop o el redondeo de `drx_round.sv` — con visibilidad de señales intermedias (dump de
-    onda desde `tcl/sim_l1.tcl`, comparado contra los arrays intermedios que ya calcula
-    `Ddc._decimate` en Python), no seguir ajustando el modelo por ensayo y error.
+    **El residuo de ±1 LSB en `tono_if__fine` seguía sin causa conocida en este punto** — que su
+    origen SÍ resultó ser el NCO, solo que no por amplitud, está documentado a continuación.
+
+!!! bug "Localizado, 7-sep-2026: SÍ es el NCO — `nco_sin` sale con el signo cambiado"
+    La instrumentación de abajo (revertida del árbol, no comiteada — sondas temporales en
+    `sim/tb_sv/tb_l1_ddc.sv` sobre `g_branch[i].cic_rounded`, `fir_rounded`, y dentro de
+    `drx_ddc_mixer`: `pair_en`/`in_mem`/`nco_cos`/`nco_sin`/`prod_i`/`prod_q`) localizó el origen
+    en tres pasadas:
+
+    1. **CIC → FIR**: el sesgo (I: −1, Q: +1 respecto al modelo) ya está presente en
+       `cic_rounded` desde la primera muestra en régimen (`g_branch[0].cic_rounded`), y el FIR lo
+       propaga sin añadir nada nuevo — descarta CIC/FIR/`drx_round` como origen, apunta aguas
+       arriba, al mezclador o al NCO.
+    2. **Mezclador → NCO**: `prod_q` (el producto crudo, sin redondear) del mezclador YA lleva el
+       sesgo. Con `x[n]` conocido exacto (mismo estímulo), reconstruir `nco_sin` implícito a partir
+       de `prod_q = −(x[n]·nco_sin)` y compararlo contra `Nco.lut()` da la respuesta: **`nco_sin`
+       real coincide en magnitud con el `sin` del modelo pero con el signo invertido**, muestra a
+       muestra, desde `n=1` (ejemplos: modelo `sin=32702` → IP `sin=−32702`; modelo `sin=−32186` →
+       IP `sin=+32186`). `nco_cos` coincide con el modelo salvo un ruido de ±1-5 unidades —
+       consistente con comparar `cos(θ)` contra `cos(θ)` evaluados por rutas de coma flotante
+       ligeramente distintas (`cos` es función par, así que el signo no lo delata), mientras que
+       `sin(θ)` sí delata el signo invertido de inmediato (`sin` es impar).
+    3. **`PINC1` no es la causa**: se comparó el valor de `PINC1` ya escrito en
+       `ip/dds_compiler_nco/dds_compiler_nco.xci` contra `params.nco_phase_inc` del modelo — son
+       bit a bit idénticos, no el complemento. El incremento de fase que de verdad usa la IP es el
+       correcto; lo que sale invertido es el campo SINE del DDS Compiler para ese mismo incremento,
+       no la velocidad ni el sentido del acumulador.
+
+    **Lo que esto explica de una vez:** por qué `I` cierra casi exacto (coseno es función par,
+    insensible a una inversión de signo en el seno) y por qué `Q` tiene un sesgo consistente pero
+    pequeño tras el CIC/FIR (un tono coherente que decima a un residuo cercano a cero sigue cerca
+    de cero incluso con el signo de la parte alterna invertido) — y por qué la hipótesis de
+    amplitud de arriba no tenía ningún efecto: el problema nunca fue de escala.
+
+    **No corregido todavía — es una decisión, no un ajuste ciego.** Dos caminos abiertos, ninguno
+    aplicado:
+
+    - Ajustar el convenio de signo en el modelo dorado (`Nco.lut()`/`Ddc.mix()`: usar
+      `q = +x·sin_w` en vez de `−x·sin_w`, o negar `sin_lut` en la propia tabla) — si el NCO real
+      define "seno" con el convenio contrario al que asume `model/drx_model/nco.py` (p. ej. el
+      DDS Compiler entrega el seno de la señal analítica `e^{-jθ}` en vez de `e^{+jθ}`, una
+      convención de cuadratura distinta, no un bug).
+    - O buscar la opción de configuración del DDS Compiler que invierte el signo (pg141, "Polarity
+      — Negative Sine"; `tcl/gen_ip.tcl` no toca ese parámetro hoy, así que corre con el valor de
+      fábrica) y corregirlo ahí si el convenio del modelo es el que se quiere conservar.
+
+    Cualquiera de los dos cierra P-10 de un plumazo (I ya cierra; Q debería cerrar también en
+    cuanto el signo coincida). Queda para quien tome la decisión — no se aplicó ningún cambio de
+    signo sin ese paso.
+
+    Para reproducir: las sondas usadas no están en el árbol (se revirtieron tras extraer los
+    datos). Recrearlas es sencillo: `$display` sobre
+    `g_branch[0/1].cic_rounded`/`fir_rounded` en `tb_l1_ddc.sv`, y dentro de `drx_ddc_mixer`,
+    sobre `pair_en`/`in_mem[in_rd_ptr]`/`nco_cos`/`nco_sin`/`prod_i`/`prod_q` (ver
+    `rtl/drx_ddc_mixer.sv`); comparar contra `Nco.generate()` y los productos crudos
+    `x·cos_w`/`−x·sin_w` calculados en Python para el mismo estímulo (`tools/gen_l1_vectors.py`,
+    caso `tono_if`, semilla `SEED=20260830`).
 
 ~~El residuo uniforme vendría de que el DDS Compiler en modo `Amplitude_Mode {Full_Range}` apunta a
 un pico de `2^(N-1) - 2` (confirmado con el ejemplo numérico de pg141 v6.0 p.51: para 8 bits da
