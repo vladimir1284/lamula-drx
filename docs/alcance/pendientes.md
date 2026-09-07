@@ -486,7 +486,8 @@ que Z1 escriba `drx_ddc_top`.
 ### P-10 · `drx_ddc_top` contra IP real: tres bugs corregidos, uno abierto { #p-10 }
 
 **Estado:** parcialmente cerrado, 6/7 de septiembre de 2026 · **Dueño:** equipo · **Cierre
-pendiente de** el hallazgo de amplitud de abajo.
+pendiente de** el residuo de ±1 LSB de abajo, causa todavía desconocida (la hipótesis de amplitud
+del 7-sep se probó y se descartó).
 
 Primera ejecución real de `tcl/gen_ip.tcl` + `tcl/sim_l1.tcl` contra el DDC de un canal
 (`rtl/drx_ddc_top.sv`, `rtl/drx_ddc_mixer.sv`, `rtl/drx_round.sv`, `rtl/drx_saturate.sv`), sobre
@@ -522,19 +523,41 @@ Vivado 2022.2 real en esta máquina de desarrollo (ver nota bajo P-09). Caso de 
    salida `nco_ready` del mezclador (que sigue existiendo, atada a `1'b1`) queda explícitamente sin
    uso, igual que `s_last`.
 
-**Abierto — no es un bug de RTL/Tcl, es una diferencia de convención entre el modelo y la IP:**
+**Abierto — la hipótesis de amplitud del 6/7-sep se probó contra xsim real y quedó descartada:**
 
 Con los tres fixes de arriba, `tono_if__fine` pasó de 312-313/315 discrepancias (con errores de
-hasta 5× en el transitorio) a **306/315, pero todas de ±1 LSB** — el transitorio ya cierra bit a
-bit. El residuo uniforme viene de que el DDS Compiler en modo `Amplitude_Mode {Full_Range}` apunta
-a un pico de `2^(N-1) - 2` (confirmado con el ejemplo numérico de pg141 v6.0 p.51: para 8 bits da
+hasta 5× en el transitorio) a **306/315, todas de ±1 LSB** — el transitorio ya cierra bit a bit,
+pero el residuo uniforme sigue sin explicación confirmada.
+
+!!! danger "Hipótesis descartada, 7-sep-2026: no es `Amplitude_Mode {Full_Range}`"
+    La primera lectura de este hallazgo (más abajo se conserva tachada) apuntaba a que el DDS
+    Compiler usa como pico `2^(N-1) - 2` en vez del máximo estándar de complemento a dos que asume
+    `fixed.limits()`. Se implementó (`Nco.lut()` con pico `2^15-2`), se regeneraron los vectores L1
+    y se corrió `tono_if__fine` contra xsim real: **el conteo de discrepancias no cambió ni una,
+    306/315 exactas**, lo que ya era sospechoso — un cambio de escala de ~3·10⁻⁵ sobre valores de
+    salida de orden 10³ no puede mover ningún redondeo lo suficiente como para cerrar un residuo de
+    ±1 LSB completo.
+
+    La prueba concluyente: `tcl/gen_ip.tcl` ya documentaba una medición real contra la IP,
+    `LUT[656] = (32702, 2059)`, de la investigación del hallazgo #1. Recalculando esa misma entrada
+    en Python, el pico **original** del modelo (`2^15-1 = 32767`) reproduce `(32702, 2059)` exacto;
+    el pico "corregido" (`2^15-2 = 32766`) da `(32701, 2059)` — **mal por 1 en el coseno**, peor que
+    antes. El modelo original ya estaba en lo correcto en ese punto medido; el cambio se revirtió
+    íntegro (`model/drx_model/nco.py`, `model/tests/test_bloques.py`,
+    `model/tests/test_chain.py`) y `make check` vuelve a estar en 69/69 con las huellas `GOLDEN`
+    originales. La cita de pg141 sobre el pico de `Full_Range` describe el envolvente de diseño del
+    modo, no el factor de escala real de cada muestra de la LUT — no aplica aquí.
+
+    **El residuo de ±1 LSB en `tono_if__fine` sigue sin causa conocida.** Con la NCO descartada como
+    origen (su LUT ya es exacta contra lo medido), el siguiente paso es mirar aguas abajo — CIC,
+    FIR droop o el redondeo de `drx_round.sv` — con visibilidad de señales intermedias (dump de
+    onda desde `tcl/sim_l1.tcl`, comparado contra los arrays intermedios que ya calcula
+    `Ddc._decimate` en Python), no seguir ajustando el modelo por ensayo y error.
+
+~~El residuo uniforme vendría de que el DDS Compiler en modo `Amplitude_Mode {Full_Range}` apunta a
+un pico de `2^(N-1) - 2` (confirmado con el ejemplo numérico de pg141 v6.0 p.51: para 8 bits da
 126 = 0b01111110, exactamente lo que dice el manual), mientras que `fixed.limits()` del modelo
-asume el máximo estándar de complemento a dos, `2^(N-1) - 1`. No se encontró una configuración de
-`Amplitude_Mode` que dé exactamente el pico del modelo (`Unit_Circle` da la mitad; Taylor Series
-Correction podría acercarse pero no se confirmó que llegue a `2^15-1` exactamente, y añade
-complejidad real). Cerrar esto necesita otra decisión igual de deliberada que la del hallazgo #2 —
-ajustar la convención de amplitud del NCO en el modelo, o encontrar una configuración de IP que
-coincida exactamente — y no se ha tomado todavía.
+asume el máximo estándar de complemento a dos, `2^(N-1) - 1`.~~ Descartado arriba.
 
 !!! success "Cerrado, 7-sep-2026: el `UNUSEDPARAM` y un segundo bug encontrado al investigarlo"
     Con Vivado y Verilator ya en `PATH` en esta máquina, `make check` completo (el que corre los

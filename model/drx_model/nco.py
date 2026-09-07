@@ -47,7 +47,16 @@ class Nco:
         return (steps & mask).astype(np.int64)
 
     def lut(self) -> tuple[np.ndarray, np.ndarray]:
-        """Tablas de coseno y seno cuantizadas a `out_bits`."""
+        """Tablas de coseno y seno cuantizadas a `out_bits`.
+
+        Pico en el máximo estándar de complemento a dos (`fixed.limits()`),
+        `2**(out_bits-1) - 1` -- confirmado exacto contra la IP real: la
+        medición documentada en `tcl/gen_ip.tcl` (`LUT[656] = (32702, 2059)`,
+        búsqueda inversa contra el arranque real del Phase Generator) solo
+        sale con este pico, no con `2**(out_bits-1) - 2` (el target de
+        `Amplitude_Mode {Full_Range}` de pg141 -- probado y descartado en
+        P-10: da (32701, 2059), mal por 1 en el coseno).
+        """
         size = 1 << self.lut_addr_bits
         _, high = fixed.limits(self.out_bits)
         angle = 2.0 * np.pi * np.arange(size) / size
