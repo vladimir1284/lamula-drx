@@ -634,6 +634,33 @@ pero el residuo uniforme sigue sin explicación confirmada.
     mezclador. Lo que queda (el ±1 LSB residual en `tono_desplazado`) es un hallazgo nuevo, mucho
     más pequeño, y no bloquea Z1.
 
+    **Investigación adicional del residuo, mismo día:** se buscó una explicación barata (sin más
+    corridas de Vivado) antes de decidir que no vale la pena perseguirlo más. Dos vías, ninguna dio
+    una explicación limpia:
+
+    - **Proximidad al borde del bin de LUT.** Para las 14 primeras muestras de `tono_if` (mismo
+      estímulo, ya con datos capturados), la fracción de fase dentro del bin de LUT (16 bits por
+      debajo de la dirección) no correlaciona con qué muestras coincidían exacto y cuáles no —
+      hay coincidencias con la fase casi en el borde (`frac=0,32`) y discrepancias con la fase casi
+      centrada (`frac=0,56`). Descarta un desajuste de redondeo de dirección por 1 unidad cerca de
+      un borde de bin como explicación única.
+    - **Leer el contenido real de la LUT en vez de reconstruirlo por simulación.** El modelo de
+      simulación del DDS Compiler (`ip/dds_compiler_nco/hdl/dds_compiler_v6_0_vh_rfs.vhd`, ~27 000
+      líneas) es *genérico* — cubre todas las configuraciones posibles del core (Taylor, varios
+      anchos, streaming/fixed) y genera la tabla algorítmicamente en tiempo de elaboración, no la
+      trae como una constante literal de 65536 entradas para esta configuración concreta. Leerlo
+      directamente no es un atajo; habría que volver a instrumentar xsim.
+
+    **Decisión: no perseguirlo más por ahora.** Es ruido de ±1 LSB sobre valores de 16 bits — está
+    en el suelo de cuantización del propio receptor (el tutorial de DDC ya mide un suelo de espurio
+    de −86,4 dBc para este NCO; un ULP de diferencia entre la tabla de `numpy` y la que genera
+    internamente el DDS Compiler es exactamente la clase de discrepancia que un suelo de ese orden
+    ya contempla). Seguir esta pista costaría otra ronda de sondas + xsim (~20 min) por un hallazgo
+    que no cambia ninguna decisión de arquitectura ni bloquea Z1. Si alguien lo retoma: instrumentar
+    `nco_cos`/`nco_sin` para las 56 direcciones de LUT que este tono visita en régimen permanente
+    (ya identificadas en la investigación de arriba) y comparar una a una contra `Nco.lut()` es el
+    siguiente paso más barato.
+
 ~~El residuo uniforme vendría de que el DDS Compiler en modo `Amplitude_Mode {Full_Range}` apunta a
 un pico de `2^(N-1) - 2` (confirmado con el ejemplo numérico de pg141 v6.0 p.51: para 8 bits da
 126 = 0b01111110, exactamente lo que dice el manual), mientras que `fixed.limits()` del modelo
