@@ -19,6 +19,21 @@ runs/
 *.elf
 *.xsa
 
+# Productos de IP regenerados por tcl/gen_ip.tcl / tcl/ip.tcl a partir del
+# XCI -- el XCI es la única fuente versionada bajo ip/*/
+ip/*/hdl/
+ip/*/sim/
+ip/*/constraints/
+ip/*/*.veo
+ip/*/*.vho
+ip/*/*.xml
+ip/*/*.mif
+
+# Datasheets de fabricante descargados como referencia de trabajo -- no se
+# versionan (copyright del fabricante); lo que sí se versiona va en
+# docs/referencia/
+/pg141-dds-compiler-en-us-6.0.pdf
+
 # Entorno de Python del repositorio
 .venv/
 

@@ -150,7 +150,10 @@ cambió por esto. Después, `make figures`, porque las gráficas del tutorial la
 
 **El PLL del FMC213 no está identificado.** VadaTech describe un «wide-band PLL» con referencia por
 panel frontal, portadora o referencia de a bordo, pero no publica la pieza; su hoja de datos devuelve
-HTTP 403. Si es el LMK04828 del ejemplo de aplicación de TI, 143,9 MHz sale con el VCO a 2446,3 MHz
+HTTP 403. **Dato nuevo, 7-sep-2026:** el sistema completo usa una referencia externa disciplinada por
+GPS (confirmado en sesión, ver [P-03](pendientes.md#p-03) y [A9](pendientes.md#supuestos-de-entorno-a-verificar)),
+casi con certeza la "referencia de 10 MHz de la casa" de este párrafo — pero sigue sin ficha técnica,
+así que el PFD de 100 kHz de abajo es todavía la mejor suposición, no un dato confirmado. Si es el LMK04828 del ejemplo de aplicación de TI, 143,9 MHz sale con el VCO a 2446,3 MHz
 (143,9 × 17, dentro del rango de VCO0) y N entero desde 10 MHz, pero con un PFD de 100 kHz, que sube
 el ruido en banda del lazo — y el presupuesto de jitter de apertura es de ~100 fs rms. **Hay que
 pedir a VadaTech la pieza del PLL y su configuración.**

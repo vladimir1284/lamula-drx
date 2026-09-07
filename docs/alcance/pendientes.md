@@ -11,9 +11,9 @@ ahora, y los dos cuestan mucho después.
 
 ### P-01 · Tolerancia del tamaño de celda { #p-01 }
 
-**Estado:** parcialmente respondido sobre código de ORPG, pendiente de verificación de fuente ·
-**Dueño:** especialistas de dominio · **Bloquea:** cierre de [D-04](decisiones.md#d-04) y la
-arquitectura del DDC.
+**Estado:** cerrado, 7 de septiembre de 2026 — exactitud requerida, confirmado también para el modo
+fino de 125 m · **Dueño:** especialistas de dominio · **Cerraba:** [D-04](decisiones.md#d-04) y la
+arquitectura del DDC — ver [ADR-001](adr-001-fs-r1-r2.md).
 
 A 250 MSPS cada muestra cubre `c/2 × 4 ns = 0,5996 m`:
 
@@ -64,19 +64,36 @@ La recomendación que sale de ahí es **R₂ = 417** (250,026 m, que se declara 
 1840 bins justos) con cadena propia, frente a R₂ = 416 (249,41 m, que se declara como 249 y da 1844
 bins, cuatro por encima del tope).
 
-!!! warning "Por qué esto no cierra P-01 todavía"
+!!! warning "Por qué el resultado de agosto no cerraba P-01 todavía"
     El árbol de ORPG **no está en la máquina de desarrollo**, así que ninguna de las citas
-    `fichero:línea` es reverificable aquí; el barrido sí reverificó las cuatro citas decisivas del
+    `fichero:línea` era reverificable ahí; el barrido sí reverificó las cuatro citas decisivas del
     primer resultado y coinciden. Siguen sin revisar la composición geográfica entre radares, el
     VAD/VWP y el remuestreo final a rejilla Level-III —los tres que el brief marcaba como daño
     potencial número uno— y `RDA_Backend_Py`, la única fuente empírica, sigue sin localizar (ver
-    [P-05](#p-05)).
+    [P-05](#p-05)). Esa parte de la verificación queda como deuda abierta aparte, no como condición
+    de cierre de P-01 (ver el cierre de abajo).
 
-    La evidencia ya es suficiente para decir que **R₂ = 416 declarado como 249 es la opción
-    equivocada**, pero sustituir D-04 pide un ADR firmado por los especialistas, no una edición de
-    este documento. Ese ADR ya está redactado y espera firma: [ADR-001](adr-001-fs-r1-r2.md). Y antes de escribir ese ADR hay que resolver [P-08](#p-08): si `fs` puede
-    moverse a 249,427325 MHz, R₂ = 416 pasa a dar 250 m exactos y el dilema desaparece sin tocar
-    los factores de diezmado.
+    Lo que sí faltaba en agosto para cerrar P-01 era el modo fino: la evidencia de ORPG cubría el
+    mecanismo de lista blanca y el caso concreto de 249 m, pero **el modo de 125 m con 3689 bins no
+    llegaba entero a ORPG en ningún caso**, así que no estaba confirmado si el mismo criterio de
+    exactitud aplicaba ahí.
+
+!!! success "Cierre, 7 de septiembre de 2026"
+    Confirmado directamente por los especialistas de dominio: **se exige exactitud también en el
+    modo de 125 m**, no solo en el de 250 m — mismo mecanismo de lista blanca que el resultado de
+    agosto ya había identificado, ahora confirmado en el modo que quedaba abierto.
+
+    **Nota de procedencia:** esta respuesta llegó verbalmente en sesión (vladimir, 7-sep-2026), a
+    diferencia de `research/p-01-RESULTADO.md` y `research/p-01-RESULTADO-barrido.md`, que citan
+    fichero y línea del árbol de ORPG. No contradice esa evidencia — la extiende al modo fino, que
+    quedaba fuera de lo citado — pero **no hay todavía un registro escrito citable** para esta
+    pieza en concreto. Si aparece (correo, acta, ticket), añadirlo aquí.
+
+    Con esto, P-01 dejó de bloquear. La propuesta técnica que ya estaba escrita para esta respuesta
+    exacta — [ADR-001](adr-001-fs-r1-r2.md), `fs` = 143,9 MHz con R₁ = 120 / R₂ = 240, que declara
+    125 m y 250 m exactos en las dos plataformas — sigue **sin firmar**: le falta el visto bueno de
+    dirección técnica y de compra de hardware (P-08/P-03), que P-01 nunca cubrió. `config/params.toml`
+    sigue sin tocarse hasta que esa tabla de firmas se complete.
 
 ### P-02 · Capa física de los encoders SSI { #p-02 }
 
@@ -109,6 +126,22 @@ escenario que arruina el mes 8.
 
 **Condición de cierre:** decisión explícita de comprar o no comprar una plataforma de spike, con
 fecha.
+
+!!! info "Dato nuevo, 7-sep-2026: referencia externa disciplinada por GPS"
+    Confirmado en sesión (vladimir): **todo el sistema usa un reloj externo basado en GPS.** Esto no
+    cierra P-03 — sigue siendo el riesgo número uno, sin plataforma de spike — pero sí acota el árbol
+    de clocking: no es un OCXO libre a bordo de la portadora, es una referencia externa disciplinada
+    por GPS, casi con certeza la misma "referencia de 10 MHz de la casa" que
+    [ADR-001](adr-001-fs-r1-r2.md) ya asumía para el PLL del FMC213 (PFD de 100 kHz, N = 1439). Falta
+    todavía la ficha técnica: formato de señal, conector, y si hay redundancia. Añadido como
+    [A9](#supuestos-de-entorno-a-verificar) a los supuestos de entorno.
+
+    **Precisión, 7-sep-2026:** son **10 MHz + 1PPS**, y la referencia es local a este radar — no
+    hay sincronización entre sitios de la red LAMULA que resolver aquí. Eso simplifica el problema:
+    lo que el 1PPS compra en un radar único es UTC absoluto para el reloj de muestreo y,
+    potencialmente, para el marcado temporal de los rayos en Z4 — no coherencia entre unidades. Con
+    un solo radar, el argumento central de P-03 no cambia: sigue faltando la plataforma de spike
+    para el propio enlace JESD204B, independientemente de la referencia.
 
 ### P-04 · Sectorización azimutal de PRF y ancho de pulso («pie-slice») { #p-04 }
 
@@ -523,6 +556,7 @@ inferencia a partir de hojas de datos y **debe verificarse en banco** antes de c
 | A6 | Hay acceso a un osciloscopio de ≥100 MHz para medir jitter de trigger | Inventario de laboratorio |
 | A7 | Existe un runner de CI con Vivado y licencia para el job `gateware` | Hoy **sigue sin existir**: el job está condicionado a la variable `HAS_VIVADO_RUNNER`. Lo que sí cambió el 5-sep-2026: el flujo de `tcl/` (`build.tcl`, `sim_l1.tcl`) y `tools/make_boot.sh` **se ejecutaron manualmente**, con éxito, en una máquina de desarrollo fuera de CI — ver el hallazgo bajo [P-09](#p-09). Falta registrar ese runner `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` para que el hito ZM0 quede automatizado por CI, no solo demostrado a mano |
 | A8 | La versión de Vivado está pinada en el runner | Sigue sin pinarse porque el runner no existe. La instalación manual de esta sesión fue Vivado ML Standard **2022.2** — candidata obvia a version-pin cuando se monte el runner — pero pinarla en CI es trabajo aparte |
+| A9 | El sistema opera con una referencia de reloj externa disciplinada por GPS, **10 MHz + 1PPS**, local a un único radar — no compartida entre sitios de la red LAMULA (confirmado en sesión, 7-sep-2026). Es, con altísima probabilidad, la "referencia de 10 MHz de la casa" que asume [ADR-001](adr-001-fs-r1-r2.md) | Falta la ficha técnica del GPSDO (formato de señal de las dos salidas, conector, redundancia) y confirmar si la portadora ZU9/FMC213 candidata tiene entrada dedicada para 10 MHz y para 1PPS. Relevante para [P-03](#p-03) (árbol de clocking/SYSREF) y para el diseño de metadatos de Z4 (¿el 1PPS entra al marcado temporal del rayo, o solo disciplina el reloj de muestreo?) |
 
 ## Presupuesto de 1GbE: confirmado, con una salvedad
 

@@ -37,12 +37,14 @@ DDC se compara bit a bit contra el modelo. Detalle en [Modelo dorado](../pruebas
 
 ## D-04 · Factores de diezmado R₁ = 208, R₂ = 416 { #d-04 }
 
-!!! danger "Propuesta de sustitución sobre la mesa"
+!!! danger "Propuesta de sustitución sobre la mesa — los dos hallazgos que la motivan ya cerraron"
     [ADR-001](adr-001-fs-r1-r2.md) propone `fs` = 143,9 MHz con R₁ = 120 y R₂ = 240, y está
-    pendiente de firma. Mientras no se firme, esta decisión sigue vigente **provisionalmente** y
-    `config/params.toml` no se toca. Los motivos están en [P-01](pendientes.md#p-01) y
-    [P-08](pendientes.md#p-08); el resumen es que R₂ = 416 declara una celda de 249 m y ORPG
-    descarta el radial en vez de degradarlo.
+    pendiente de firma. [P-01](pendientes.md#p-01) y [P-08](pendientes.md#p-08) — los dos
+    hallazgos que la motivan — cerraron (P-01 el 7-sep-2026: exactitud requerida también en 125 m,
+    no solo en 250 m). Lo que falta ya no es evidencia técnica, es la firma de dirección técnica y
+    de compra de hardware en la tabla del propio ADR. Mientras esa tabla no esté completa, esta
+    decisión sigue vigente **provisionalmente** y `config/params.toml` no se toca. El resumen es
+    que R₂ = 416 declara una celda de 249 m y ORPG descarta el radial en vez de degradarlo.
 
 A 250 MSPS cada muestra cubre 0,5996 m de rango, y **no existe un R entero que dé exactamente
 125 m ni 250 m**. Se adopta R₁ = 208 y R₂ = 416, lo que da celdas de 124,71 m y 249,41 m — error
