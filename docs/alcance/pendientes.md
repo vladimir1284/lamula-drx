@@ -661,6 +661,37 @@ pero el residuo uniforme sigue sin explicación confirmada.
     (ya identificadas en la investigación de arriba) y comparar una a una contra `Nco.lut()` es el
     siguiente paso más barato.
 
+!!! info "Matriz completa de los 6 casos de L1 contra xsim real, 7-sep-2026"
+    Con `tono_if__fine` y `tono_desplazado__fine` ya cubiertos arriba, se corrieron los 4 casos que
+    faltaban (`dos_tonos__fine` y los tres `*__coarse`, que ejercitan la semibanda ÷2 de diezmado
+    grueso — no probada contra IP real hasta este punto). Resultado, con
+    `n_expected` = 315 en fino y 157 en grueso:
+
+    | Caso | Discrepancias | Patrón |
+    |---|---|---|
+    | `tono_if__fine` | 306/315 (97 %) | Q≈0 en régimen permanente (degenerado); casi toda muestra difiere |
+    | `tono_desplazado__fine` | 156/315 (50 %) | disperso, ±1 LSB, un canal por muestra |
+    | `dos_tonos__fine` | 25/315 (8 %) | disperso, ±1 LSB, mayormente canal I |
+    | `tono_if__coarse` | 147/157 (94 %) | casi constante, `+1` en Q, I exacto (degenerado, igual que en fino) |
+    | `tono_desplazado__coarse` | 44/157 (28 %) | disperso, ±1 LSB, ambos canales |
+    | `dos_tonos__coarse` | 7/157 (4 %) | disperso, ±1 LSB, mayormente canal I |
+
+    **Hipótesis de trabajo — no confirmada con instrumentación nueva:** los 6 casos son
+    consistentes con una única causa, el mismo residuo de ±1 LSB de arriba. La tasa de
+    discrepancias correlaciona con qué tan degenerado es el caso: `tono_if` fuerza `Q≈0` en régimen
+    permanente en los dos modos (fino y grueso), y ahí el mismo sesgo de redondeo del NCO se dispara
+    en casi el 100 % de las muestras; `dos_tonos` reparte la señal en un rango más amplio de
+    amplitud (los dos tonos de esa mezcla están a ±0,0008 en frecuencia normalizada del IF, cerca
+    pero no en el punto degenerado) y por eso cae a 4-8 %; `tono_desplazado`, con el rango más amplio
+    de los tres estímulos, queda en el medio (28-50 %). Ningún caso muestra la firma del bug de
+    signo ya corregido arriba (que era `(-1,+1)` simultáneo en ambos canales, no un residuo disperso
+    de un solo canal).
+
+    Esto es una lectura de los agregados, **no** una confirmación por sonda — el paso más barato
+    siguiente sigue siendo el mismo que se dejó anotado arriba: instrumentar `nco_cos`/`nco_sin`
+    muestra a muestra para las direcciones de LUT que cada caso visita y comparar contra
+    `Nco.lut()`. No se ha hecho todavía para estos 4 casos nuevos.
+
 ~~El residuo uniforme vendría de que el DDS Compiler en modo `Amplitude_Mode {Full_Range}` apunta a
 un pico de `2^(N-1) - 2` (confirmado con el ejemplo numérico de pg141 v6.0 p.51: para 8 bits da
 126 = 0b01111110, exactamente lo que dice el manual), mientras que `fixed.limits()` del modelo
