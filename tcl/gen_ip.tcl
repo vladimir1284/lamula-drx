@@ -136,7 +136,21 @@ proc veo_port_width {veo_path port_name} {
 # doble (Q pasó de -272 a -543 en régimen permanente) — evidencia directa de
 # que el core RESTA el offset del acumulador, no lo suma. Con el signo
 # corregido (`POFF1 = +K<<16`) el mismo desfase medido cancela exactamente.
-set NCO_LUT_OFFSET_K 656
+# CORRECCIÓN, 8-sep-2026 (P-10): 656 (arriba) se calibró con UNA sola muestra
+# reconstruida a mano (LUT[656]) — suficiente para fijar el orden de magnitud
+# del desfase de arranque, pero sin margen para detectar un error de UNA
+# posición de LUT sobre esa única muestra. Instrumentando 4096 muestras
+# crudas de `nco_cos`/`nco_sin` (sonda temporal en `tb_l1_ddc.sv`, no
+# comiteada) y ajustando el error contra `sin`/`cos` del modelo salió una
+# firma de error de ángulo sistemática (mismo signo y orden de magnitud en I
+# y en Q, R²~0.8), equivalente a un paso de LUT de menos. Confirmado
+# empíricamente contra xsim real en las dos direcciones — `K=657` empeora
+# (el desfase residual crece), `K=655` lo corrige: cae de ±5 LSB a ±2 LSB en
+# la salida cruda del NCO, y en el caso degenerado `tono_if__fine` el canal Q
+# en régimen permanente pasa de +3 LSB de sesgo a 0 exacto (`I` mantiene un
+# residuo de -2, mismo orden que el suelo de cuantización ya caracterizado).
+# Detalle completo, con los números, en docs/alcance/pendientes.md (P-10).
+set NCO_LUT_OFFSET_K 655
 set NCO_POFF [expr {($NCO_LUT_OFFSET_K % 65536) << 16}]
 
 create_ip -name dds_compiler -vendor xilinx.com -library ip -version 6.0 \

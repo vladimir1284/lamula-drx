@@ -746,6 +746,108 @@ asume el máximo estándar de complemento a dos, `2^(N-1) - 1`.~~ Descartado arr
     `nco_sin` muestra a muestra contra `Nco.lut()`), decisión que se dejó explícitamente para más
     adelante.
 
+!!! danger "8-sep-2026: instrumentado por fin — el residuo es del propio NCO, ±5 LSB crudos, y no depende de Memory_Type"
+    Se retomó la instrumentación que esta página dejaba anotada como «el siguiente paso más barato»:
+    sonda temporal en `sim/tb_sv/tb_l1_ddc.sv` (`$fwrite` sobre `u_dut.nco_cos`/`u_dut.nco_sin` en
+    cada ciclo con `nco_valid`, sin decimar, indexado por `n=0,1,2,…`; revertida del árbol tras
+    extraer los datos, no comiteada) contra `tono_if__fine` en xsim real. Con `phase_inc =
+    1030792151` el paso de dirección de LUT por muestra es de ~15732/65536 — casi ninguna dirección
+    se repite en 4096 muestras, así que esto cubre muchas más direcciones que las ~56 del régimen
+    permanente decimado.
+
+    **Resultado, 4096 muestras crudas contra `Nco.generate(4096)`:** el signo invertido de `Q` ya
+    documentado y corregido en el modelo se confirma otra vez (no es nuevo). Después de compensar
+    ese signo, **queda un residuo de hasta ±5 LSB en AMBOS canales, presente desde la muestra n=0**
+    (`ip=(32766,-2)` vs `modelo=(32767,0)`) — no es un transitorio de arranque, es ruido por muestra
+    en la propia salida cruda del NCO, antes de cualquier CIC/FIR. Esto es MAYOR que el ±1 LSB medido
+    después de decimar — consistente con que CIC/FIR actúan de filtro paso bajo y promedian un ruido
+    no correlado de unos pocos LSB hasta dejarlo en ±1 LSB a la salida.
+
+    **Corrección a una nota anterior de esta página:** la entrada de arriba («Leer el contenido real
+    de la LUT…») decía que `dds_compiler_v6_0_vh_rfs.vhd` es «genérico, sin tabla literal» — eso era
+    una inferencia sobre el tamaño del fichero (~27 000 líneas), no una lectura real: el fichero está
+    cifrado con `` `protect `` (IEEE P1735, claves de Xilinx/Aldec/Mentor/Cadence/etc.), así que su
+    contenido no es legible sin las claves de descifrado que trae xsim. Esta página nunca tuvo forma
+    de confirmar por lectura de código cómo genera la IP sus valores; toda conclusión sobre su
+    arquitectura interna es inferencia por comportamiento, no lectura de fuente. Corregido aquí para
+    que nadie repita el intento de "leer el VHDL".
+
+    **Hipótesis probada y descartada: `Memory_Type`.** El `.xci` mostraba `Memory_Type {Auto}` (no
+    tocado hasta ahora); `report_property -all` confirma que los valores válidos son `Auto,
+    Distributed_ROM, Block_ROM` — es decir, "Auto" no garantiza necesariamente una ROM literal de
+    doble precisión ya redondeada como asume `Nco.lut()`. Se forzó `CONFIG.Memory_Type {Block_ROM}`
+    en `tcl/gen_ip.tcl`, se borró y regeneró `ip/` completo (mismos anchos de TDATA en las cuatro
+    IP, confirmado), y se repitió la misma sonda de 4096 muestras: **el resultado fue bit a bit
+    IDÉNTICO al de `Auto`** (mismos `nco_cos`/`nco_sin`, mismo residuo de ±5 LSB, muestra a muestra).
+    `Memory_Type` gobierna solo el mapeo a recursos de FPGA en post-síntesis (BRAM vs ROM
+    distribuida); no cambia en nada el modelo de simulación comportamental de xsim. Cambio revertido
+    íntegro (`git checkout -- tcl/gen_ip.tcl sim/tb_sv/tb_l1_ddc.sv`, `ip/` regenerado de vuelta a
+    `Auto` con `tcl/gen_ip.tcl`, árbol limpio confirmado con `git status`).
+
+    **Dónde queda esto:** `Amplitude_Mode` (descartado arriba), `Noise_Shaping` (ya en `None`, sin
+    tocar — dither, no relevante) y ahora `Memory_Type` son las tres hipótesis con una palanca de
+    configuración real que se han probado. Ninguna mueve el residuo. Sin acceso al código fuente del
+    core (cifrado) ni a la documentación de PG141 en este entorno, no hay más palancas conocidas que
+    probar sin especular. La lectura más simple de la evidencia: el core calcula
+    internamente su seno/coseno con un algoritmo propio de Xilinx que no coincide, LSB a LSB, con
+    `round(2**15-1 · cos/sin(2π·addr/65536))` en punto flotante de 64 bits — una discrepancia
+    plausible entre dos implementaciones numéricas distintas del mismo cálculo, no una `Amplitude_Mode`
+    o modo de memoria mal elegido de nuestro lado. **Esto es inferencia, no una causa raíz
+    confirmada por lectura de código** — sigue sin haber una explicación de primeros principios de
+    por qué esos LSB concretos difieren.
+
+    **Consecuencia práctica (superada por la entrada siguiente):** con D-06 (Xilinx-IP-first)
+    vigente, no hay una palanca de configuración conocida para eliminar este residuo sin sustituir
+    el NCO por HDL propio. El residuo está acotado (±5 LSB crudos, ±1 LSB tras decimar, dentro del
+    suelo de -86,4 dBc ya medido) y es estable entre corridas y entre `Memory_Type`. La
+    recomendación de esta entrada era dejar de perseguir la causa raíz y redefinir el criterio "bit
+    a bit" del hito ZM1 — **no se aplicó, y la entrada siguiente la deja obsoleta**: `Memory_Type`
+    quedó descartado como palanca, pero no era la única disponible.
+
+!!! success "8-sep-2026: SÍ había una palanca — `NCO_LUT_OFFSET_K` estaba mal calibrado por una posición de LUT"
+    El ajuste lineal del bloque anterior (`error_cos ≈ +1,03e-4·sin θ`, `error_sin ≈ -1,15e-4·cos
+    θ`, R²~0,8 en las dos ramas, mismo signo y orden de magnitud) es la firma de un desfase de
+    ÁNGULO sistemático, no de ruido aleatorio de redondeo — y su magnitud (~1,05e-4 rad) es casi
+    exactamente UN paso de dirección de LUT (`2π/65536 ≈ 9,59e-5 rad`). Eso apuntaba directamente a
+    `NCO_LUT_OFFSET_K` (`tcl/gen_ip.tcl`, hoy en 656): esa constante se calibró el 7-sep con **una
+    sola muestra** reconstruida a mano (`LUT[656] = (32702, 2059)`), suficiente para fijar el orden
+    de magnitud del desfase de arranque del Phase Generator pero sin margen para detectar un error
+    de una sola posición sobre esa única muestra — sobre todo si esa muestra en concreto tenía un
+    residuo cercano a 0 por casualidad (que pasa: varias de las 4096 muestras de la sonda lo tienen).
+
+    **Confirmado contra xsim real, en las dos direcciones:**
+
+    - `K=657` (un paso más): el error post-hoc que hace falta para volver a alinear direcciones de
+      LUT SUBE de +1 a +2 pasos — dirección equivocada, el residuo empeora (máximo ±8 LSB crudos).
+    - `K=655` (un paso menos): el error post-hoc que hace falta baja a 0 — dirección correcta. Con
+      `K=655` la salida cruda del NCO (misma sonda de 4096 muestras) cae de **máximo ±5 LSB a máximo
+      ±2 LSB**, con la mayoría de las muestras ya en ±1.
+    - **En el checker real, no solo en la sonda cruda:** corriendo `tcl/sim_l1.tcl` contra
+      `tono_if__fine` con `K=655`, el canal `Q` en régimen permanente (el caso degenerado, `Q≈0`)
+      pasa de un sesgo constante de `+3` LSB (con `K=656`) a **0 exacto**, muestra tras muestra
+      (`dut=(11597,0) modelo=(11599,0)`, antes `dut=(11597,3) modelo=(11599,0)`). El canal `I`
+      mantiene un residuo constante de `-2` en este caso concreto, del mismo orden que el suelo de
+      cuantización ya caracterizado — no se llegó a bit exacto, pero la mejora es real y medible en
+      la comparación que de verdad importa (el checker de L1, no solo la sonda).
+
+    **Estado del cambio:** `tcl/gen_ip.tcl` y `ip/dds_compiler_nco/dds_compiler_nco.xci` ya reflejan
+    `K=655` (sonda temporal revertida, no comiteada). **Comiteado con validación parcial** —
+    respaldado por la sonda cruda de 4096 muestras (±5→±2 LSB) y por un solo caso parcial
+    (`tono_if__fine`, régimen permanente: `Q` +3→0, `I` queda en -2) — pero la matriz completa de
+    los 6 casos (equivalente a la tabla de más arriba) todavía NO se volvió a correr hasta el final
+    con `K=655`; cada corrida de `tono_if__fine` tarda más de lo que este entorno de desarrollo pudo
+    esperar en una sola sesión (el checker solo alcanzó la muestra ~27 de 315 en varios minutos de
+    `run all` real). La mejora en régimen permanente ya confirmada (`Q`: +3→0) hace muy probable que
+    el `306/315` de la tabla de arriba baje sustancialmente, pero eso hay que medirlo, no asumirlo —
+    **ZM1 sigue sin poder darse por cerrado** hasta que esa medición exista.
+
+    **Siguiente paso, pendiente:** dejar correr `tcl/sim_l1_quad.tcl` (o los 6 casos de
+    `tcl/sim_l1.tcl`) hasta el final con `K=655`, actualizar la tabla de arriba con los números
+    reales, y decidir si esto cierra ZM1 de verdad o si queda un residuo pequeño que sí amerita la
+    conversación sobre redefinir el criterio "bit a bit" — pero ya no como resignación, sino con un
+    residuo mucho más pequeño y una causa raíz identificada (una calibración de un solo punto sin
+    margen de error, no una limitación inherente del core).
+
 ## Supuestos de entorno a verificar
 
 Estos son supuestos del plan de ZedBoard. Todo número marcado como *estimación* en este sitio es una
