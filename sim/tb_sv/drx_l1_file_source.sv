@@ -23,6 +23,13 @@
 // valor, la única diferencia es literal vs. parámetro. Por eso el formato ya
 // no se parametriza: KIND selecciona en runtime, con un `case`, entre
 // llamadas que llevan el literal escrito a mano en cada rama.
+//
+// CH extiende el mismo truco a tb_l1_ddc_quad.sv (Z1, réplica a los cuatro
+// canales): cada canal necesita su propio fichero, así que el nombre de
+// plusarg lleva el canal como sufijo literal (`stimulus_path_0=`, etc.) en
+// vez de construirse en runtime. CH=-1 (por defecto) reproduce EXACTAMENTE
+// los nombres de plusarg de siempre, sin sufijo — así tb_l1_ddc.sv y
+// tb_l1_harness.sv, que no pasan CH, no cambian de comportamiento.
 
 `ifndef DRX_L1_FILE_SOURCE_SV
 `define DRX_L1_FILE_SOURCE_SV
@@ -32,7 +39,10 @@ module drx_l1_file_source #(
     parameter int MAX_SAMPLES = 1 << 17,
     // Cerrado a los tres usos reales del arnés (stimulus en tb_l1_ddc.sv;
     // expected_i/expected_q en tb_l1_harness.sv), no una enumeración abierta.
-    parameter string KIND = "stimulus"  // "stimulus" | "expected_i" | "expected_q"
+    parameter string KIND = "stimulus",  // "stimulus" | "expected_i" | "expected_q"
+    // -1: nombres de plusarg históricos, sin sufijo. 0..3: un canal de
+    // tb_l1_ddc_quad.sv (ver aviso arriba).
+    parameter int CH = -1
 ) (
     input  logic                    clk,
     input  logic                    rst_n,
@@ -52,16 +62,76 @@ module drx_l1_file_source #(
   initial begin
     case (KIND)
       "stimulus": begin
-        if (!$value$plusargs("stimulus_path=%s", path)) $fatal(1, "falta el plusarg +stimulus_path");
-        if (!$value$plusargs("stimulus_count=%d", count)) $fatal(1, "falta el plusarg +stimulus_count");
+        case (CH)
+          0: begin
+            if (!$value$plusargs("stimulus_path_0=%s", path)) $fatal(1, "falta el plusarg +stimulus_path_0");
+            if (!$value$plusargs("stimulus_count_0=%d", count)) $fatal(1, "falta el plusarg +stimulus_count_0");
+          end
+          1: begin
+            if (!$value$plusargs("stimulus_path_1=%s", path)) $fatal(1, "falta el plusarg +stimulus_path_1");
+            if (!$value$plusargs("stimulus_count_1=%d", count)) $fatal(1, "falta el plusarg +stimulus_count_1");
+          end
+          2: begin
+            if (!$value$plusargs("stimulus_path_2=%s", path)) $fatal(1, "falta el plusarg +stimulus_path_2");
+            if (!$value$plusargs("stimulus_count_2=%d", count)) $fatal(1, "falta el plusarg +stimulus_count_2");
+          end
+          3: begin
+            if (!$value$plusargs("stimulus_path_3=%s", path)) $fatal(1, "falta el plusarg +stimulus_path_3");
+            if (!$value$plusargs("stimulus_count_3=%d", count)) $fatal(1, "falta el plusarg +stimulus_count_3");
+          end
+          default: begin
+            if (!$value$plusargs("stimulus_path=%s", path)) $fatal(1, "falta el plusarg +stimulus_path");
+            if (!$value$plusargs("stimulus_count=%d", count)) $fatal(1, "falta el plusarg +stimulus_count");
+          end
+        endcase
       end
       "expected_i": begin
-        if (!$value$plusargs("expected_i_path=%s", path)) $fatal(1, "falta el plusarg +expected_i_path");
-        if (!$value$plusargs("expected_count=%d", count)) $fatal(1, "falta el plusarg +expected_count");
+        case (CH)
+          0: begin
+            if (!$value$plusargs("expected_i_path_0=%s", path)) $fatal(1, "falta el plusarg +expected_i_path_0");
+            if (!$value$plusargs("expected_count_0=%d", count)) $fatal(1, "falta el plusarg +expected_count_0");
+          end
+          1: begin
+            if (!$value$plusargs("expected_i_path_1=%s", path)) $fatal(1, "falta el plusarg +expected_i_path_1");
+            if (!$value$plusargs("expected_count_1=%d", count)) $fatal(1, "falta el plusarg +expected_count_1");
+          end
+          2: begin
+            if (!$value$plusargs("expected_i_path_2=%s", path)) $fatal(1, "falta el plusarg +expected_i_path_2");
+            if (!$value$plusargs("expected_count_2=%d", count)) $fatal(1, "falta el plusarg +expected_count_2");
+          end
+          3: begin
+            if (!$value$plusargs("expected_i_path_3=%s", path)) $fatal(1, "falta el plusarg +expected_i_path_3");
+            if (!$value$plusargs("expected_count_3=%d", count)) $fatal(1, "falta el plusarg +expected_count_3");
+          end
+          default: begin
+            if (!$value$plusargs("expected_i_path=%s", path)) $fatal(1, "falta el plusarg +expected_i_path");
+            if (!$value$plusargs("expected_count=%d", count)) $fatal(1, "falta el plusarg +expected_count");
+          end
+        endcase
       end
       "expected_q": begin
-        if (!$value$plusargs("expected_q_path=%s", path)) $fatal(1, "falta el plusarg +expected_q_path");
-        if (!$value$plusargs("expected_count=%d", count)) $fatal(1, "falta el plusarg +expected_count");
+        case (CH)
+          0: begin
+            if (!$value$plusargs("expected_q_path_0=%s", path)) $fatal(1, "falta el plusarg +expected_q_path_0");
+            if (!$value$plusargs("expected_count_0=%d", count)) $fatal(1, "falta el plusarg +expected_count_0");
+          end
+          1: begin
+            if (!$value$plusargs("expected_q_path_1=%s", path)) $fatal(1, "falta el plusarg +expected_q_path_1");
+            if (!$value$plusargs("expected_count_1=%d", count)) $fatal(1, "falta el plusarg +expected_count_1");
+          end
+          2: begin
+            if (!$value$plusargs("expected_q_path_2=%s", path)) $fatal(1, "falta el plusarg +expected_q_path_2");
+            if (!$value$plusargs("expected_count_2=%d", count)) $fatal(1, "falta el plusarg +expected_count_2");
+          end
+          3: begin
+            if (!$value$plusargs("expected_q_path_3=%s", path)) $fatal(1, "falta el plusarg +expected_q_path_3");
+            if (!$value$plusargs("expected_count_3=%d", count)) $fatal(1, "falta el plusarg +expected_count_3");
+          end
+          default: begin
+            if (!$value$plusargs("expected_q_path=%s", path)) $fatal(1, "falta el plusarg +expected_q_path");
+            if (!$value$plusargs("expected_count=%d", count)) $fatal(1, "falta el plusarg +expected_count");
+          end
+        endcase
       end
       default: $fatal(1, "KIND desconocido: %s", KIND);
     endcase

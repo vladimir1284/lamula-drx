@@ -61,6 +61,14 @@ def _cases(params: params_mod.Params) -> dict[str, object]:
             freq_norm_a=float(params.if_norm) - 0.0008,
             freq_norm_b=float(params.if_norm) + 0.0008,
         ),
+        # Simétrico de "tono_desplazado" al otro lado del IF. No ataca una
+        # aritmética nueva — existe para que tb_l1_ddc_quad.sv tenga un cuarto
+        # estímulo distinto de los otros tres y así un canal del `generate`
+        # de drx_ddc_quad_top.sv que lea el estímulo de otro canal se vea como
+        # discrepancia en vez de colar por casualidad de datos iguales.
+        "tono_desplazado_neg": vectors.tone(
+            params, N_SAMPLES, freq_norm=float(params.if_norm) - 0.001
+        ),
     }
 
 

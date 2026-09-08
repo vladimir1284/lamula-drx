@@ -10,7 +10,7 @@
 PY := .venv/bin/python
 RUFF := .venv/bin/ruff
 
-.PHONY: check gen figures l1-vectors lint lint-hdl lint-hdl-tb test sim clean venv
+.PHONY: check gen figures l1-vectors lint lint-hdl lint-hdl-tb lint-hdl-tb-quad test sim clean venv
 
 venv:
 	uv venv .venv
@@ -52,6 +52,18 @@ lint-hdl-tb:
 	  sim/tb_sv/tb_l1_ddc.sv \
 	  --top-module tb_l1_ddc
 
+# Réplica de lint-hdl-tb para tb_l1_ddc_quad.sv (Z1, los cuatro canales de
+# ZM1): mismo principio, que el fichero no se pudra sin que make check lo
+# note.
+lint-hdl-tb-quad:
+	verilator --lint-only -Wall --timing --timescale 1ps/1ps \
+	  sim/verilator_waivers.vlt \
+	  $$(grep -v '^\s*\#' rtl/filelist.f | grep -v '^\s*$$') \
+	  sim/tb_sv/drx_l1_file_source.sv \
+	  sim/tb_sv/drx_l1_checker.sv \
+	  sim/tb_sv/tb_l1_ddc_quad.sv \
+	  --top-module tb_l1_ddc_quad
+
 # Los vectores de L1 son salida de build, no fuente: se regeneran, no se
 # versionan. Lo que se versiona es el generador.
 l1-vectors:
@@ -63,7 +75,7 @@ test:
 sim:
 	$(PY) -m pytest sim/tests -q
 
-check: lint lint-hdl lint-hdl-tb test
+check: lint lint-hdl lint-hdl-tb lint-hdl-tb-quad test
 
 clean:
 	rm -rf build

@@ -12,3 +12,4 @@ rtl/drx_round.sv
 rtl/drx_saturate.sv
 rtl/drx_ddc_mixer.sv
 rtl/drx_ddc_top.sv
+rtl/drx_ddc_quad_top.sv

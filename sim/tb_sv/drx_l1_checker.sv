@@ -12,6 +12,12 @@
 //   +expected_i_path=<ruta>  +expected_q_path=<ruta>  +expected_count=<n>
 //   +settling=<n>   muestras iniciales que se comparan igual pero se reportan
 //                   como transitorio de arranque si fallan
+//
+// CH (Z1, réplica a los cuatro canales, ver drx_l1_file_source.sv): -1 (por
+// defecto) usa los nombres de plusarg de siempre, sin sufijo — tb_l1_ddc.sv y
+// tb_l1_harness.sv no cambian de comportamiento. 0..3 los lee con sufijo
+// `_N` para tb_l1_ddc_quad.sv, mismo truco de literal-por-rama por el
+// hallazgo P-09 de xsim con `$value$plusargs`.
 
 `ifndef DRX_L1_CHECKER_SV
 `define DRX_L1_CHECKER_SV
@@ -21,7 +27,8 @@ module drx_l1_checker #(
     parameter int MAX_SAMPLES = 1 << 14,
     // Discrepancias a imprimir antes de callar. Un log de 300 líneas iguales no
     // ayuda a nadie.
-    parameter int MAX_REPORTS = 16
+    parameter int MAX_REPORTS = 16,
+    parameter int CH = -1
 ) (
     input logic                    clk,
     input logic                    rst_n,
@@ -44,18 +51,38 @@ module drx_l1_checker #(
   int    reports;
 
   initial begin
-    if (!$value$plusargs("expected_i_path=%s", path_i)) begin
-      $fatal(1, "falta el plusarg +expected_i_path");
-    end
-    if (!$value$plusargs("expected_q_path=%s", path_q)) begin
-      $fatal(1, "falta el plusarg +expected_q_path");
-    end
-    if (!$value$plusargs("expected_count=%d", count)) begin
-      $fatal(1, "falta el plusarg +expected_count");
-    end
-    if (!$value$plusargs("settling=%d", settling)) begin
-      settling = 0;
-    end
+    case (CH)
+      0: begin
+        if (!$value$plusargs("expected_i_path_0=%s", path_i)) $fatal(1, "falta el plusarg +expected_i_path_0");
+        if (!$value$plusargs("expected_q_path_0=%s", path_q)) $fatal(1, "falta el plusarg +expected_q_path_0");
+        if (!$value$plusargs("expected_count_0=%d", count)) $fatal(1, "falta el plusarg +expected_count_0");
+        if (!$value$plusargs("settling_0=%d", settling)) settling = 0;
+      end
+      1: begin
+        if (!$value$plusargs("expected_i_path_1=%s", path_i)) $fatal(1, "falta el plusarg +expected_i_path_1");
+        if (!$value$plusargs("expected_q_path_1=%s", path_q)) $fatal(1, "falta el plusarg +expected_q_path_1");
+        if (!$value$plusargs("expected_count_1=%d", count)) $fatal(1, "falta el plusarg +expected_count_1");
+        if (!$value$plusargs("settling_1=%d", settling)) settling = 0;
+      end
+      2: begin
+        if (!$value$plusargs("expected_i_path_2=%s", path_i)) $fatal(1, "falta el plusarg +expected_i_path_2");
+        if (!$value$plusargs("expected_q_path_2=%s", path_q)) $fatal(1, "falta el plusarg +expected_q_path_2");
+        if (!$value$plusargs("expected_count_2=%d", count)) $fatal(1, "falta el plusarg +expected_count_2");
+        if (!$value$plusargs("settling_2=%d", settling)) settling = 0;
+      end
+      3: begin
+        if (!$value$plusargs("expected_i_path_3=%s", path_i)) $fatal(1, "falta el plusarg +expected_i_path_3");
+        if (!$value$plusargs("expected_q_path_3=%s", path_q)) $fatal(1, "falta el plusarg +expected_q_path_3");
+        if (!$value$plusargs("expected_count_3=%d", count)) $fatal(1, "falta el plusarg +expected_count_3");
+        if (!$value$plusargs("settling_3=%d", settling)) settling = 0;
+      end
+      default: begin
+        if (!$value$plusargs("expected_i_path=%s", path_i)) $fatal(1, "falta el plusarg +expected_i_path");
+        if (!$value$plusargs("expected_q_path=%s", path_q)) $fatal(1, "falta el plusarg +expected_q_path");
+        if (!$value$plusargs("expected_count=%d", count)) $fatal(1, "falta el plusarg +expected_count");
+        if (!$value$plusargs("settling=%d", settling)) settling = 0;
+      end
+    endcase
     if (count > MAX_SAMPLES) begin
       $fatal(1, "%0d muestras esperadas no caben en MAX_SAMPLES=%0d", count, MAX_SAMPLES);
     end

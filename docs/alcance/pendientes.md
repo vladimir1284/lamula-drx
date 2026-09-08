@@ -717,6 +717,35 @@ asume el máximo estándar de complemento a dos, `2^(N-1) - 1`.~~ Descartado arr
     Con los dos fixes, `make check` vuelve a estar en verde, 69/69. Sin relación con el hallazgo de
     amplitud de arriba.
 
+!!! info "8-sep-2026: el residuo escala con la ganancia — replicación a 4 canales + escalado de ganancia"
+    Z1 sumó dos piezas nuevas: `rtl/drx_ddc_quad_top.sv` (réplica de `drx_ddc_top` a los `N_RX_CH`
+    canales, para el hito ZM1) y la etapa de ganancia fina en `drx_ddc_top.sv`
+    (`FINE_GAIN_COEFF`/`COARSE_GAIN_COEFF`, generadas por `tools/gen_params.py` desde
+    `fixed.gain_trim`, que ya trae el oráculo desde el 7-sep). Las dos se verificaron matemáticamente
+    correctas contra el modelo (mismo coeficiente, mismo algoritmo de redondeo) y contra xsim real.
+
+    Al correr `tcl/sim_l1_quad.tcl`, el canal 0 (`tono_if__fine`) reporta **306/315
+    discrepancias — el mismo número, exacto, que ya documenta la tabla de arriba** para el caso de
+    un solo canal. No es un bug nuevo: es el residuo de ±1 LSB del NCO (ya aparcado arriba, «no
+    perseguirlo más por ahora») escalado junto con el resto de la cadena por el nuevo multiplicador
+    de ganancia — de ~1 LSB a ~2-3 LSB en valor absoluto, proporcionalmente igual en dB por debajo de
+    fondo de escala. Es la consecuencia esperada de escalar la señal a fondo de escala, no una señal
+    de que la réplica a 4 canales o el ajuste de ganancia tengan un error propio.
+
+    **Confirmado por aislamiento:** corriendo `tcl/sim_l1.tcl` contra el commit `6b32e99` (el que
+    documenta la tabla de arriba) en un worktree separado, con vectores regenerados desde cero, se
+    reproduce el mismo `306/315` — la tabla de esta página ya reflejaba este residuo, no una
+    ejecución limpia; el título del commit («completar la matriz») describe haber terminado de
+    *correr y documentar* los 6 casos, no haberlos dejado en verde.
+
+    **Consecuencia para ZM1:** el hito («coincide bit a bit… en los cuatro canales») sigue sin
+    cerrarse — igual que ya estaba antes de esta sesión — por este mismo residuo preexistente, no por
+    la réplica a 4 canales en sí. `rtl/drx_ddc_quad_top.sv` y la etapa de ganancia fina quedan
+    escritos, revisados y verificados en su propio alcance; cerrar ZM1 de verdad sigue pendiente de
+    retomar la investigación del NCO que esta página ya deja anotada (instrumentar `nco_cos`/
+    `nco_sin` muestra a muestra contra `Nco.lut()`), decisión que se dejó explícitamente para más
+    adelante.
+
 ## Supuestos de entorno a verificar
 
 Estos son supuestos del plan de ZedBoard. Todo número marcado como *estimación* en este sitio es una
