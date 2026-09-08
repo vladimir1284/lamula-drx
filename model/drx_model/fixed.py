@@ -89,3 +89,34 @@ def growth_bits(gain: float) -> int:
     if gain <= 0:
         raise ValueError("la ganancia tiene que ser positiva")
     return int(np.ceil(np.log2(gain)))
+
+
+def gain_trim(gain: float, bits: int) -> tuple[int, int]:
+    """Coeficiente entero de un ajuste fino de ganancia, cuantizado a `bits`.
+
+    `gain` puede ser cualquier real positivo, no solo una potencia de dos —
+    para eso existe esta función y no basta con `growth_bits`: un `shift_round`
+    a secas solo puede quitar potencias de dos exactas, así que deja un residuo
+    de hasta ~6 dB en cada etapa de la cadena que redondea `growth_bits` hacia
+    arriba. Aplicar con `shift_round(values * coeff, frac_bits)`, igual que un
+    coeficiente de FIR: un único multiplicador entero seguido de un desplazamiento.
+
+    Usa toda la precisión fraccionaria que cabe en `bits` con signo sin saturar,
+    el mismo criterio que `fir.quantize_coeffs` con los coeficientes del FIR.
+    """
+    if gain <= 0:
+        raise ValueError("la ganancia tiene que ser positiva")
+    _, high = limits(bits)
+    frac_bits = int(np.floor(np.log2(high))) - growth_bits(gain)
+    if frac_bits < 0:
+        raise ValueError(
+            f"la ganancia ({gain}) no cabe ni en la parte entera de {bits} bits"
+        )
+    coeff = int(np.round(gain * (1 << frac_bits)))
+    _, overflow = saturate(np.array([coeff], dtype=np.int64), bits)
+    if overflow[0]:
+        raise ValueError(
+            f"el coeficiente de ganancia fina ({coeff}) no cabe en {bits} bits "
+            f"con frac_bits={frac_bits}; revisa el ancho del coeficiente"
+        )
+    return coeff, frac_bits

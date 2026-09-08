@@ -258,13 +258,15 @@ contrapartida de la celda del doble de tamaño.
 ```python title="model/drx_model/chain.py"
 def _decimate(self, branch):
     out = self.cic.process(branch)
-    # Se quita la ganancia del CIC en un único punto y de forma explícita.
     out = fixed.shift_round(out, self.cic.growth_bits)
     out = self.fir.process(out)
     out = fixed.shift_round(out, fixed.growth_bits(abs(self.fir.dc_gain)))
     if self.mode == MODE_COARSE:
         out = self.halfband.process(out)
         out = fixed.shift_round(out, fixed.growth_bits(abs(self.halfband.dc_gain)))
+    # Ganancia unidad exacta: un multiplicador fino (`fixed.gain_trim`) deshace
+    # lo que el redondeo de potencia de dos de arriba deja a medias.
+    out = fixed.shift_round(out * self._gain_coeff, self._gain_frac_bits)
     return out
 ```
 
@@ -276,21 +278,33 @@ Medido sobre un tono de −3 dBFS y 60 000 muestras:
 
 | Modo | R | Muestras de salida | \|I+jQ\| medio | Desviación relativa |
 |---|---|---|---|---|
-| fino | 208 | 288 | 4330,0 | **0,00** |
-| grueso | 416 | 144 | 2709,0 | **0,00** |
+| fino | 208 | 288 | 11 599,0 | **0,00** |
+| grueso | 416 | 144 | 11 597,0 | **0,00** |
 
 Desviación exactamente cero: la amplitud de salida es **constante bit a bit**, que es lo que tiene
 que pasar cuando bajas un tono puro a continua con el NCO en la frecuencia exacta. Si hubiera un
 error de frecuencia residual, la fase giraría; si hubiera un error de escalado, la amplitud
-respiraría.
+respiraría. Y ahora el fino y el grueso coinciden: ya no hay 6 dB de diferencia entre modos.
 
 ### Sobre la ganancia neta
 
-La entrada tiene pico 23 197 y la salida amplitud 4330. Hay pérdida, y es deliberadamente visible: en
-cada punto de recorte se quita la ganancia de la etapa redondeando a la potencia de dos superior, así
-que la cadena pierde algunos dB y el modo grueso pierde 6 dB más que el fino. El escalado a fondo de
-escala es trabajo de Z1 —«escalado de ganancia y saturación con reporte de overflow»— y aquí está
-dejado explícito y medible en vez de escondido en un factor mágico.
+La entrada tiene pico 23 197 y la salida amplitud 11 599 — la mitad, casi exacta, y esa mitad es
+lo máximo alcanzable para un tono real puro: bajar una señal real a I/Q con un mezclador complejo
+reparte la energía entre la banda deseada y su imagen, así que un tono real a fondo de escala nunca
+puede dar más de la mitad de fondo de escala en banda base. Eso no es la pérdida que había que
+arreglar.
+
+La pérdida que sí había que arreglar era otra: hasta el 7 de septiembre de 2026, cada punto de
+recorte quitaba la ganancia de su etapa redondeando a la potencia de dos superior (`growth_bits`),
+así que la cadena perdía varios dB *encima* de esa mitad inevitable, y el modo grueso perdía más que
+el fino porque tiene una etapa de redondeo extra (el halfband). `fixed.gain_trim` calcula el
+coeficiente entero exacto que hace falta multiplicar para deshacer ese redondeo — un único
+multiplicador fino, en un único punto, igual que el resto de la cadena — y con eso CIC·FIR(·halfband)
+quedan en ganancia unidad exacta: lo único que queda entre el fondo de escala de entrada y el de
+salida es el factor de 2 inevitable del mezclador, no un redondeo de más. Con eso, «escalado de
+ganancia y saturación con reporte de overflow» (Z1) está hecho para el modelo dorado — la bandera de
+overflow de `fixed.saturate` ahora es significativa: la cadena de verdad usa el fondo de escala
+disponible, así que una entrada realmente sobre-escala puede dispararla.
 
 ## Paso 6 — el enrejado en rango
 

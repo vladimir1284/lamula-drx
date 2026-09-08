@@ -18,9 +18,13 @@ PARAMS = load("zedboard")
 #: relleno de tubería, ver `cic.py`) — la IP real de Xilinx tiene latencia de
 #: silicio en el transitorio que la recursión de latencia cero no tenía;
 #: confirmado bit a bit contra xsim en Z1 para el caso `tono_if__fine`.
+#: 2026-09-07: movidas de nuevo al añadir el ajuste de ganancia fina de
+#: `chain._decimate` (Z1: «escalado de ganancia y saturación con reporte de
+#: overflow») — la cadena ya no se queda corta de fondo de escala por el
+#: redondeo de `growth_bits` a la potencia de dos superior.
 GOLDEN = {
-    MODE_FINE: (192, "6b858ab7e0a6a735a82c164e2366830c256faaa9c1961d2e476990c37d3cd2b3"),
-    MODE_COARSE: (96, "203f9a40b2bd03d4b66afc006602acf9b45eeb1dc6c16f6707c79cf95b0ce20e"),
+    MODE_FINE: (192, "2f73511eedfd1cfbe061cd52f35d2fcff6ddd27bd18cb214e12e95bdfb1bb198"),
+    MODE_COARSE: (96, "b1ef68bd7352b49950e0ac17672fa4219e9b7f661b7fba765dd3cf58a4c8fba5"),
 }
 
 
@@ -65,6 +69,19 @@ def test_el_oraculo_es_reproducible_bit_a_bit(mode):
         f"{_fingerprint(first)}. Si el cambio es deliberado, actualiza GOLDEN "
         "y di en el commit por qué."
     )
+
+
+@pytest.mark.parametrize("mode", [MODE_FINE, MODE_COARSE])
+def test_la_ganancia_de_la_cadena_es_unidad_exacta_en_continua(mode):
+    """El ajuste de ganancia fina deshace exactamente lo que `growth_bits` deja
+    a medias: un escalón de continua tiene que salir de `_decimate` con la
+    misma amplitud con la que entró, no unos dB por debajo (Z1: «escalado de
+    ganancia... a fondo de escala»)."""
+    ddc = Ddc(params=PARAMS, mode=mode)
+    amplitude = 10_000
+    step = np.full(ddc.decimation * 20, amplitude, dtype=np.int64)
+    settled = ddc._decimate(step)[-5:]
+    assert list(settled) == [amplitude] * 5
 
 
 def test_el_modo_grueso_diezma_el_doble_que_el_fino():

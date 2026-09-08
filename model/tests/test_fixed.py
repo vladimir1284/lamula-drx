@@ -59,3 +59,33 @@ def test_growth_bits():
     assert fixed.growth_bits(1.0) == 0
     assert fixed.growth_bits(2.0) == 1
     assert fixed.growth_bits(3.0) == 2
+
+
+def test_gain_trim_reproduce_la_ganancia_no_potencia_de_dos():
+    """`growth_bits` solo puede quitar potencias de dos; esto quita cualquier cosa."""
+    gain = 2.678822641803  # residuo real de la cadena en modo fino, ver chain.py
+    coeff, frac_bits = fixed.gain_trim(gain, bits=18)
+    values = np.array([1, -1, 1000, -1000, 32767, -32768])
+    out = fixed.shift_round(values * coeff, frac_bits)
+    expected = np.round(values * gain)
+    # Un LSB de tolerancia: es exactamente el redondeo de punto fijo que
+    # `gain_trim` existe para modelar, no un error.
+    assert np.abs(out - expected).max() <= 1
+
+
+def test_gain_trim_usa_toda_la_precision_sin_saturar():
+    coeff, frac_bits = fixed.gain_trim(1.0, bits=18)
+    low, high = fixed.limits(18)
+    assert low <= coeff <= high
+    # Ganancia unidad exacta: el coeficiente tiene que reproducir la entrada.
+    values = np.array([0, 1, -1, 32767, -32768])
+    assert list(fixed.shift_round(values * coeff, frac_bits)) == list(values)
+
+
+def test_gain_trim_rechaza_lo_que_no_cabe():
+    with pytest.raises(ValueError, match="no cabe"):
+        fixed.gain_trim(1000.0, bits=4)
+    with pytest.raises(ValueError, match="positiva"):
+        fixed.gain_trim(0.0, bits=18)
+    with pytest.raises(ValueError, match="positiva"):
+        fixed.gain_trim(-1.0, bits=18)

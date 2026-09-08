@@ -28,6 +28,11 @@ from drx_model.params import Params
 MODE_FINE = "fine"
 MODE_COARSE = "coarse"
 
+#: Ancho del coeficiente de ganancia fina: el mismo que `fir.Fir.coeff_bits`,
+#: porque es exactamente lo mismo en silicio — un multiplicador de coeficiente
+#: constante en un único DSP48, no una etapa de filtro nueva.
+GAIN_TRIM_BITS = 18
+
 
 @dataclass
 class DdcResult:
@@ -55,6 +60,8 @@ class Ddc:
     cic: Cic = field(init=False)
     fir: fir_mod.Fir = field(init=False)
     halfband: fir_mod.Fir = field(init=False)
+    _gain_coeff: int = field(init=False)
+    _gain_frac_bits: int = field(init=False)
 
     def __post_init__(self) -> None:
         if self.mode not in (MODE_FINE, MODE_COARSE):
@@ -75,6 +82,24 @@ class Ddc:
             coeffs=fir_mod.load_coeffs("halfband_decim2"),
             decim=int(chain["coarse_extra_decim"]),
         )
+        self._gain_coeff, self._gain_frac_bits = fixed.gain_trim(
+            self._residual_gain(), bits=GAIN_TRIM_BITS
+        )
+
+    def _residual_gain(self) -> float:
+        """Cuánto hay que multiplicar para deshacer el redondeo de `growth_bits`.
+
+        `growth_bits` quita cada ganancia de etapa redondeando hacia la potencia
+        de dos superior, así que lo que sale de `_decimate` antes de este ajuste
+        está en falta respecto a la ganancia exacta de CIC·FIR(·halfband) —
+        nunca de más. Este factor, siempre >= 1, es exactamente lo que falta.
+        """
+        gain = self.cic.gain * abs(self.fir.dc_gain)
+        shift = self.cic.growth_bits + fixed.growth_bits(abs(self.fir.dc_gain))
+        if self.mode == MODE_COARSE:
+            gain *= abs(self.halfband.dc_gain)
+            shift += fixed.growth_bits(abs(self.halfband.dc_gain))
+        return (1 << shift) / gain
 
     @property
     def decimation(self) -> int:
@@ -111,20 +136,27 @@ class Ddc:
         return i, q
 
     def _decimate(self, branch: np.ndarray) -> np.ndarray:
-        # Nota de escalado: cada punto de recorte quita la ganancia de su etapa
-        # redondeando a la potencia de dos superior, así que la cadena tiene una
-        # pérdida neta de algunos dB y el modo grueso pierde 6 dB más que el fino.
-        # El escalado de ganancia a fondo de escala es trabajo de Z1 («escalado de
-        # ganancia y saturación con reporte de overflow»); aquí se deja explícito
-        # y medible en vez de escondido en un factor mágico.
+        # Cada punto de recorte quita la ganancia de su etapa redondeando a la
+        # potencia de dos superior (`growth_bits`), así que el ancho de registro
+        # de cada IP queda acotado de forma predecible entre etapas. Eso deja un
+        # residuo: la cadena real de CIC·FIR(·halfband) no gana exactamente una
+        # potencia de dos. El ajuste de ganancia fina de más abajo lo deshace en
+        # un único punto, con un único multiplicador, en vez de tres.
         out = self.cic.process(branch)
-        # Se quita la ganancia del CIC en un único punto y de forma explícita.
         out = fixed.shift_round(out, self.cic.growth_bits)
         out = self.fir.process(out)
         out = fixed.shift_round(out, fixed.growth_bits(abs(self.fir.dc_gain)))
         if self.mode == MODE_COARSE:
             out = self.halfband.process(out)
             out = fixed.shift_round(out, fixed.growth_bits(abs(self.halfband.dc_gain)))
+        # Escalado de ganancia a fondo de escala (Z1): un multiplicador fino
+        # entero deshace el redondeo de arriba y deja la cadena en ganancia
+        # unidad exacta frente a CIC·FIR(·halfband), no en «lo que sobrevive a
+        # tres redondeos hacia arriba». El reporte de overflow lo hace
+        # `process()` al saturar, y ahora es significativo: antes la cadena se
+        # quedaba varios dB por debajo de fondo de escala y el overflow casi
+        # nunca podía dispararse salvo por una entrada realmente sobre-escala.
+        out = fixed.shift_round(out * self._gain_coeff, self._gain_frac_bits)
         return out
 
     def process(self, x: np.ndarray) -> DdcResult:
