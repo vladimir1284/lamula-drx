@@ -831,22 +831,56 @@ asume el máximo estándar de complemento a dos, `2^(N-1) - 1`.~~ Descartado arr
       la comparación que de verdad importa (el checker de L1, no solo la sonda).
 
     **Estado del cambio:** `tcl/gen_ip.tcl` y `ip/dds_compiler_nco/dds_compiler_nco.xci` ya reflejan
-    `K=655` (sonda temporal revertida, no comiteada). **Comiteado con validación parcial** —
-    respaldado por la sonda cruda de 4096 muestras (±5→±2 LSB) y por un solo caso parcial
-    (`tono_if__fine`, régimen permanente: `Q` +3→0, `I` queda en -2) — pero la matriz completa de
-    los 6 casos (equivalente a la tabla de más arriba) todavía NO se volvió a correr hasta el final
-    con `K=655`; cada corrida de `tono_if__fine` tarda más de lo que este entorno de desarrollo pudo
-    esperar en una sola sesión (el checker solo alcanzó la muestra ~27 de 315 en varios minutos de
-    `run all` real). La mejora en régimen permanente ya confirmada (`Q`: +3→0) hace muy probable que
-    el `306/315` de la tabla de arriba baje sustancialmente, pero eso hay que medirlo, no asumirlo —
-    **ZM1 sigue sin poder darse por cerrado** hasta que esa medición exista.
+    `K=655`, comiteado (`7d38c3d`). La validación era parcial en el momento del commit (sonda cruda
+    de 4096 muestras, ±5→±2 LSB, más un solo caso parcial) — **la matriz completa ya se corrió**, ver
+    la entrada siguiente para los números reales y la conclusión sobre ZM1.
 
-    **Siguiente paso, pendiente:** dejar correr `tcl/sim_l1_quad.tcl` (o los 6 casos de
-    `tcl/sim_l1.tcl`) hasta el final con `K=655`, actualizar la tabla de arriba con los números
-    reales, y decidir si esto cierra ZM1 de verdad o si queda un residuo pequeño que sí amerita la
-    conversación sobre redefinir el criterio "bit a bit" — pero ya no como resignación, sino con un
-    residuo mucho más pequeño y una causa raíz identificada (una calibración de un solo punto sin
-    margen de error, no una limitación inherente del core).
+    ~~**Siguiente paso, pendiente:** dejar correr `tcl/sim_l1_quad.tcl` (o los 6 casos de
+    `tcl/sim_l1.tcl`) hasta el final con `K=655`...~~ Hecho, ver abajo.
+
+!!! warning "8-sep-2026: matriz completa con K=655 — mejora real y grande en la mayoría de los casos, pero ZM1 sigue sin cerrar bit a bit"
+    Los 6 casos de `tcl/sim_l1.tcl` corridos hasta el final contra xsim real, `K=655`:
+
+    | Caso | `K=656` (tabla original) | `K=655` |
+    |---|---|---|
+    | `tono_if__fine` | 306/315 (97 %) | 303/315 (96 %) |
+    | `tono_desplazado__fine` | 156/315 (50 %) | **48/315 (15 %)** |
+    | `dos_tonos__fine` | 25/315 (8 %) | 27/315 (9 %) |
+    | `tono_if__coarse` | 147/157 (94 %) | **3/157 (2 %)** |
+    | `tono_desplazado__coarse` | 44/157 (28 %) | **18/157 (11 %)** |
+    | `dos_tonos__coarse` | 7/157 (4 %) | 7/157 (4 %) — sin cambio |
+
+    **Lectura, separando lo confirmado de lo que queda abierto:**
+
+    - **`K=655` sí es una corrección real y grande** en los dos casos `tono_desplazado` y en
+      `tono_if__coarse` (caídas de 28-94 % a 2-15 %) — confirma que el desfase de fase de un paso de
+      LUT era, en esos casos, el componente dominante del residuo.
+    - **`tono_if__fine` casi no mejora** (97 %→96 %) porque su residuo dominante no es de fase: es el
+      `-2` LSB constante en `I` ya visto en la validación parcial (`dut=11597` vs `modelo=11599`,
+      régimen permanente), que no depende de `K` — `Q` sí cerró exacto, pero el caso sigue casi
+      100 % discrepante por `I` solo.
+    - **`dos_tonos__fine` y `dos_tonos__coarse` no cambian en absoluto** (27 vs 25, 7 vs 7, dentro del
+      ruido de muestreo o exactamente iguales) — esto es nuevo: `K` no tiene ningún efecto medible
+      ahí, lo que apunta a que estos dos casos concretos están dominados por un mecanismo de error
+      **distinto**, todavía no identificado, que ni el bug de signo (cerrado hace días) ni el
+      desfase de `K` explican.
+
+    **Conclusión:** `K=655` se queda (es estrictamente mejor o igual que `K=656` en los 6 casos, nunca
+    peor) pero **ZM1 no cierra** — ningún caso llega a 0 discrepancias. Hay, como mínimo, dos
+    mecanismos de residuo sin explicar y sin relación conocida entre sí: el `-2` LSB de `I` en
+    `tono_if` (visible también en grueso probablemente, no aislado todavía) y el que domina
+    `dos_tonos` en los dos modos. Seguir bajando esto necesitaría repetir la instrumentación de
+    `nco_cos`/`nco_sin` (la misma técnica que encontró el bug de `K`) pero específicamente para el
+    estímulo de `dos_tonos`, comparando bit a bit contra `Nco.lut()` en las direcciones de LUT que
+    ese estímulo concreto visita — no se ha hecho todavía.
+
+    **Para ZM1:** con esto, la decisión de redefinir (o no) el criterio "bit a bit" ya no es una
+    resignación sobre un residuo uniforme de ±1 LSB explicado por el suelo de cuantización del NCO
+    — es una decisión sobre si vale la pena seguir cazando un segundo mecanismo de error, distinto
+    del de `K`, que hoy deja entre el 2 % y el 96 % de discrepancias según el caso. Sigue pendiente
+    tener esa conversación con el equipo de DSP (qué tolera realmente su cadena de momentos frente a
+    un residuo de este orden — no documentado en este repo) antes de decidir si esto bloquea ZM1 o
+    si se acepta y se redefine el criterio.
 
 ## Supuestos de entorno a verificar
 
