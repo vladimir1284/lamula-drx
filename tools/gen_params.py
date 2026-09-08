@@ -62,6 +62,12 @@ def _chain_derived(sel: Params) -> dict:
     cic_growth = ddc.cic.growth_bits
     fir_growth = fixed.growth_bits(abs(ddc.fir.dc_gain))
     hb_growth = fixed.growth_bits(abs(ddc.halfband.dc_gain))
+    # El ajuste de ganancia fina (Z1: escalado a fondo de escala) tiene un
+    # residuo distinto por modo, porque el modo grueso suma una etapa de
+    # redondeo más (la semibanda) — ver Ddc._residual_gain. Cada Ddc calcula
+    # el suyo en __post_init__; se leen aquí en vez de reimplementar
+    # fixed.gain_trim, por la misma razón que el resto de esta función.
+    ddc_coarse = chain_mod.Ddc(params=sel, mode=chain_mod.MODE_COARSE)
     return {
         "cic_gain": ddc.cic.gain,
         "cic_growth_bits": cic_growth,
@@ -72,6 +78,11 @@ def _chain_derived(sel: Params) -> dict:
         "halfband_coeff_bits": ddc.halfband.coeff_bits,
         "halfband_dc_gain": ddc.halfband.dc_gain,
         "halfband_growth_bits": hb_growth,
+        "gain_trim_bits": chain_mod.GAIN_TRIM_BITS,
+        "fine_gain_coeff": ddc._gain_coeff,
+        "fine_gain_frac_bits": ddc._gain_frac_bits,
+        "coarse_gain_coeff": ddc_coarse._gain_coeff,
+        "coarse_gain_frac_bits": ddc_coarse._gain_frac_bits,
     }
 
 
@@ -175,6 +186,16 @@ package drx_params_pkg;
   localparam longint HALFBAND_DC_GAIN = {derived['halfband_dc_gain']};
   localparam int HALFBAND_GROWTH_BITS = {derived['halfband_growth_bits']};
 
+  // Ajuste de ganancia fina (Z1: escalado a fondo de escala), un residuo
+  // distinto por modo — ver model/drx_model/chain.py::Ddc._residual_gain.
+  // Un único multiplicador de coeficiente constante por rama deshace lo que
+  // CIC_GROWTH_BITS/FIR_GROWTH_BITS(/HALFBAND_GROWTH_BITS) dejan a medias.
+  localparam int GAIN_TRIM_BITS = {derived['gain_trim_bits']};
+  localparam longint FINE_GAIN_COEFF = {derived['fine_gain_coeff']};
+  localparam int FINE_GAIN_FRAC_BITS = {derived['fine_gain_frac_bits']};
+  localparam longint COARSE_GAIN_COEFF = {derived['coarse_gain_coeff']};
+  localparam int COARSE_GAIN_FRAC_BITS = {derived['coarse_gain_frac_bits']};
+
 endpackage : drx_params_pkg
 
 `endif  // DRX_PARAMS_PKG_SV
@@ -259,6 +280,14 @@ def render_h(platforms: dict[str, Params], sel: Params, derived: dict) -> str:
 #define DRX_HALFBAND_DC_GAIN {derived['halfband_dc_gain']}LL
 #define DRX_HALFBAND_GROWTH_BITS {derived['halfband_growth_bits']}
 
+/* Ajuste de ganancia fina (Z1: escalado a fondo de escala), ver
+ * model/drx_model/chain.py::Ddc._residual_gain y rtl/generated/drx_params_pkg.sv. */
+#define DRX_GAIN_TRIM_BITS {derived['gain_trim_bits']}
+#define DRX_FINE_GAIN_COEFF {derived['fine_gain_coeff']}LL
+#define DRX_FINE_GAIN_FRAC_BITS {derived['fine_gain_frac_bits']}
+#define DRX_COARSE_GAIN_COEFF {derived['coarse_gain_coeff']}LL
+#define DRX_COARSE_GAIN_FRAC_BITS {derived['coarse_gain_frac_bits']}
+
 #endif /* DRX_PARAMS_H */
 """
 
@@ -304,6 +333,14 @@ def render_tcl(platforms: dict[str, Params], sel: Params, derived: dict) -> str:
         f"  variable HALFBAND_COEFF_BITS {derived['halfband_coeff_bits']}",
         f"  variable HALFBAND_DC_GAIN {derived['halfband_dc_gain']}",
         f"  variable HALFBAND_GROWTH_BITS {derived['halfband_growth_bits']}",
+        "",
+        "  # Ajuste de ganancia fina (Z1: escalado a fondo de escala), ver",
+        "  # model/drx_model/chain.py::Ddc._residual_gain.",
+        f"  variable GAIN_TRIM_BITS {derived['gain_trim_bits']}",
+        f"  variable FINE_GAIN_COEFF {derived['fine_gain_coeff']}",
+        f"  variable FINE_GAIN_FRAC_BITS {derived['fine_gain_frac_bits']}",
+        f"  variable COARSE_GAIN_COEFF {derived['coarse_gain_coeff']}",
+        f"  variable COARSE_GAIN_FRAC_BITS {derived['coarse_gain_frac_bits']}",
         "",
     ]
     for p in platforms.values():

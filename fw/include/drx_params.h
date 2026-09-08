@@ -71,4 +71,12 @@
 #define DRX_HALFBAND_DC_GAIN 328067LL
 #define DRX_HALFBAND_GROWTH_BITS 19
 
+/* Ajuste de ganancia fina (Z1: escalado a fondo de escala), ver
+ * model/drx_model/chain.py::Ddc._residual_gain y rtl/generated/drx_params_pkg.sv. */
+#define DRX_GAIN_TRIM_BITS 18
+#define DRX_FINE_GAIN_COEFF 43890LL
+#define DRX_FINE_GAIN_FRAC_BITS 14
+#define DRX_COARSE_GAIN_COEFF 35070LL
+#define DRX_COARSE_GAIN_FRAC_BITS 13
+
 #endif /* DRX_PARAMS_H */

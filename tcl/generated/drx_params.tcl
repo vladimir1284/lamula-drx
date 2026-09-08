@@ -36,6 +36,14 @@ namespace eval ::drx {
   variable HALFBAND_DC_GAIN 328067
   variable HALFBAND_GROWTH_BITS 19
 
+  # Ajuste de ganancia fina (Z1: escalado a fondo de escala), ver
+  # model/drx_model/chain.py::Ddc._residual_gain.
+  variable GAIN_TRIM_BITS 18
+  variable FINE_GAIN_COEFF 43890
+  variable FINE_GAIN_FRAC_BITS 14
+  variable COARSE_GAIN_COEFF 35070
+  variable COARSE_GAIN_FRAC_BITS 13
+
   # zedboard: Digilent ZedBoard rev. D
   variable FS_HZ_ZEDBOARD 100000000
   variable IF_HZ_ZEDBOARD 24000000

@@ -17,6 +17,19 @@
 // corriendo el propio modelo dorado — no hay un número de este fichero que no
 // venga de `drx_params_pkg`.
 //
+// Ajuste de ganancia fina (Z1, «escalado de ganancia y saturación con reporte
+// de overflow»): cada `drx_round` de arriba quita la ganancia de su etapa
+// redondeando a la potencia de dos superior, así que la rama fina y la gruesa
+// llegan al mux por debajo de ganancia unidad frente a CIC·FIR(·semibanda).
+// `FINE_GAIN_COEFF`/`COARSE_GAIN_COEFF` (con sus `*_FRAC_BITS`) son el
+// multiplicador de coeficiente constante — uno por rama de modo, un residuo
+// distinto porque el grueso tiene una etapa de redondeo más— que deshace
+// exactamente eso, igual que `chain.py::Ddc._decimate` (`fixed.gain_trim`):
+// mismo coeficiente, generado por `tools/gen_params.py` desde el mismo
+// modelo. Con esto la saturación final a `IQ_BITS` sí puede dispararse de
+// verdad — antes de este ajuste la cadena se quedaba varios dB por debajo de
+// fondo de escala y el overflow casi nunca se veía.
+//
 // `mode_coarse` es una entrada de tiempo de ejecución, pero en esta pasada se
 // trata como estática durante una corrida (igual que `tb_l1_ddc.sv`, que la
 // fija una vez por simulación vía `+mode`): la rama fina (droop) y la gruesa
@@ -184,7 +197,30 @@ module drx_ddc_top
   localparam int HbFullBits = HbProdBits + $clog2(HalfbandTaps);
   localparam int HbOutBits = HbFullBits - HALFBAND_GROWTH_BITS;
 
-  localparam int FinalW = (HbOutBits > FirOutBits) ? HbOutBits : FirOutBits;
+  // ---------------------------------------------------------------------
+  // Ajuste de ganancia fina (Z1: "escalado de ganancia y saturación con
+  // reporte de overflow"). CIC_GROWTH_BITS/FIR_GROWTH_BITS(/HALFBAND_
+  // GROWTH_BITS) de arriba quitan la ganancia de cada etapa redondeando a la
+  // potencia de dos superior, así que lo que sale de la rama fina (fir_
+  // rounded) y de la gruesa (hb_rounded) está por debajo de ganancia unidad
+  // frente a CIC·FIR(·semibanda) — nunca por encima. FINE_GAIN_COEFF/
+  // FINE_GAIN_FRAC_BITS y COARSE_GAIN_COEFF/COARSE_GAIN_FRAC_BITS deshacen
+  // exactamente ese residuo con un único multiplicador de coeficiente
+  // constante por rama, igual que `chain.py::Ddc._decimate` (fixed.gain_trim)
+  // — mismo coeficiente, generado por tools/gen_params.py desde el mismo
+  // modelo, no una copia a mano. El residuo es distinto por modo porque el
+  // grueso tiene una etapa de redondeo más (la semibanda).
+  localparam int FineGainProdBits = FirOutBits + GAIN_TRIM_BITS;
+  localparam int FineGainOutBits = FineGainProdBits - FINE_GAIN_FRAC_BITS;
+
+  localparam int CoarseGainProdBits = HbOutBits + GAIN_TRIM_BITS;
+  localparam int CoarseGainOutBits = CoarseGainProdBits - COARSE_GAIN_FRAC_BITS;
+
+  localparam logic signed [GAIN_TRIM_BITS-1:0] FineGainCoeff = GAIN_TRIM_BITS'(FINE_GAIN_COEFF);
+  localparam logic signed [GAIN_TRIM_BITS-1:0] CoarseGainCoeff = GAIN_TRIM_BITS'(COARSE_GAIN_COEFF);
+
+  localparam int FinalW =
+      (CoarseGainOutBits > FineGainOutBits) ? CoarseGainOutBits : FineGainOutBits;
 
   genvar gi;
   generate
@@ -302,12 +338,43 @@ module drx_ddc_top
           .out_data(hb_rounded)
       );
 
+      // --- ajuste de ganancia fina, una vez por rama de modo ------------
+      // Un único multiplicador de coeficiente constante por rama (comentario
+      // de cabecera de esta sección): no hay backpressure que respetar aquí,
+      // es aritmética combinacional sobre un valor ya con handshake resuelto
+      // (fir_valid/hb_valid), igual que el resto de drx_round de esta cadena.
+      logic signed [FineGainProdBits-1:0] fine_gain_prod;
+      assign fine_gain_prod = fir_rounded * FineGainCoeff;
+
+      logic signed [FineGainOutBits-1:0] fine_gain_rounded;
+      drx_round #(
+          .IN_W (FineGainProdBits),
+          .SHIFT(FINE_GAIN_FRAC_BITS),
+          .OUT_W(FineGainOutBits)
+      ) u_round_fine_gain (
+          .in_data (fine_gain_prod),
+          .out_data(fine_gain_rounded)
+      );
+
+      logic signed [CoarseGainProdBits-1:0] coarse_gain_prod;
+      assign coarse_gain_prod = hb_rounded * CoarseGainCoeff;
+
+      logic signed [CoarseGainOutBits-1:0] coarse_gain_rounded;
+      drx_round #(
+          .IN_W (CoarseGainProdBits),
+          .SHIFT(COARSE_GAIN_FRAC_BITS),
+          .OUT_W(CoarseGainOutBits)
+      ) u_round_coarse_gain (
+          .in_data (coarse_gain_prod),
+          .out_data(coarse_gain_rounded)
+      );
+
       // --- mux fino/grueso + saturación final a IQ_BITS -----------------
       logic branch_valid;
       logic signed [FinalW-1:0] branch_wide;
 
       assign branch_valid = mode_coarse ? hb_valid : fir_valid;
-      assign branch_wide  = mode_coarse ? FinalW'(hb_rounded) : FinalW'(fir_rounded);
+      assign branch_wide  = mode_coarse ? FinalW'(coarse_gain_rounded) : FinalW'(fine_gain_rounded);
 
       logic signed [IQ_BITS-1:0] branch_sat;
       logic                      branch_overflow;

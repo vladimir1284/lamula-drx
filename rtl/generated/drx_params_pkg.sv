@@ -87,6 +87,16 @@ package drx_params_pkg;
   localparam longint HALFBAND_DC_GAIN = 328067;
   localparam int HALFBAND_GROWTH_BITS = 19;
 
+  // Ajuste de ganancia fina (Z1: escalado a fondo de escala), un residuo
+  // distinto por modo — ver model/drx_model/chain.py::Ddc._residual_gain.
+  // Un único multiplicador de coeficiente constante por rama deshace lo que
+  // CIC_GROWTH_BITS/FIR_GROWTH_BITS(/HALFBAND_GROWTH_BITS) dejan a medias.
+  localparam int GAIN_TRIM_BITS = 18;
+  localparam longint FINE_GAIN_COEFF = 43890;
+  localparam int FINE_GAIN_FRAC_BITS = 14;
+  localparam longint COARSE_GAIN_COEFF = 35070;
+  localparam int COARSE_GAIN_FRAC_BITS = 13;
+
 endpackage : drx_params_pkg
 
 `endif  // DRX_PARAMS_PKG_SV
