@@ -28,6 +28,19 @@
 // que en `drx_ddc_top` es "estática durante una corrida": todos los canales
 // procesan el mismo IF y necesitan el mismo modo fino/grueso en un instante
 // dado, así que no hay razón para que difiera por canal.
+//
+// N_CH=3, 9-sep-2026 (P-12): este mismo módulo, sin cambio de código, es el
+// top-level de las dos configuraciones de 3 canales de ZedBoard — Config A
+// (Tx+H+V) y Config B (Tx+nominal+atenuado), ver docs/alcance/pendientes.md
+// #p-12 y docs/implementacion/fases.md#z1 — instanciándolo con N_CH=3 en vez
+// de N_RX_CH. Es "el mismo con generics", no un top-level nuevo: el
+// `generate` de arriba no distingue Rx de Tx ni asume N_CH=4, y la muestra
+// de Tx está confirmada con el mismo ancho/framing (`SAMPLE_BITS`, `s_last`)
+// que un canal Rx, así que sus tres entradas son intercambiables a este
+// nivel. El testbench de L1 para N_CH=3 es `sim/tb_sv/tb_l1_ddc_tri.sv`
+// (`tcl/sim_l1_tri.tcl`), réplica de `tb_l1_ddc_quad.sv` para esta
+// instanciación — no se toca este fichero ni `tb_l1_ddc_quad.sv`, que sigue
+// siendo el camino de N_RX_CH canales homogéneos para la ZU9.
 
 `ifndef DRX_DDC_QUAD_TOP_SV
 `define DRX_DDC_QUAD_TOP_SV

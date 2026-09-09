@@ -10,7 +10,7 @@
 PY := .venv/bin/python
 RUFF := .venv/bin/ruff
 
-.PHONY: check gen figures l1-vectors lint lint-hdl lint-hdl-tb lint-hdl-tb-quad test sim clean venv
+.PHONY: check gen figures l1-vectors lint lint-hdl lint-hdl-tb lint-hdl-tb-quad lint-hdl-tb-tri test sim clean venv
 
 venv:
 	uv venv .venv
@@ -64,6 +64,18 @@ lint-hdl-tb-quad:
 	  sim/tb_sv/tb_l1_ddc_quad.sv \
 	  --top-module tb_l1_ddc_quad
 
+# Réplica de lint-hdl-tb-quad para tb_l1_ddc_tri.sv (P-12, 9-sep-2026: el
+# top-level de 3 canales de las configs A/B de ZedBoard, drx_ddc_quad_top con
+# N_CH=3).
+lint-hdl-tb-tri:
+	verilator --lint-only -Wall --timing --timescale 1ps/1ps \
+	  sim/verilator_waivers.vlt \
+	  $$(grep -v '^\s*\#' rtl/filelist.f | grep -v '^\s*$$') \
+	  sim/tb_sv/drx_l1_file_source.sv \
+	  sim/tb_sv/drx_l1_checker.sv \
+	  sim/tb_sv/tb_l1_ddc_tri.sv \
+	  --top-module tb_l1_ddc_tri
+
 # Los vectores de L1 son salida de build, no fuente: se regeneran, no se
 # versionan. Lo que se versiona es el generador.
 l1-vectors:
@@ -75,7 +87,7 @@ test:
 sim:
 	$(PY) -m pytest sim/tests -q
 
-check: lint lint-hdl lint-hdl-tb lint-hdl-tb-quad test
+check: lint lint-hdl lint-hdl-tb lint-hdl-tb-quad lint-hdl-tb-tri test
 
 clean:
 	rm -rf build

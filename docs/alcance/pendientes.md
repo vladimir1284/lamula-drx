@@ -1116,6 +1116,99 @@ sin dither (−102 a −112 dBc de pico para DR_util ≈ 96 dB con M=64) faltan 
    bloque NCO deja de compararse bit a bit y se verifica por presupuesto espectral en su lugar (un
    cambio de criterio de aceptación de L1, con las implicaciones que eso tiene para ZM1).
 
+!!! info "9-sep-2026 (segunda sesión): K recalibrado para Latency=9 — confirma que Taylor solo, incluso con K correcto, no cierra el presupuesto"
+    Nota de procedencia: el punto 1 de la lista de arriba (el número real de supresión de clutter y
+    de M) sigue sin respuesta de especialistas. Por instrucción explícita en sesión (vladimir,
+    9-sep-2026), esta investigación **asume el requisito más exigente** en vez de esperar ese
+    número — el objetivo es que el límite de sensibilidad quede en el frontal analógico, no en esta
+    cadena digital. Lo de abajo responde el punto (1)/(2) de "lo que falta para de verdad cerrar"
+    de la entrada anterior (recalibrar `NCO_LUT_OFFSET_K` para `Latency=9` y repetir la medición).
+
+    **Método:** sonda SystemVerilog independiente, fuera del árbol (no comiteada), que corre
+    `dds_compiler` en libre corrida con `POFF1=0` y vuelca 8192 muestras crudas de `TDATA` a
+    fichero. El barrido de `K` se hace **en Python sobre esa única corrida**, no regenerando IP por
+    cada candidato: como `POFF1 = (K mod 65536)<<16` solo toca la mitad alta del acumulador de fase
+    (los 16 bits bajos quedan en 0, ver `tcl/gen_ip.tcl`), desplazar la dirección de tabla por `K` en
+    el propio script de análisis es exactamente equivalente a regenerar la IP con ese `POFF1` —
+    mismo principio que ya usa el resto de este documento, más barato. Barrido grueso (paso 25) más
+    fino (±30) sobre las 65536 direcciones posibles, para los dos anchos con `Noise_Shaping
+    {Taylor_Series_Corrected}` (`Latency=9`, confirmado igual que en la sesión anterior).
+
+    **Dos hallazgos de infraestructura nuevos, de la propia sonda, antes de fiarse de ningún número:**
+
+    1. **`create_ip` + `launch_simulation` en el MISMO proyecto Vivado no registra la IP en el
+       fileset de simulación**, aunque `generate_target simulation` reporte éxito: `get_files -of_objects
+       [get_filesets sim_1]` solo devuelve el testbench, nunca el XCI. Hace falta separar, igual que
+       ya separa el árbol real (`tcl/gen_ip.tcl` crea, `tcl/sim_l1.tcl` simula en un proyecto aparte
+       vía `read_ip` sobre el XCI ya en disco) — un patrón que este documento ya conocía pero cuya
+       razón de ser no estaba explicada hasta ahora: no es solo higiene, `create_ip`+simular en la
+       misma sesión de proyecto sale roto.
+    2. **El nombre de módulo no puede llegar a la instancia por una macro sustituida solo en
+       `more_options` (`-d NOMBRE=valor`)**: el escáner de "Fetching design files" de
+       `launch_simulation` decide qué meter en la compilación ANTES de que `xvlog`/`xelab` expandan
+       esa macro, así que nunca ve la instancia y el error ("Module ... not found") aparenta ser un
+       fallo de `generate_target` cuando no lo es. Hace falta el mismo mecanismo que ya usa
+       `DRX_HAVE_DDC` en `tcl/sim_l1.tcl`: `set_property verilog_define {...}` sobre el fileset,
+       resuelto por ramas `` `ifdef `` con el nombre en texto literal.
+    3. **Para `Output_Width=18`, `M_AXIS_DATA_TDATA` real es de 48 bits, no 36** — cada campo
+       (coseno, seno) se redondea a 24 bits, no a los 18 declarados; confirmado contra el `.veo` real
+       (`// output wire [47:0] m_axis_data_tdata`). Con `Output_Width=16` sí coincide (32 bits, ya
+       alineado a byte). Es la misma trampa que ya avisa la cabecera de `rtl/drx_ddc_top.sv` para
+       CIC/FIR ("depende de a qué múltiplo de 8 bits redondea el bus"), confirmada ahora también
+       para el DDS Compiler — relevante el día que se genere un NCO de 18 bits de verdad en el árbol.
+
+    **Resultado, con los tres hallazgos ya corregidos en la sonda:**
+
+    | Config | mejor K encontrado | pico | rms | ~dBc pico / rms |
+    |---|---|---|---|---|
+    | Taylor, W=16 | 64881 (≡ −655 mod 65536) | 1,89 LSB | 1,15 LSB | −84,8 / −89,1 |
+    | Taylor, W=18 | 64881 (≡ −655 mod 65536) | 5,00 LSB | 3,31 LSB | −88,4 / −91,9 |
+
+    `64881 ≡ −655 (mod 65536)`, y `POFF1` **resta** del acumulador (hallazgo ya documentado en
+    `tcl/gen_ip.tcl`) — así que esto **es el mismo `K=655` ya comiteado**, sin cambio, para los dos
+    anchos. Coincide, dentro del margen esperable de metodología distinta (sonda limpia de libre
+    corrida vs. la instrumentación de la sesión anterior sobre `tb_l1_ddc.sv`), con los números ya
+    reportados el 9-sep-2026 (2,3/1,2 LSB a W=16, 5,2/3,4 LSB a W=18 con el mismo `K` sin recalibrar).
+
+    **Conclusión, ahora confirmada por medición directa, no por inferencia:** `NCO_LUT_OFFSET_K=655`
+    **ya era el valor óptimo para `Latency=9`** — no hacía falta recalibrarlo, y recalibrarlo no
+    abre ningún margen nuevo. La hipótesis de la entrada anterior ("es plausible que gran parte de
+    la brecha sea un `K` mal calibrado... pero no se comprobó") queda **descartada**. El techo de
+    `Taylor_Series_Corrected` en este core, con la configuración que de verdad importa
+    (`Output_Width=18`, que no cuesta DSP48/BRAM extra sobre 16 según P-12), es de
+    **~−88 / −92 dBc** (pico/rms) — sigue sin llegar a los −102/−112 dBc del presupuesto sin dither
+    calculado en la entrada anterior.
+
+    **Medición auxiliar, mismo día — no concluyente, y aquí queda dicho por qué:** se generó también
+    `Noise_Shaping {Phase_Dithering}` (W=16, mismo método) para tener un número de referencia. El
+    error crudo por muestra sale **peor** que Taylor, no mejor: rms=5,72 LSB (~−75,2 dBc) frente a
+    1,15 LSB de Taylor. **Esto no demuestra que dithering sea peor.** El argumento de la ganancia de
+    dither (el mismo que ya usa la sección de presupuesto: "con dither el error se vuelve ruido
+    blanco y baja con la ganancia del FFT, basta P=15-16") depende de que ese ruido sea de banda
+    ancha e incoherente con el tono **después de integrar M pulsos** — una comparación de error
+    crudo de una sola muestra no puede verlo, mide exactamente lo que el dither está diseñado para
+    empeorar a propósito (la varianza de una muestra) sin medir lo que está diseñado para mejorar (el
+    piso espectral tras integración). No se construyó ese modelo de integración hoy — sigue siendo
+    el paso que de verdad decidiría si dithering ayuda, y con eso pendiente, esta medición auxiliar
+    ni cierra ni descarta la vía de dithering: solo deja dicho que "menos LSB de error crudo" no es
+    la pregunta correcta para esa técnica.
+
+    **Con esto, lo que falta para cerrar P-11 se reduce a dos caminos reales, ninguno gratis:**
+
+    1. **Aceptar `Phase_Dithering`** y con eso renunciar a la comparación bit a bit del bloque NCO en
+       L1 (su LFSR interno no es reproducible en `model/drx_model/nco.py`, ver la entrada anterior)
+       — sustituirla por un criterio de aceptación espectral/estadístico para ese bloque
+       específicamente. Antes de comprometerse a esto, construir el modelo de integración de M
+       pulsos sobre las muestras ya capturadas (de las tres técnicas) es el trabajo que falta para
+       saber si de verdad compensa.
+    2. **El número real de M/clutter** (punto 1 de la lista de arriba) sigue siendo la única fuente
+       que puede decir si −88/−92 dBc (el techo real de Taylor, ya no una estimación) alcanza o no —
+       la suposición "el número más exigente posible" de esta sesión no sustituye esa respuesta, solo
+       evita que la investigación se quede parada esperándola.
+
+    **Nada comiteado se tocó**: `config/params.toml`, `ip/dds_compiler_nco/`, `tcl/gen_ip.tcl` siguen
+    exactamente como estaban. Todo lo de arriba vive en scripts fuera del árbol, no conservados.
+
 ### P-12 · Presupuesto de DSP48 en ZedBoard: el diseño de 4 canales ya no cabe con holgura { #p-12 }
 
 **Estado:** cerrado para la ZedBoard, 9-sep-2026 (ver la entrada de cierre más abajo) — la
@@ -1229,9 +1322,24 @@ entrada de cierre de abajo: se tomó una tercera vía, ni (a) ni (b).**
 
     1. `rtl/drx_ddc_quad_top.sv` hoy es 4 canales Rx homogéneos, sin resource-sharing — ninguna de
        las dos configs es un subconjunto directo de ese módulo. Hace falta un top-level nuevo (o el
-       mismo con generics) para 3 canales heterogéneos.
+       mismo con generics) para 3 canales heterogéneos. **Hecho, 9-sep-2026:** el mismo
+       `drx_ddc_quad_top.sv`, instanciado con `N_CH=3` — no hacía falta un módulo nuevo, es
+       genérico en `N_CH` y el `generate` no distingue Rx de Tx. Regresión L1 nueva para esta
+       instanciación: `sim/tb_sv/tb_l1_ddc_tri.sv` + `tcl/sim_l1_tri.tcl`, con gate de lint en
+       `make check` (`lint-hdl-tb-tri`). **Corrida real contra xsim** (`-platform zedboard -mode
+       fine`, tres casos distintos por canal para descartar cruce entre ramas del `generate`):
+       elabora y corre limpio, sin `ERROR`/`CRITICAL WARNING` — el canal 0 (`tono_if`) da 303/315
+       discrepancias de ±2-3 LSB en régimen permanente, la MISMA clase de residuo pequeño y ya
+       aceptado que documenta [P-10](#p-10) para este caso concreto (no es un hallazgo nuevo). El
+       testbench aborta en el primer canal con discrepancias — mismo diseño que ya tenía
+       `tb_l1_ddc_quad.sv` — así que los canales 1 y 2 (`tono_desplazado`, `dos_tonos`) no llegaron
+       a compararse en esta corrida; repetirla varía el orden de casos por canal si se quiere
+       cubrirlos primero. Falta correr `-mode coarse` (cada corrida real tarda con este simulador:
+       la de `fine` tardó 71 min de reloj).
     2. Confirmar si la fuente de muestra de Tx tiene el mismo ancho/framing que un canal Rx o
-       necesita su propia variante de `drx_ddc_top` — no verificado en esta sesión.
+       necesita su propia variante de `drx_ddc_top` — no verificado en esta sesión. **Resuelto,
+       9-sep-2026 (decisión de equipo, vladimir):** mismo ancho/framing que un canal Rx —
+       `drx_ddc_top` no distingue Tx de Rx, así que no hace falta variante propia.
     3. Actualizar el hito ZM1 en `docs/implementacion/fases.md` para reflejar las dos configs en vez
        de "los cuatro canales" (hecho, ver esa página).
 
