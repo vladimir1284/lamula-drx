@@ -1334,8 +1334,11 @@ entrada de cierre de abajo: se tomó una tercera vía, ni (a) ni (b).**
        testbench aborta en el primer canal con discrepancias — mismo diseño que ya tenía
        `tb_l1_ddc_quad.sv` — así que los canales 1 y 2 (`tono_desplazado`, `dos_tonos`) no llegaron
        a compararse en esta corrida; repetirla varía el orden de casos por canal si se quiere
-       cubrirlos primero. Falta correr `-mode coarse` (cada corrida real tarda con este simulador:
-       la de `fine` tardó 71 min de reloj).
+       cubrirlos primero. **`-mode coarse` corrido, mismo día:** también limpio, sin
+       `ERROR`/`CRITICAL WARNING`; canal 0 (`tono_if__coarse`) da 3/157 discrepancias (2 %), que
+       coincide exacto con el número ya documentado más arriba en la matriz de P-10 con `K=655` —
+       confirma que el top-level de 3 canales reproduce el comportamiento ya aceptado, no un caso
+       nuevo. Cada corrida real tarda con este simulador: `fine` 71 min de reloj, `coarse` 69 min.
     2. Confirmar si la fuente de muestra de Tx tiene el mismo ancho/framing que un canal Rx o
        necesita su propia variante de `drx_ddc_top` — no verificado en esta sesión. **Resuelto,
        9-sep-2026 (decisión de equipo, vladimir):** mismo ancho/framing que un canal Rx —
