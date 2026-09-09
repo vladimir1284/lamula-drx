@@ -6,7 +6,7 @@
 
 namespace eval ::drx {
   variable SCHEMA_VERSION 1
-  variable PARAMS_SHA256 32f277ddd53e943f63e7352663ba588ddb4637284284f9b8756149d5e9379499
+  variable PARAMS_SHA256 f2334247721b95ee52e4145a7483c02aa3f37e82a56d73068af822f53d5ad391
 
   # Invariantes de dilatación y de la cadena de diezmado (D-02): idénticos
   # en las dos plataformas, y de aquí los toma tcl/gen_ip.tcl para

@@ -1,7 +1,7 @@
 /* GENERADO por tools/gen_contract.py a partir de
  * contract/schema/drx_dsp_v0_1.toml. NO EDITAR A MANO.
  *
- * Contrato DRx↔DSP v0.3 — lado DRx.
+ * Contrato DRx↔DSP v0.4 — lado DRx.
  *
  * Little-endian, empaquetado, sin relleno implícito. Los _Static_assert
  * de abajo fallan la compilación si el compilador añade relleno: es el
@@ -15,7 +15,7 @@
 
 #define DRX_DSP_MAGIC 0x4C4D4452u
 #define DRX_DSP_VERSION_MAJOR 0
-#define DRX_DSP_VERSION_MINOR 3
+#define DRX_DSP_VERSION_MINOR 4
 
 /* Cabecera común a todo mensaje. */
 typedef struct __attribute__((packed)) {
@@ -128,14 +128,13 @@ typedef enum {
   DRX_DSP_ERROR_NOT_CONFIGURED = 9,  /* Llegó un mandato antes de la primera configuración. */
 } drx_dsp_error_t;
 
-/* Bit por canal físico presente en channel_mask. El orden de channels[] en el payload de ray sigue el orden ascendente de los bits puestos en channel_mask; cada canal aporta los mismos `bins` que el resto del rayo. */
+/* Bit por canal físico presente en channel_mask. El orden de channels[] en el payload de ray sigue el orden ascendente de los bits puestos en channel_mask; cada canal aporta los mismos `bins` que el resto del rayo. rx_0..rx_3 son 2 conversores por polarización (H, V): uno a ganancia nominal y otro con la señal atenuada, para extender el rango dinámico (confirmado en sesión, 8-sep-2026). El emparejamiento H/V de arriba está confirmado; el orden concreto rx_0 vs rx_1 (¿cuál es el nominal y cuál el atenuado de cada polarización?) es una CONVENCIÓN asumida aquí, sin confirmar todavía contra el cableado físico — ver docs/alcance/pendientes.md, A10. */
 typedef enum {
-  DRX_DSP_CHANNEL_RX_0 = 1,  /* Canal Rx IF 0. */
-  DRX_DSP_CHANNEL_RX_1 = 2,  /* Canal Rx IF 1. */
-  DRX_DSP_CHANNEL_RX_2 = 4,  /* Canal Rx IF 2. */
-  DRX_DSP_CHANNEL_RX_3 = 8,  /* Canal Rx IF 3. */
-  DRX_DSP_CHANNEL_TX_BURST_0 = 16,  /* Canal de burst de Tx 0. Trae energía sólo durante la ventana del pulso transmitido; el resto de sus bins es ruido/silencio. */
-  DRX_DSP_CHANNEL_TX_BURST_1 = 32,  /* Canal de burst de Tx 1. Misma convención que tx_burst_0. */
+  DRX_DSP_CHANNEL_RX_0 = 1,  /* H, ganancia nominal (convención asumida, ver doc del enum). */
+  DRX_DSP_CHANNEL_RX_1 = 2,  /* H, señal atenuada — rango dinámico extendido (convención asumida, ver doc del enum). */
+  DRX_DSP_CHANNEL_RX_2 = 4,  /* V, ganancia nominal (convención asumida, ver doc del enum). */
+  DRX_DSP_CHANNEL_RX_3 = 8,  /* V, señal atenuada — rango dinámico extendido (convención asumida, ver doc del enum). */
+  DRX_DSP_CHANNEL_TX_BURST_0 = 16,  /* Muestra del transmisor. Un solo conversor físico (n_tx_burst_ch=1, 8-sep-2026): trae energía sólo durante la ventana del pulso transmitido; el resto de sus bins es ruido/silencio. */
 } drx_dsp_channel_t;
 
 /* Banderas por rayo. Un rayo con problemas se MARCA, no se descarta. */

@@ -45,8 +45,15 @@ bins_mode_fine = 3689
 bins_mode_coarse = 1844
 
 # Canales.
+#
+# 8-sep-2026: el frontal analógico son 5 conversores reales, no 4+2. n_rx_ch=4
+# ya era correcto (2 por polarización: H usa dos, V usa dos) pero
+# n_tx_burst_ch estaba sobreprovisionado a 2 — la muestra del transmisor es UN
+# solo conversor. Ver docs/alcance/pendientes.md, entrada 8-sep-2026 (canales
+# físicos). El enum `channel` del contrato pierde `tx_burst_1`; sube
+# version_minor.
 n_rx_ch = 4
-n_tx_burst_ch = 2
+n_tx_burst_ch = 1
 
 # Anchos de datos.
 sample_bits = 16    # muestra de ADC por la SSA

@@ -21,7 +21,7 @@
 [meta]
 name = "drx_dsp"
 version_major = 0
-version_minor = 3
+version_minor = 4
 magic = 0x4C4D4452  # "LMDR" en ASCII, little-endian
 endianness = "little"
 
@@ -183,14 +183,13 @@ values = [
 [[enum]]
 name = "channel"
 type = "u8"
-doc = "Bit por canal físico presente en channel_mask. El orden de channels[] en el payload de ray sigue el orden ascendente de los bits puestos en channel_mask; cada canal aporta los mismos `bins` que el resto del rayo."
+doc = "Bit por canal físico presente en channel_mask. El orden de channels[] en el payload de ray sigue el orden ascendente de los bits puestos en channel_mask; cada canal aporta los mismos `bins` que el resto del rayo. rx_0..rx_3 son 2 conversores por polarización (H, V): uno a ganancia nominal y otro con la señal atenuada, para extender el rango dinámico (confirmado en sesión, 8-sep-2026). El emparejamiento H/V de arriba está confirmado; el orden concreto rx_0 vs rx_1 (¿cuál es el nominal y cuál el atenuado de cada polarización?) es una CONVENCIÓN asumida aquí, sin confirmar todavía contra el cableado físico — ver docs/alcance/pendientes.md, A10."
 values = [
-  { name = "rx_0", value = 1, doc = "Canal Rx IF 0." },
-  { name = "rx_1", value = 2, doc = "Canal Rx IF 1." },
-  { name = "rx_2", value = 4, doc = "Canal Rx IF 2." },
-  { name = "rx_3", value = 8, doc = "Canal Rx IF 3." },
-  { name = "tx_burst_0", value = 16, doc = "Canal de burst de Tx 0. Trae energía sólo durante la ventana del pulso transmitido; el resto de sus bins es ruido/silencio." },
-  { name = "tx_burst_1", value = 32, doc = "Canal de burst de Tx 1. Misma convención que tx_burst_0." },
+  { name = "rx_0", value = 1, doc = "H, ganancia nominal (convención asumida, ver doc del enum)." },
+  { name = "rx_1", value = 2, doc = "H, señal atenuada — rango dinámico extendido (convención asumida, ver doc del enum)." },
+  { name = "rx_2", value = 4, doc = "V, ganancia nominal (convención asumida, ver doc del enum)." },
+  { name = "rx_3", value = 8, doc = "V, señal atenuada — rango dinámico extendido (convención asumida, ver doc del enum)." },
+  { name = "tx_burst_0", value = 16, doc = "Muestra del transmisor. Un solo conversor físico (n_tx_burst_ch=1, 8-sep-2026): trae energía sólo durante la ventana del pulso transmitido; el resto de sus bins es ruido/silencio." },
 ]
 
 [[enum]]

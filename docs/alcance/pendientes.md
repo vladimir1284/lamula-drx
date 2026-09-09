@@ -882,6 +882,43 @@ asume el máximo estándar de complemento a dos, `2^(N-1) - 1`.~~ Descartado arr
     un residuo de este orden — no documentado en este repo) antes de decidir si esto bloquea ZM1 o
     si se acepta y se redefine el criterio.
 
+!!! info "8-sep-2026: el frontal analógico son 5 conversores, no 4+2 — corregido `n_tx_burst_ch`, contrato a v0.4"
+    Detalle de hardware que no estaba documentado en ningún sitio de `docs/alcance/` ni
+    `docs/plataforma/fuente-de-muestras.md`: el frontal analógico real tiene **5 conversores**, no
+    la cuenta que asumía implícitamente el código (`n_rx_ch=4` + `n_tx_burst_ch=2` = 6 canales
+    reservados en el contrato). Confirmado en sesión: **2 conversores por polarización** (H usa dos,
+    V usa dos — `n_rx_ch=4` en sí ya era correcto, casualmente) **más 1 solo conversor** para la
+    muestra del transmisor, no dos.
+
+    **Cambios aplicados:**
+
+    - `config/params.toml`: `n_tx_burst_ch` de 2 a 1.
+    - `contract/schema/drx_dsp_v0_1.toml`: se elimina `tx_burst_1` del enum `channel`; `version_minor`
+      sube a 4 (compatible hacia atrás — ningún consumidor conocido usaba el bit 32 todavía).
+    - `fw/src/drx_params_selftest.c`: el literal de versión esperada, que ya mordió una vez (ver el
+      hallazgo de arriba, 7-sep-2026), actualizado a 0.4 en el mismo commit que el bump — para no
+      repetir el desfase.
+    - `make gen` + `make check`: 74/74 en verde.
+
+    **Actualización, mismo día:** confirmado en sesión qué distingue a los dos conversores de una
+    misma polarización: uno lleva la señal a ganancia nominal y el otro la lleva **atenuada, para
+    extender el rango dinámico** (no es diversidad ni un alimentador monopulso). El enum `channel`
+    del contrato ya documenta `rx_0`/`rx_2` como nominal (H/V) y `rx_1`/`rx_3` como atenuado (H/V) —
+    pero el emparejamiento H/V-nominal/atenuado es lo confirmado, **no el orden concreto de bits**
+    (¿cuál conversor físico es `rx_0` frente a `rx_1`?): eso sigue siendo una convención asumida en
+    el schema, marcada como tal, pendiente de contrastar contra el cableado real.
+
+    **Lo que queda abierto, sin confirmar en esta sesión:**
+
+    - **Capacidad de la plataforma ZU9 candidata.** [ADR-001](adr-001-fs-r1-r2.md) registra que cada
+      FMC213 lleva dos ADS42JB69 (2 boards × 2 chips × 2 canales = 8 canales de capacidad), así que 5
+      conversores caben con holgura — pero eso es una lectura de la hoja de datos de la portadora,
+      no una confirmación de que el mapeo de conectores real asigna H/V/Tx-sample a esa capacidad
+      como se espera. Sigue siendo hardware no comprado (ver cabecera de `CLAUDE.md`).
+    - **Avisar al proyecto DSP.** D-08/`docs/tutorial/05-contrato.md` son explícitos: «un contrato
+      que cambia sin avisar no es un contrato». Este bump de v0.3 a v0.4 no se ha comunicado todavía
+      fuera de este repositorio.
+
 ## Supuestos de entorno a verificar
 
 Estos son supuestos del plan de ZedBoard. Todo número marcado como *estimación* en este sitio es una
@@ -898,6 +935,7 @@ inferencia a partir de hojas de datos y **debe verificarse en banco** antes de c
 | A7 | Existe un runner de CI con Vivado y licencia para el job `gateware` | Hoy **sigue sin existir**: el job está condicionado a la variable `HAS_VIVADO_RUNNER`. Lo que sí cambió el 5-sep-2026: el flujo de `tcl/` (`build.tcl`, `sim_l1.tcl`) y `tools/make_boot.sh` **se ejecutaron manualmente**, con éxito, en una máquina de desarrollo fuera de CI — ver el hallazgo bajo [P-09](#p-09). Falta registrar ese runner `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` para que el hito ZM0 quede automatizado por CI, no solo demostrado a mano |
 | A8 | La versión de Vivado está pinada en el runner | Sigue sin pinarse porque el runner no existe. La instalación manual de esta sesión fue Vivado ML Standard **2022.2** — candidata obvia a version-pin cuando se monte el runner — pero pinarla en CI es trabajo aparte |
 | A9 | El sistema opera con una referencia de reloj externa disciplinada por GPS, **10 MHz + 1PPS**, local a un único radar — no compartida entre sitios de la red LAMULA (confirmado en sesión, 7-sep-2026). Es, con altísima probabilidad, la "referencia de 10 MHz de la casa" que asume [ADR-001](adr-001-fs-r1-r2.md) | Falta la ficha técnica del GPSDO (formato de señal de las dos salidas, conector, redundancia) y confirmar si la portadora ZU9/FMC213 candidata tiene entrada dedicada para 10 MHz y para 1PPS. Relevante para [P-03](#p-03) (árbol de clocking/SYSREF) y para el diseño de metadatos de Z4 (¿el 1PPS entra al marcado temporal del rayo, o solo disciplina el reloj de muestreo?) |
+| A10 | El frontal analógico tiene 5 conversores: 2 por polarización (H, V) más 1 para la muestra del transmisor (confirmado en sesión, 8-sep-2026 — ver hallazgo arriba). `n_rx_ch=4`/`n_tx_burst_ch=1` y el contrato v0.4 ya reflejan esta cuenta | Falta confirmar con quien conoce el frontal qué distingue a los dos conversores de una misma polarización entre sí, para poder nombrar `rx_0`..`rx_3` con algo más específico que "Canal Rx IF N" en el contrato y en `docs/plataforma/fuente-de-muestras.md`; y avisar al proyecto DSP del bump de contrato (D-08) |
 
 ## Presupuesto de 1GbE: confirmado, con una salvedad
 
