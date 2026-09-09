@@ -75,8 +75,24 @@ Trabajo:
   ([D9](../portabilidad/registro-delta.md)).
 
 **Hito ZM1 (fin S8):** un vector de IF conocido inyectado produce I/Q diezmada en salida que coincide
-**bit a bit** con el modelo NumPy, en los cuatro canales y en ambos tamaños de celda. Es el
-equivalente en ZedBoard del M1 original, menos JESD y menos DMA.
+**bit a bit** con el modelo NumPy, en ambos tamaños de celda. Es el equivalente en ZedBoard del M1
+original, menos JESD y menos DMA.
+
+!!! success "9-sep-2026: dos configuraciones de 3 canales en vez de 4, en la ZedBoard"
+    El presupuesto de DSP48 medido contra Vivado real ([P-12](../alcance/pendientes.md#p-12)) deja 4
+    canales sin compartir al 91 % (200/220), sin margen para Z2/Z3/DMA. Decisión, ver la entrada de
+    cierre de P-12: la muestra de Tx tiene su propia cadena independiente (no compartida con un canal
+    Rx — el transitorio del CIC+FIR compartido crearía una zona ciega de rango cercano de varios km),
+    y en la ZedBoard (plataforma experimental, no la portadora real) ZM1 se demuestra sobre **dos
+    configuraciones de 3 canales**, no sobre los 4-5 canales reales del frontal a la vez:
+
+    - **Config A** — Tx + H + V.
+    - **Config B** — Tx + canal nominal + canal atenuado, una sola polarización.
+
+    La combinación completa (4-5 canales reales simultáneos) se prueba en la ZU9, donde el margen de
+    DSP48/BRAM es mucho mayor. `rtl/drx_ddc_quad_top.sv` (4 canales Rx homogéneos) sigue existiendo,
+    pero ninguna de las dos configs de arriba es un subconjunto directo suyo — hace falta un
+    top-level nuevo para canales heterogéneos, todavía sin escribir.
 
 ## Z2 — Motor de timing, triggers y PRF (semanas 9–13) { #z2 }
 

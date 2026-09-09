@@ -919,6 +919,322 @@ asume el máximo estándar de complemento a dos, `2^(N-1) - 1`.~~ Descartado arr
       que cambia sin avisar no es un contrato». Este bump de v0.3 a v0.4 no se ha comunicado todavía
       fuera de este repositorio.
 
+### P-11 · Presupuesto de bits del NCO frente al rango dinámico intra-celda { #p-11 }
+
+**Estado:** abierto · **Dueño:** equipo (RTL) + especialistas de dominio (el número de supresión de
+clutter) · **Bloquea:** nada hoy — Z1 sigue su curso; esto decide si el residuo de ±1-5 LSB que ya
+documenta [P-10](#p-10) importa o no, y si `nco_out_bits` se queda en 16.
+
+**Origen, 8-sep-2026 (sesión):** el marco de tolerancia que se venía usando para el residuo de
+P-10 (comparar contra el MDS) estaba mal planteado — el error del NCO es multiplicativo (entra
+como parte de la mezcla, no como ruido aditivo de piso), así que no mueve la sensibilidad; lo que sí
+limita es el **rango dinámico intra-celda**: la relación clutter-a-señal recuperable en el mismo
+gate y el mismo CPI. El canal atenuado (ver hallazgo de arriba, 8-sep-2026, 5 conversores) no ayuda
+aquí — cuando el canal de ganancia alta satura por clutter fuerte, la señal débil del mismo gate
+solo se puede leer del canal atenuado, cuyo piso está `L` dB más arriba; el rango explotable es el de
+**un solo canal**, no el compuesto.
+
+Presupuesto derivado (M pulsos de integración coherente, DR_util = SNR_FS_canal + 10·log10(M)):
+con espurias sin dither (líneas coherentes que el FFT Doppler integra igual que la señal, no bajan
+con M) hace falta `P` (bits de fase a la LUT) ≥ 18–19; con dither de fase (el error se vuelve ruido
+blanco y sí baja con la ganancia del FFT) basta `P` = 15–16. La amplitud de salida de la LUT (`B_a`)
+tiene una regla aparte: `B_a ≥ ancho_datos + 2` para que la cuantización de amplitud quede por
+debajo del suelo del datapath — con datos de 16 bits, `B_a ≥ 18`.
+
+**Configuración actual (verificada contra el repo, no contra memoria):**
+
+| Parámetro | Valor | Regla del presupuesto |
+|---|---|---|
+| N, `nco_phase_bits` | 32 | ≥32, cumple |
+| P, bits de fase a la LUT | 16 (`lut_addr_bits`, `model/drx_model/nco.py`) | ≥18–19 sin dither; 15–16 con dither |
+| B_a, `nco_out_bits` | 16 | ≥18 |
+| Dither/corrección de fase | ninguno — `tcl/gen_ip.tcl` no toca `Noise_Shaping`, queda en el valor de fábrica | requerido si P=16 |
+
+El peor espurio ya medido contra el modelo dorado (P=16, sin dither, palabra de sintonía 0,24·fs)
+es **−86,4 dBc** (`docs/tutorial/03-ddc.md`, `docs/tutorial/07-resultados.md`). Contra el presupuesto
+sin dither (−102 a −112 dBc de pico para DR_util ≈ 96 dB con M=64) faltan 15–25 dB.
+
+!!! danger "Verificado contra Vivado real, 8-sep-2026: `Output_Width` no puede subir sin activar `Noise_Shaping`"
+    Antes de tocar `config/params.toml` se probó subir `nco_out_bits` de 16 a 18 y regenerar
+    `ip/dds_compiler_nco` con `tcl/gen_ip.tcl` (mismo patrón que el resto de este documento: probar
+    contra la IP real, no conjeturar). **Falló en la propia validación de Vivado**, no en la
+    simulación:
+
+    ```
+    ERROR: [IP_Flow 19-3458] Validation failed for parameter 'Output Width(Output_Width)' for
+    IP 'dds_compiler_nco'. Value '18' is out of the range (3,16)
+    ```
+
+    Aislado por separado (`report_property`/`set_property` directos sobre una IP de prueba, fuera
+    del árbol): con `CONFIG.Noise_Shaping {None}` (el valor de fábrica, el que usa hoy
+    `tcl/gen_ip.tcl`) el rango válido de `Output_Width` es como mucho 16. Activar
+    `CONFIG.Noise_Shaping` a `Phase_Dithering` o a `Taylor_Series_Corrected` **antes** de fijar
+    `Output_Width` desbloquea 18 sin error. Es decir: **`B_a=18` no es alcanzable sin comprometerse
+    también a una técnica de corrección de fase** — no es un cambio de dos campos independientes
+    como se planteó al proponerlo, los dos están acoplados en la propia IP.
+
+    Con esto, el cambio se revirtió íntegro (`git checkout -- config/params.toml ip/
+    rtl/generated/drx_params_pkg.sv tcl/generated/drx_params.tcl fw/include/drx_params.h`),
+    `make check` vuelve a 74/74 con `nco_out_bits=16`. **No se aplicó ningún cambio de parámetros
+    con esta sesión** — queda registrado aquí en vez de en el árbol.
+
+    **Las dos técnicas no son intercambiables para este proyecto:**
+
+    - **`Phase_Dithering`** sale de un LFSR interno del propio core — no hay puerto de semilla
+      expuesto (confirmado: la plantilla de instanciación no cambia al activarlo, mismos 4 puertos
+      AXI-Stream). El código VHDL de comportamiento del core está cifrado (`` `protect ``, ya
+      confirmado en [P-10](#p-10) para este mismo core) así que el algoritmo del LFSR no es legible.
+      Sin poder reproducirlo en `model/drx_model/nco.py`, la comparación bit a bit de L1 (D-05) deja
+      de tener sentido para el bloque NCO — se rompería exactamente la metodología de verificación
+      de la que depende todo el proyecto, no solo un residuo pequeño.
+    - **`Taylor_Series_Corrected`** es una técnica determinista y pública (corrección de
+      `sin(θ+Δ)≈sin(θ)+Δ·cos(θ)` con los bits de fase que de otro modo se truncan) — en principio
+      reproducible en el modelo dorado sin necesidad de leer el core cifrado. **No probado
+      todavía**: falta (a) implementar la corrección en `Nco` con el mismo orden/redondeo que usa el
+      core, y (b) confirmar contra xsim real que sí es bit a bit reproducible entre corridas antes
+      de declararla compatible con D-05. Es una investigación nueva, del mismo tamaño que la de
+      P-10 (calibración de `NCO_LUT_OFFSET_K`), no un ajuste de una tarde.
+
+!!! info "9-sep-2026: primera sonda real de `Taylor_Series_Corrected` — mejora confirmada, pero pequeña y NO cierra el presupuesto de P-11"
+    Primer intento de responder los dos puntos pendientes de la entrada anterior. Metodología: (a)
+    reimplementación en Python del algoritmo público de PG141 (tabla gruesa + segunda RAM de
+    pendiente en la misma dirección) como techo teórico, sin tocar `model/drx_model/nco.py` ni
+    ningún fichero comiteado; (b) IP real generada FUERA del árbol (mismo patrón que el resto de
+    este documento — `dds_compiler_nco_taylor_w16`/`_w18`, `Noise_Shaping {Taylor_Series_Corrected}`,
+    mismos `PINC`/`POFF` que hoy, `K=655` sin recalibrar) y probada contra xsim real con una sonda
+    temporal (mismo patrón que la sonda de K en P-10), no comiteada.
+
+    **Hallazgo metodológico previo, antes de fiarse de ningún número**: el "−86,4 dBc" que cita
+    `docs/tutorial/03-ddc.md` no tiene detrás ningún script reproducible — no hay test ni tool que
+    lo calcule, y reproducir su método aparente (FFT con ventana de Hanning, `N=8192`, igual que
+    `tools/gen_docs_figures.py:figure_nco`) da **−56,95 dBc**, no −86,4: la fuga espectral de la
+    propia ventana domina sobre el espurio real porque el tono (`PINC/2**32 ≈ 0,24`, no exacto tras
+    redondear a 32 bits) no cae en un bin exacto de una FFT de 8192 puntos sin muestreo coherente.
+    Por eso esta investigación NO usa FFT — mide el error de cuantización directo contra el valor
+    continuo ideal, en LSB (la misma unidad que ya usa la entrada de K en [P-10](#p-10)), sobre
+    4096 muestras en libre corrida (∼983 vueltas completas de la LUT con este `PINC`, así que cubre
+    la LUT entera, no un segmento local).
+
+    **Confirmado contra xsim real:**
+
+    - **Sí compila y simula** con `Noise_Shaping {Taylor_Series_Corrected}`, `Output_Width` 16 y
+      también 18 (el ancho que el propio Taylor desbloquea, hallazgo de la entrada anterior) — sin
+      errores de validación en ninguno de los dos.
+    - **Reproducible bit a bit entre corridas**: dos corridas independientes de xsim sobre la misma
+      sonda de 4096 muestras dan ficheros idénticos (`diff` limpio). Esto responde el punto (b)
+      pendiente de la entrada anterior — Taylor SÍ es determinista en la práctica, igual que None.
+    - **Coste de recursos, confirmado y ampliado sobre P-12**: `dds_compiler_nco_taylor_w16` Y
+      `_w18` sintetizan igual — **3 DSP48 + 1 RAMB18 (0,5 tile) los dos**. Subir de 16 a 18 bits de
+      salida con Taylor activado no cuesta nada extra de DSP/BRAM sobre lo que ya midió P-12 para
+      16 bits.
+    - **Hallazgo nuevo, no documentado antes**: `Latency` sube de **8** (modo `None`, config actual)
+      a **9** con Taylor activado. `NCO_LUT_OFFSET_K=655` se calibró específicamente contra
+      `Latency=8` (ver `tcl/gen_ip.tcl`) — no hay garantía de que siga siendo el valor correcto con
+      un ciclo más de latencia, y esta sonda NO lo recalibró (lo de abajo usa el mismo `K=655` sin
+      tocar).
+    - **Hallazgo nuevo, sin explicar**: la salida real del `sin` del core, comparada contra
+      `sin_lut[addr] + Δ·cos_lut[addr]` (la fórmula pública de PG141 tal cual), sale invertida en
+      signo — coincide con `-(sin_lut[addr] + Δ·cos_lut[addr])`, no con la fórmula directa. `cos` sí
+      coincide en signo. Con esa corrección de signo, la reimplementación en Python llega a un
+      residuo de ±2 LSB (`cos`) / ±5 LSB (`sin`) contra la IP real, con solo 4 % de muestras exactas
+      — la misma clase de residuo pequeño-pero-no-cero-ni-explicado que ya tiene el modo `None`
+      (ver la entrada de arriba, "el core calcula... con un algoritmo propio... que no coincide LSB
+      a LSB"). **No se llegó a una reimplementación bit-exacta** — sigue sin poder declararse
+      compatible con D-05 sin más trabajo.
+    - **La mejora medida (mismo `K=655`, sin recalibrar, contra el continuo ideal, mismo tramo de
+      4096 muestras que ya dio 3,08 LSB de pico para `None`):**
+
+        | Configuración | Pico de error | RMS | Estimado en dBc (pico / rms) |
+        |---|---|---|---|
+        | `None`, `Output_Width=16` (config actual) | 3,08 LSB | 1,34 LSB | −80,6 / −87,8 |
+        | `Taylor`, `Output_Width=16` (mismo ancho, mismo `K`) | 2,3 LSB | 1,2 LSB | −83,0 / −88,8 |
+        | `Taylor`, `Output_Width=18` (el ancho que Taylor desbloquea, mismo `K`) | 5,2 LSB (sobre fondo de escala 4× mayor) | 3,4 LSB | −88,1 / −91,7 |
+
+    **Lectura, separando lo confirmado de la inferencia:**
+
+    - **La mejora es real y medida contra el core de verdad, no solo contra un modelo propio** — en
+      los dos anchos, Taylor reduce el error frente a `None`. Esto es lo que la pregunta pedía
+      confirmar, y la respuesta es sí.
+    - **Pero es pequeña: 5-8 dB, no los 15-25 dB que le faltan al presupuesto de** [P-11](#p-11)
+      (−102 a −112 dBc). Con la configuración tal cual (Taylor + 18 bits, `K` sin recalibrar), el
+      suelo medido (~−88 a −92 dBc) sigue estando muy por debajo de lo que el presupuesto de rango
+      dinámico intra-celda necesita. **Taylor solo, tal como se probó hoy, no cierra P-11.**
+    - **Inferencia, no confirmada**: la brecha entre el techo teórico de la reimplementación en
+      Python (con pendiente en punto flotante, error de pico ~0,5 LSB — ver más abajo) y lo medido
+      contra la IP real (2,3-5,2 LSB) es sospechosamente parecida en tamaño al tipo de error que
+      corrigió `K` en P-10 (un desfase de ángulo sistemático de ~1 paso de LUT). Es plausible que
+      gran parte de la brecha sea un `K` mal calibrado para `Latency=9`, no un límite intrínseco de
+      Taylor — pero **no se comprobó**: repetir la búsqueda de `K` (misma técnica de P-10, sonda de
+      4096 muestras, barrido de unos pocos valores alrededor de 655) contra esta configuración
+      concreta es el siguiente paso obvio, y es justo el trabajo que la entrada anterior ya
+      estimaba en «del mismo tamaño que P-10» — sigue sin hacerse.
+    - **Techo teórico (referencia, no una medida de hardware)**: la misma reimplementación en Python
+      con la pendiente en punto flotante (sin cuantizar la RAM de pendiente en absoluto) predice un
+      error de pico de solo 0,5 LSB en los dos anchos — el límite de redondeo puro, sin ningún error
+      de fase — equivalente a ~−96 dBc (16 bits) o ~−108 dBc (18 bits). Que lo medido esté tan lejos
+      de ese techo es la evidencia más fuerte de que aquí falta calibración, no que la técnica esté
+      agotada.
+
+    **Estado:** ningún fichero comiteado se tocó — `ip/dds_compiler_nco`, `tcl/gen_ip.tcl`,
+    `config/params.toml` y `model/drx_model/nco.py` siguen exactamente como estaban (`Noise_Shaping
+    {None}`, `K=655`, sin cambios). Todo lo de arriba se generó fuera del árbol y no se conserva.
+
+    **Re-confirmación independiente del coste en DSP48 (mismo día):** se sintetizó
+    `drx_ddc_top` completo (un canal, `synth_design -mode out_of_context`, fuera del árbol —
+    misma copia editada solo para sustituir `dds_compiler_nco` por
+    `dds_compiler_nco_taylor_w16`, el mismo core generado arriba) para no depender solo de la
+    cifra ya citada en [P-12](#p-12)/`docs/plataforma/recursos.md`. Resultado: **53 DSP48, 1
+    RAMB18 (0,5 tile)** — coincide exactamente con el número de P-12 (50→53, +3 DSP48 por NCO),
+    ahora verificado dos veces con dos IP generadas por separado, no solo citado. Sobre el
+    presupuesto de la ZedBoard: el diseño base de 4 canales ya mide **200/220 DSP48 (91 %)**
+    ([P-12](#p-12)); activar Taylor en los 4 NCO añadiría `4×3=12` DSP48 → **212/220 (96 %)**,
+    dejando solo **8 DSP48 libres (3,6 %)** — cabe en el papel, sin margen real de rutado. No
+    cambia ninguna conclusión de P-12, la refuerza con una segunda medición independiente.
+
+    **Lo que falta para de verdad cerrar el punto (a) y (b) de la entrada anterior:**
+
+    1. Recalibrar `NCO_LUT_OFFSET_K` específicamente para `Taylor_Series_Corrected` (`Latency=9`),
+       misma técnica que P-10 — sin esto, no se sabe cuánto de la brecha frente al techo teórico es
+       real y cuánto es desfase de arranque sin corregir.
+    2. Con `K` recalibrado, repetir esta misma medición; si el residuo sigue por encima del
+       presupuesto de P-11 incluso con `K` correcto, ESO sí sería evidencia de que Taylor solo no
+       basta (haría falta corrección cuadrática — PG141 la menciona para SFDR > 120 dB — o aceptar
+       el cambio de criterio de verificación que ya proponía la entrada anterior).
+    3. Solo después de (1)-(2): decidir si vale la pena invertir en reproducir el algoritmo bit a
+       bit en `model/drx_model/nco.py` (compatibilidad con D-05) — no tiene sentido antes de saber
+       si la técnica siquiera llega al presupuesto que hace falta.
+
+**Lo que falta para cerrar esto:**
+
+1. El número real de supresión de clutter terrestre requerido y la longitud de CPI (M) objetivo —
+   no está documentado en ningún sitio de `docs/` ni `config/`; sin él, cualquier bit exacto de `P`
+   es una suposición. Mismo patrón que P-01/P-04: silencio de especificación, hace falta preguntar a
+   quien lo sepa.
+2. Con ese número en mano: decidir si el residuo actual (P=16, sin dither, −86,4 dBc) basta o no.
+   Si no basta, decidir si se invierte en implementar y verificar `Taylor_Series_Corrected` en el
+   modelo dorado (compatible con D-05, coste de una investigación completa) o se acepta que el
+   bloque NCO deja de compararse bit a bit y se verifica por presupuesto espectral en su lugar (un
+   cambio de criterio de aceptación de L1, con las implicaciones que eso tiene para ZM1).
+
+### P-12 · Presupuesto de DSP48 en ZedBoard: el diseño de 4 canales ya no cabe con holgura { #p-12 }
+
+**Estado:** cerrado para la ZedBoard, 9-sep-2026 (ver la entrada de cierre más abajo) — la
+arquitectura de 4-5 canales reales se difiere a la ZU9. **Dueño:** equipo (RTL) · **Bloqueaba:** la
+decisión de resource-sharing entre canales, que `rtl/drx_ddc_quad_top.sv` daba por innecesaria para
+ZM1; y la viabilidad de la vía `Taylor_Series_Corrected` que evalúa [P-11](#p-11).
+
+**Origen, 9-sep-2026:** al evaluar si la ZedBoard tiene multiplicadores de sobra para
+`Taylor_Series_Corrected` (P-11) considerando los 5 conversores del frontal (A10), se sintetizó de
+verdad `drx_ddc_top`/`drx_ddc_quad_top` (`synth_design -mode out_of_context`, XC7Z020-1 grado -1,
+tal como están hoy en el árbol) en vez de seguir citando la tabla estimada de
+`docs/plataforma/recursos.md`. El resultado desmiente esa tabla, no solo responde la pregunta de
+P-11:
+
+| Configuración | DSP48 | Sobre 220 disponibles |
+|---|---|---|
+| 1 canal DDC completo, `Noise_Shaping {None}` (config actual) — medido | 50 | 23 % |
+| 1 canal, NCO con `Noise_Shaping {Taylor_Series_Corrected}` — medido | 53 | 24 % |
+| **4 canales Rx, config actual — medido, no extrapolado** | **200** | **91 %** |
+| 4 canales + Taylor en los 4 NCO — extrapolado del delta medido (+3/canal) | 212 | 96 % |
+| 5 canales (si el conversor de Tx necesita cadena DDC propia, A10 sin decidir) | 250 | **114 % — no cabe** |
+| 5 canales + Taylor | 265 | **120 % — no cabe** |
+
+`docs/plataforma/recursos.md` estimaba ~34 DSP48 (15 %) asumiendo FIR **time-shared entre 8
+streams** (10 DSP48 total). Esa no es la arquitectura real: la cabecera de
+`rtl/drx_ddc_quad_top.sv` es explícita — **sin resource-sharing entre canales**, cada uno instancia
+su propio juego completo de IP, y ese diseño es el que ya está commiteado, no una alternativa
+hipotética. La tabla se corrigió con los números medidos (`docs/plataforma/recursos.md`).
+
+**Lo que esto cambia, en orden de urgencia:**
+
+1. **El DSP48, no el cierre de temporización, es hoy el recurso más ajustado del proyecto en
+   ZedBoard.** Con 4 canales al 91 % sin haber tocado Z2 (motor de timing), Z3 (SSI) ni el DMA,
+   cualquiera de esos bloques que necesite un multiplicador (contadores de jitter con escalado,
+   validación de PRF×rango, lo que sea) compite por los 20 DSP48 que quedan libres.
+2. **P-11 (Taylor_Series_Corrected) pasa de "¿es determinista?" a "¿cabe?".** Con los 4 canales
+   actuales sí cabe en el papel (212/220) pero sin margen real de rutado — 96 % de un recurso
+   concentrado geográficamente en el die es un problema de congestión, no solo de aritmética.
+3. **Si el conversor de Tx (A10) necesita su propia cadena DDC, la arquitectura de hoy no cabe en
+   la ZedBoard en ningún caso** — 250 DSP48 sobre 220 disponibles, con o sin Taylor. Esto es
+   independiente de P-11 y hay que cerrarlo primero: no tiene sentido decidir el presupuesto de
+   bits del NCO de un canal que igual no puede replicarse una quinta vez.
+
+**Condición de cierre original:** una de las dos — (a) implementar resource-sharing real entre
+canales para los bloques de mayor consumo (FIR compensador/semibanda, que es lo que la tabla
+original ya asumía compartido) y volver a medir, o (b) una decisión explícita de que 4 canales sin
+compartir es suficiente para ZM1 y que Z2-Z4 se presupuestan contra los ~20 DSP48 que quedan — con
+el conversor de Tx (A10) resuelto primero, porque decide si el número de partida es 4 o 5. **Ver la
+entrada de cierre de abajo: se tomó una tercera vía, ni (a) ni (b).**
+
+!!! success "9-sep-2026: decisión — cadena de Tx independiente, sin compartir; en la ZedBoard, dos configuraciones de 3 canales en vez de 4-5; la combinación completa se prueba en la ZU9"
+    Cierra, para el alcance de la ZedBoard, la pregunta de A10 sobre la muestra de Tx y la condición
+    de cierre de esta entrada. Se evaluó explícitamente una tercera vía antes de decidir, distinta de
+    las (a)/(b) de arriba: **compartir en el tiempo la cadena DDC de un canal Rx entre la muestra de
+    Tx y el rayo que le sigue**, aprovechando que la muestra de Tx llega antes del rayo con un hueco
+    entre ambos.
+
+    **Por qué se descartó compartir** — el transitorio de la propia cadena, no una intuición: el
+    CIC (N=5, R=52) más el FIR compensador (63 taps, y la semibanda de 23 taps en modo grueso) tardan
+    en "olvidar" por completo la señal anterior — es el mismo número que ya usa
+    `model/drx_model/l1_vectors.py:_settling_in_samples` para marcar el arranque de L1, aplicado aquí
+    a un segundo transitorio a mitad de la ráfaga, no solo al de encendido:
+
+    | Modo | Transitorio de la cadena compartida | Zona ciega en rango equivalente (`c·t/2`) |
+    |---|---|---|
+    | fino (R1=208) | 35,9 µs | ~5,4 km |
+    | grueso (R2=416) | 83,7 µs | ~12,6 km |
+
+    Ese hueco de "no fiarse de la cadena" cae exactamente al principio del rayo, es decir, en el
+    rango más cercano — la parte de la cobertura que casi ningún radar puede permitirse perder. El
+    hueco real Tx→rayo de este diseño **no está documentado en ningún sitio del repo** (no hay nada
+    bajo "T/R", "blanking", "conmutación" ni "guard" en `docs/`), pero un conmutador T/R típico
+    recupera en el orden de cientos de ns a pocos µs — muy por debajo de los 36-84 µs que la cadena
+    necesita. Compartir habría cambiado sin avisar un ahorro de ~50 DSP48 por una zona ciega de rango
+    cercano de varios km, más lógica de descarte de gates y verificación L1 nueva (el transitorio de
+    mitad de ráfaga no arranca de registros en cero, así que el argumento bit-a-bit de hoy para la
+    ventana de arranque no se traslada sin más). No compensaba.
+
+    **Decisión:** la muestra de Tx tiene su **propia cadena de procesamiento independiente**, sin
+    compartir con ningún canal Rx.
+
+    **Decisión, alcance ZedBoard únicamente** (plataforma experimental — ver la advertencia de
+    `CLAUDE.md`, esto no es la arquitectura final de la ZU9): en vez de forzar los 4-5 canales reales
+    del frontal analógico de una vez (que ya dejaba el DSP48 al límite, ver la tabla de arriba), se
+    prueban **dos configuraciones de 3 canales, por separado**:
+
+    - **Config A** — cadena de Tx + H + V (las dos polarizaciones, ganancia nominal): valida la
+      cadena de Tx y la diversidad de polarización.
+    - **Config B** — cadena de Tx + canal nominal + canal atenuado, una sola polarización: aísla el
+      estudio de rango dinámico intracelda de [P-11](#p-11) sin necesitar las dos polarizaciones a
+      la vez.
+
+    Presupuesto de DSP48 para cualquiera de las dos, peor caso (si la cadena de Tx cuesta igual que
+    un canal Rx completo — no confirmado, ver "lo que falta" abajo):
+
+    | Config (3 canales) | DSP48 | Sobre 220 |
+    |---|---|---|
+    | sin Taylor | 150 | 68 % |
+    | con Taylor en los 3 NCO | 159 | 72 % |
+
+    Margen real de 28-32 %, frente al 4-9 % que dejaba la config de 4-5 canales — resuelve la
+    urgencia #1 de esta entrada sin necesitar resource-sharing.
+
+    **La combinación completa (4 o 5 canales reales a la vez) se prueba en la ZU9**, donde hay mucho
+    más DSP48/BRAM disponible — no es un riesgo aceptado en silencio, es un aplazamiento explícito a
+    la plataforma que sí lo soporta con margen. La ZedBoard sigue sin validar JESD204B, 250 MSPS ni
+    el frontal analógico real (la misma advertencia de siempre); esto solo decide con cuántos canales
+    se ejercita la lógica digital mientras tanto.
+
+    **Lo que falta para ejecutar esto — no es solo config:**
+
+    1. `rtl/drx_ddc_quad_top.sv` hoy es 4 canales Rx homogéneos, sin resource-sharing — ninguna de
+       las dos configs es un subconjunto directo de ese módulo. Hace falta un top-level nuevo (o el
+       mismo con generics) para 3 canales heterogéneos.
+    2. Confirmar si la fuente de muestra de Tx tiene el mismo ancho/framing que un canal Rx o
+       necesita su propia variante de `drx_ddc_top` — no verificado en esta sesión.
+    3. Actualizar el hito ZM1 en `docs/implementacion/fases.md` para reflejar las dos configs en vez
+       de "los cuatro canales" (hecho, ver esa página).
+
 ## Supuestos de entorno a verificar
 
 Estos son supuestos del plan de ZedBoard. Todo número marcado como *estimación* en este sitio es una
