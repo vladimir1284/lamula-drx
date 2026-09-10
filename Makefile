@@ -10,7 +10,7 @@
 PY := .venv/bin/python
 RUFF := .venv/bin/ruff
 
-.PHONY: check gen figures l1-vectors lint lint-hdl lint-hdl-tb lint-hdl-tb-quad lint-hdl-tb-tri test sim clean venv
+.PHONY: check gen figures l1-vectors lint lint-hdl lint-hdl-tb lint-hdl-tb-quad lint-hdl-tb-tri lint-hdl-tb-range-tri test sim clean venv
 
 venv:
 	uv venv .venv
@@ -76,6 +76,18 @@ lint-hdl-tb-tri:
 	  sim/tb_sv/tb_l1_ddc_tri.sv \
 	  --top-module tb_l1_ddc_tri
 
+# Réplica de lint-hdl-tb-tri para tb_l1_ddc_range_tri.sv: drx_ddc_quad_top
+# (N_CH=3) seguido de drx_range_gate_quad_top, el cierre de ZM1 que compara
+# por rayo (dato + TLAST) en vez de la muestra decimada suelta.
+lint-hdl-tb-range-tri:
+	verilator --lint-only -Wall --timing --timescale 1ps/1ps \
+	  sim/verilator_waivers.vlt \
+	  $$(grep -v '^\s*\#' rtl/filelist.f | grep -v '^\s*$$') \
+	  sim/tb_sv/drx_l1_file_source.sv \
+	  sim/tb_sv/drx_l1_checker.sv \
+	  sim/tb_sv/tb_l1_ddc_range_tri.sv \
+	  --top-module tb_l1_ddc_range_tri
+
 # Los vectores de L1 son salida de build, no fuente: se regeneran, no se
 # versionan. Lo que se versiona es el generador.
 l1-vectors:
@@ -87,7 +99,7 @@ test:
 sim:
 	$(PY) -m pytest sim/tests -q
 
-check: lint lint-hdl lint-hdl-tb lint-hdl-tb-quad lint-hdl-tb-tri test
+check: lint lint-hdl lint-hdl-tb lint-hdl-tb-quad lint-hdl-tb-tri lint-hdl-tb-range-tri test
 
 clean:
 	rm -rf build

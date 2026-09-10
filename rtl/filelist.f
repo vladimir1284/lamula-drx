@@ -13,3 +13,5 @@ rtl/drx_saturate.sv
 rtl/drx_ddc_mixer.sv
 rtl/drx_ddc_top.sv
 rtl/drx_ddc_quad_top.sv
+rtl/drx_range_gate.sv
+rtl/drx_range_gate_quad_top.sv
