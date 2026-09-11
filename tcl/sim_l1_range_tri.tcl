@@ -18,6 +18,20 @@ source [file join $repo_root tcl generated drx_params.tcl]
 # que produce drx_range_gate son idénticos a los de drx_ddc_top (el gating
 # reordena en el tiempo, no toca el dato), así que reutiliza el mismo mapeo
 # canal -> caso en vez de inventar uno.
+#
+# Hallazgo del 10-sep-2026: se probó cambiar tono_if (canal 0, el que trae el
+# residuo de ±2-3 LSB ya documentado en P-10/P-12) por tono_desplazado_neg,
+# asumiendo que tono_desplazado/dos_tonos estaban limpios frente al modelo
+# dorado. Falso: nunca se habían comprobado hasta el final (el mismo
+# `$fatal` en el primer canal con discrepancias que tapa TLAST también tapaba
+# esto), y al correr con tono_desplazado en el canal 0 salieron 44/288
+# discrepancias de la MISMA clase (±1-3 LSB) — proporcionalmente peor que el
+# ~12/315 ya aceptado de tono_if. El residuo no es específico de tono_if; ver
+# docs/alcance/pendientes.md para el seguimiento. Por eso se vuelve al mapeo
+# original: cambiar de caso no evita el residuo, así que no hay razón para
+# divergir de sim_l1_tri.tcl. La comprobación de TLAST limpia se consigue
+# reordenando las comprobaciones en tb_l1_ddc_range_tri.sv (TLAST antes que
+# dato), no eligiendo casos.
 set case_by_channel {tono_if tono_desplazado dos_tonos}
 
 # --- argumentos -------------------------------------------------------------

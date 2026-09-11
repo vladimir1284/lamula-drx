@@ -1345,6 +1345,35 @@ entrada de cierre de abajo: se tomó una tercera vía, ni (a) ni (b).**
        `drx_ddc_top` no distingue Tx de Rx, así que no hace falta variante propia.
     3. Actualizar el hito ZM1 en `docs/implementacion/fases.md` para reflejar las dos configs en vez
        de "los cuatro canales" (hecho, ver esa página).
+    4. **Ampliación con `drx_range_gate` (Z1, 10/11-sep-2026):** `sim/tb_sv/tb_l1_ddc_range_tri.sv` +
+       `tcl/sim_l1_range_tri.tcl` encadenan `drx_ddc_quad_top` (N_CH=3) con
+       `drx_range_gate_quad_top` sobre los mismos tres casos del punto 1, y comparan también
+       `m_last` (TLAST) por rayo, no solo la muestra decimada suelta — cierra la limitación citada
+       arriba ("repetirla varía el orden de casos por canal si se quiere cubrirlos primero").
+       Corrida real `-mode fine`: **TLAST coincide bit a bit en los tres canales (288/288/288
+       muestras)** — confirma que el framing del rayo cae donde toca, alimentado por la IP real de
+       Xilinx, no un generador sintético. El dato de `tono_if` en canal 0 (276/288 discrepancias,
+       ~96 %) reproduce la misma proporción que ya documenta el punto 1 (303/315, ~96 %): confirma
+       que `drx_range_gate` no toca el dato, solo lo reordena en el tiempo.
+       Se probó también, antes de fijar el mapeo anterior, cambiar `tono_if` por `tono_desplazado`
+       en el canal 0 para poder comparar dato hasta el final en un caso distinto: salió la MISMA
+       clase de residuo (±1-3 LSB) pero mucho menos frecuente — **44/288 (~15 %)** — el primer dato
+       real sobre un caso que nunca se había comparado hasta el final (el aborto del checker en el
+       primer canal con discrepancias tapaba esto también). Esto sugiere que la severidad del
+       residuo depende de la señal/frecuencia de cada caso, no es uniforme entre casos — no se
+       investigó la causa, y no cambia que el residuo ya está aceptado como clase de error para
+       `tono_if` en P-10.
+       Hallazgo de infraestructura de prueba, no de diseño: el checker compartido aborta con
+       `$fatal` en el primer canal con discrepancias de dato, y eso tapaba el resultado de TLAST
+       aunque ya estuviera completo (el contador de TLAST corre en un `always_ff` continuo desde el
+       reset, independiente del checker de dato). Se corrigió el ORDEN de las comprobaciones dentro
+       de `tb_l1_ddc_range_tri.sv` (TLAST se reporta antes que el dato) para que este tipo de
+       residuo aceptado deje de esconder para siempre si TLAST está bien o mal. No se tocó
+       `tb_l1_ddc_tri.sv`, que sigue con la limitación original (documentada en el punto 1).
+       Vectores dorados idénticos a los del punto 1, ya generados por `tools/gen_l1_vectors.py`,
+       incluido un cuarto caso (`tono_desplazado_neg`) usado solo en el experimento de arriba y
+       descartado del mapeo final. Cada corrida real de este testbench tarda ~75-80 min de reloj en
+       esta máquina. `-mode coarse` no se ha corrido todavía para esta variante.
 
 ## Supuestos de entorno a verificar
 

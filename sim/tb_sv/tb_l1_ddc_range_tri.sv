@@ -284,22 +284,38 @@ module tb_l1_ddc_range_tri;
     wait (all_channels_done);
     repeat (4) @(posedge clk);
 
+    // TLAST se comprueba ANTES que el dato, a propósito: `g_tlast[*]` corre en
+    // un `always_ff` continuo desde el reset, no como parte de esta secuencia,
+    // así que para cuando llegamos aquí los tres canales YA tienen su cuenta
+    // completa de `last_mismatches`/`last_checked` — es independiente de si
+    // el dato de algún canal coincide o no con el modelo dorado. Poner esta
+    // comprobación después de la de dato (como estaba antes) significa que un
+    // residuo de dato ya aceptado (P-10/P-12: ±2-3 LSB, visto en más de un
+    // caso — no solo en `tono_if`, ver hallazgo del 10-sep-2026) hace `$fatal`
+    // primero y esconde para siempre si TLAST estaba bien o mal, aunque el
+    // dato ya estuviera comprobado. Con TLAST primero, ese resultado queda en
+    // el log pase lo que pase con el dato.
+    if (g_tlast[0].last_mismatches != 0 || g_tlast[1].last_mismatches != 0
+        || g_tlast[2].last_mismatches != 0) begin
+      $fatal(1, "L1 range-tri: TLAST mal colocado — canal 0: %0d, canal 1: %0d, canal 2: %0d (de %0d/%0d/%0d muestras)",
+             g_tlast[0].last_mismatches, g_tlast[1].last_mismatches, g_tlast[2].last_mismatches,
+             g_tlast[0].last_checked, g_tlast[1].last_checked, g_tlast[2].last_checked);
+    end
+    $display("L1 range-tri: TLAST coincide bit a bit en los tres canales (%0d/%0d/%0d muestras)",
+              g_tlast[0].last_checked, g_tlast[1].last_checked, g_tlast[2].last_checked);
+
     for (int c = 0; c < N_CH; c++) begin
-      if (mismatches[c] != 0) begin
-        $fatal(1, "L1 range-tri: canal %0d, %0d discrepancias de dato de %0d muestras contra el modelo dorado",
-               c, mismatches[c], checked[c]);
-      end
       if (gate_overrun[c]) begin
         $fatal(1, "L1 range-tri: canal %0d, overrun del ping-pong con el lector siempre listo: bug de framing",
                c);
       end
     end
 
-    if (g_tlast[0].last_mismatches != 0 || g_tlast[1].last_mismatches != 0
-        || g_tlast[2].last_mismatches != 0) begin
-      $fatal(1, "L1 range-tri: TLAST mal colocado — canal 0: %0d, canal 1: %0d, canal 2: %0d (de %0d/%0d/%0d muestras)",
-             g_tlast[0].last_mismatches, g_tlast[1].last_mismatches, g_tlast[2].last_mismatches,
-             g_tlast[0].last_checked, g_tlast[1].last_checked, g_tlast[2].last_checked);
+    for (int c = 0; c < N_CH; c++) begin
+      if (mismatches[c] != 0) begin
+        $fatal(1, "L1 range-tri: canal %0d, %0d discrepancias de dato de %0d muestras contra el modelo dorado",
+               c, mismatches[c], checked[c]);
+      end
     end
 
     for (int c = 0; c < N_CH; c++) begin
