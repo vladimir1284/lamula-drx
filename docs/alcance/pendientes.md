@@ -1373,7 +1373,16 @@ entrada de cierre de abajo: se tomó una tercera vía, ni (a) ni (b).**
        Vectores dorados idénticos a los del punto 1, ya generados por `tools/gen_l1_vectors.py`,
        incluido un cuarto caso (`tono_desplazado_neg`) usado solo en el experimento de arriba y
        descartado del mapeo final. Cada corrida real de este testbench tarda ~75-80 min de reloj en
-       esta máquina. `-mode coarse` no se ha corrido todavía para esta variante.
+       esta máquina.
+       **`-mode coarse` corrido, 11-sep-2026:** también limpio, sin `ERROR`/`CRITICAL WARNING`.
+       **TLAST coincide bit a bit en los tres canales (144/144/144 muestras)** — la misma
+       confirmación que en `fine`, ahora también en coarse. El checker aborta, como siempre, en el
+       primer canal con discrepancias de dato: canal 0 (`tono_if__coarse`) da 3/144, que coincide
+       exacto con el 3/157 ya documentado en el punto 1 para este mismo caso sin range gating —
+       confirma otra vez, ahora en coarse, que `drx_range_gate` no toca el dato. Con esto quedan
+       cerradas las dos combinaciones (fine/coarse) de esta ampliación; `tono_desplazado` y
+       `dos_tonos` en coarse siguen sin comparar su dato hasta el final por el mismo aborto del
+       checker en el primer canal — no es una limitación nueva de esta corrida.
 
 ## Supuestos de entorno a verificar
 
