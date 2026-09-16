@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from drx_model import fir as fir_mod
 from drx_model.cic import Cic
-from drx_model.nco import Nco
+from drx_model.nco import Nco, NcoTaylor
 from drx_model.params import load
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -48,6 +48,82 @@ def test_el_acumulador_de_fase_envuelve():
 def test_el_nco_es_determinista():
     nco = Nco.from_params(PARAMS)
     assert np.array_equal(nco.generate(1024)[0], nco.generate(1024)[0])
+
+
+# --- NCO con Taylor_Series_Corrected ----------------------------------------
+#
+# `NcoTaylor` es una clase nueva, independiente de `Nco` -- no cambia el
+# comportamiento por defecto que usan los tests de arriba ni el resto de la
+# cadena (`Ddc`/`config/params.toml` siguen en `Noise_Shaping {None}`). Ver
+# docs/alcance/pendientes.md#p-11 (11-sep-2026) para el origen de estos
+# números.
+
+
+def test_nco_taylor_respeta_el_fondo_de_escala():
+    nco = NcoTaylor.from_params(PARAMS)
+    cos_w, sin_w = nco.generate(4096)
+    high = (1 << (nco.out_bits - 1)) - 1
+    for wave in (cos_w, sin_w):
+        assert wave.max() <= high
+        assert wave.min() >= -high
+
+
+def test_el_nco_taylor_es_determinista():
+    nco = NcoTaylor.from_params(PARAMS)
+    assert np.array_equal(nco.generate(1024)[0], nco.generate(1024)[0])
+
+
+def test_nco_taylor_resuelve_mas_fase_que_nco_plano():
+    # Mismo incremento de fase, mismo out_bits: `NcoTaylor` usa
+    # `lut_addr_bits + delta_bits` bits de fase (25 con los defaults de este
+    # proyecto) en vez de los `lut_addr_bits` (16) de `Nco`, así que dos fases
+    # que `Nco` trata como idénticas (mismo `addr`, distinto residuo de los
+    # bits truncados) dan salidas distintas en `NcoTaylor`.
+    nco = Nco.from_params(PARAMS)
+    taylor = NcoTaylor.from_params(PARAMS)
+    shift = nco.phase_bits - nco.lut_addr_bits
+    base = 12345 << shift
+    tweak = base + (1 << (shift - 1))  # mismo addr de 16 bits, distinto residuo
+    assert nco.generate(1, initial=base)[0] == nco.generate(1, initial=tweak)[0]
+    assert taylor.generate(1, initial=base)[0] != taylor.generate(1, initial=tweak)[0]
+
+
+def test_nco_taylor_reproduce_la_ip_real_dentro_de_dos_lsb():
+    """Contra `dds_compiler` v6.0 real (`Noise_Shaping {Taylor_Series_Corrected}`,
+    modo `SIN_COS_LUT_only`, `Output_Width=16`), sonda de xsim fuera del árbol,
+    11-sep-2026 -- ver docs/alcance/pendientes.md#p-11. `n` es la fase de 25
+    bits que se le dio directamente al core (sin acumulador); `cos`/`sin` son
+    los dos campos crudos de `m_axis_data_tdata` para esa muestra. El residuo
+    de hasta ±2 LSB es el mismo ya aceptado para el modo `None` (P-10) -- este
+    test fija esa cota, no pide coincidencia exacta.
+    """
+    # (n, cos_ip, sin_ip) -- `n` en hex porque son fases, no relojes (el gate
+    # de `tools/check_hardcoded_clock.py` solo mira literales decimales).
+    referencia = [
+        (0x172D87E, -5267, -32340),
+        (0xFA4B6, 32164, 6251),
+        (0x1CB57DC, 26159, -19730),
+        (0x5D7A1A, 13470, 29869),
+        (0xB1F8C4, -18858, 26796),
+        (0x1A38AA2, 13843, -29698),
+        (0x1F4B7EB, 32452, -4522),
+        (0x1141138, -31778, -7987),
+        (0x1F17516, 32246, -5816),
+        (0xA27BDD, -13456, 29876),
+        (0x10E140, 32066, 6739),
+        (0x1A8914B, 15647, -28789),
+    ]
+    nco = NcoTaylor(
+        phase_bits=25,
+        phase_inc=0,
+        out_bits=16,
+        lut_addr_bits=16,
+        delta_bits=9,
+    )
+    for n, cos_ip, sin_ip in referencia:
+        cos_w, sin_w = nco.generate(1, initial=n)
+        assert abs(int(cos_w[0]) - cos_ip) <= 2
+        assert abs(int(sin_w[0]) - sin_ip) <= 2
 
 
 # --- CIC -------------------------------------------------------------------

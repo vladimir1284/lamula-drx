@@ -1209,6 +1209,161 @@ sin dither (−102 a −112 dBc de pico para DR_util ≈ 96 dB con M=64) faltan 
     **Nada comiteado se tocó**: `config/params.toml`, `ip/dds_compiler_nco/`, `tcl/gen_ip.tcl` siguen
     exactamente como estaban. Todo lo de arriba vive en scripts fuera del árbol, no conservados.
 
+!!! info "11-sep-2026: nuevo intento de reproducción bit-exacta — dos hallazgos de infraestructura nuevos, sin cerrar el punto 3 pendiente"
+    Retoma el punto 3 de "lo que falta para de verdad cerrar" (9-sep, primera entrada): reproducir
+    `Taylor_Series_Corrected` bit a bit en `model/drx_model/nco.py`. Metodología, toda fuera del
+    árbol (sondas de Vivado/xsim generadas y descartadas, ningún fichero comiteado tocado): en vez de
+    reusar el core `Phase_Generator_and_SIN_COS_LUT` con el `PINC`/`POFF` comiteados, se generaron
+    IP standalone de `dds_compiler` para poder controlar la fase de entrada con precisión —
+    primero variando `PINC1` en modo generador de fase, después con `PartsPresent
+    {SIN_COS_LUT_only}` (fase de entrada directa por AXI-Stream, sin acumulador interno) para poder
+    barrer `Δ` sin depender de ningún `PINC`.
+
+    **Hallazgo nuevo #1, confirmado con cuatro valores independientes (`PINC1` = 1, 2, 3 y 7):**
+    con un `PINC1` **pequeño** (< 2¹⁶, el acumulador nunca cambia de dirección de LUT dentro de la
+    ventana de simulación) el core devuelve `m_axis_data_tdata` con una convención de signo/orden de
+    campo **distinta** de la ya documentada y verificada en producción: sin el desfase de arranque de
+    ~655 direcciones, y con los papeles de "coseno" y "seno" intercambiados entre las dos mitades de
+    la palabra (contrastado sin ambigüedad en una dirección no degenerada, `addr=5000`, donde
+    coseno ≠ seno). Con un `PINC1` de magnitud grande (se probó tanto el valor real de producción
+    como uno sintético con los mismos bits altos pero los 16 bits bajos forzados a 1, para poder
+    barrer `Δ` de todos modos) el core vuelve a comportarse exactamente como ya documenta este
+    fichero: `hi=coseno` (signo correcto), `lo=−seno` (el signo invertido ya conocido), desfase de
+    arranque ~655 direcciones. **Conclusión: cualquier sonda futura sobre este core tiene que usar un
+    `PINC` de magnitud "de producción" — un `PINC` pequeño para simplificar el barrido, como se
+    intentó aquí primero, da resultados que no son representativos del core real.** No estaba
+    documentado en ningún sitio de este proyecto; costó tres rondas de xsim real detectarlo.
+
+    **Hallazgo nuevo #2, en modo `SIN_COS_LUT_only` (`Phase_Width=25`, sin acumulador):**
+    generar el mismo core en modo `None` confirma que `Phase_Width` no puede superar 16 en ese modo
+    (`ERROR: ... Value '25' is out of the range (3,16)`) — es decir, la tabla base sin corregir tiene
+    como mucho 16 bits de dirección, coincide con `lut_addr_bits=16` que ya usa
+    `model/drx_model/nco.py`. Con `Taylor_Series_Corrected`, el mismo core sí acepta hasta 25 bits de
+    fase de entrada — los 9 bits extra son la resolución de `Δ` que la corrección de Taylor añade
+    sobre esos mismos 16 bits de dirección base (no 16 bits de `Δ`, como asumía sin comprobar la
+    reimplementación de la entrada del 9-sep).
+
+    **Corrección sobre la primera versión de esta entrada, mismo día:** el primer barrido (tramo
+    secuencial de 140.000 muestras arrancando en 0) parecía cerrar bien, pero un segundo barrido con
+    ~6100 fases dispersas (aleatorias + puntos estructurados) sobre las 2²⁵ fases posibles dio
+    errores enormes que esta entrada atribuyó, en un primer momento, a que el core "no se comporta
+    como una función de latencia fija ante fase no monótona" — **ese hallazgo era falso, un error de
+    alineación en el script de análisis** (se restaba la `Latency` del core al índice de muestra de
+    salida, pero el testbench ya solo vuelca una línea por ciclo con `m_axis_data_tvalid` en alto, así
+    que la salida ya viene alineada 1:1 con el orden del estímulo sin ningún corrimiento adicional).
+    Corregido el script (sin tocar la sonda ni volver a simular), el mismo barrido disperso de 6106
+    fases — cubriendo el círculo completo, no un tramo local — cierra igual de bien que el tramo
+    secuencial. Queda como aviso de método, no como hallazgo del core: **al alinear entrada y salida
+    de una sonda de latencia fija, el índice de la muestra ya capturada (filtrada por `tvalid`) no se
+    vuelve a corregir por `Latency`** — restarla dos veces es el error que produjo el falso hallazgo.
+
+    **Resultado, ya sobre el círculo completo (6106 fases, `Output_Width` 16 y 18), comparando contra
+    `round(FULL·sin(θ))` / `round(FULL·cos(θ))` con la fase de entrada de 25 bits completa (no contra
+    la fórmula de PG141 `sin_lut[addr]+Δ·cos_lut[addr]` que probó la sesión del 9-sep):**
+
+    | `Output_Width` | canal | máx `|error|` | exacto | \|error\|=1 | \|error\|=2 |
+    |---|---|---|---|---|---|
+    | 16 | "seno" (`hi`) | 2 LSB | 49,1 % | 47,9 % | 2,9 % |
+    | 16 | "coseno" (`lo`) | 2 LSB | 25,1 % | 71,9 % | 3,0 % |
+    | 18 | "seno" (`hi`) | 2 LSB | 55,0 % | 41,0 % | 4,0 % |
+    | 18 | "coseno" (`lo`) | 2 LSB | 23,7 % | 72,4 % | 3,9 % |
+
+    El error nunca supera ±2 LSB en ninguno de los dos anchos, en las 6106 fases muestreadas de las
+    2²⁵ posibles. Es la misma escala de residuo pequeño-pero-no-cero que P-10 ya documentó y aceptó
+    para el modo `None` ("el core calcula sin/cos con un algoritmo propio que no coincide LSB a LSB
+    con `round(FULL·sin/cos(θ))` en coma flotante de doble precisión") — aquí queda confirmado que
+    **Taylor tiene exactamente el mismo carácter de residuo, no uno peor ni de otra naturaleza**, y
+    que el modelo correcto para reproducirlo no es reconstruir la aritmética interna de tabla+pendiente
+    de PG141 con su ancho de bits propio (lo que intentó la sesión del 9-sep, con más residuo y sin
+    llegar a esta conclusión), sino evaluar la función continua a la resolución total de 25 bits que
+    el `Δ` de 9 bits permite — mucho más simple, y con el mismo techo de error ya aceptado en el resto
+    del proyecto.
+
+    **Conclusión de esta sesión:** el punto 3 pendiente (reproducción bit-exacta de Taylor, compatible
+    con D-05) **sigue sin cerrarse en sentido estricto** — el residuo de hasta ±2 LSB no es cero en
+    ~50-75 % de las muestras — pero ya no es un misterio de qué tan grande es ni dónde: está acotado,
+    medido en las 2²⁵ fases posibles (no solo un tramo local, corrección de la versión anterior de
+    esta entrada) y es **idéntico en carácter y magnitud** al residuo que el proyecto ya acepta para
+    el modo `None` desde P-10. Eso cambia la lectura de la disyuntiva que P-11 dejaba abierta: si el
+    criterio de aceptación de L1 ya tolera este residuo para `None`, extenderlo a `Taylor` no es
+    aceptar una regresión — es aceptar la misma clase de aproximación que ya rige hoy para el resto
+    del bloque NCO. **No cambia la conclusión de rango dinámico ya cerrada**: el techo de Taylor
+    (~−88/−92 dBc) sigue siendo el mismo, esta sesión no volvió a medirlo. El hallazgo #1 (`PINC`
+    pequeño da una convención de campo/signo no representativa) sigue siendo válido y es el resultado
+    de infraestructura más reutilizable de hoy para quien vuelva a sondear este core.
+
+    **Nada comiteado se tocó**: todas las IP, testbenches y scripts de esta sesión viven en
+    `/tmp` (scratch de la sesión), no en el árbol.
+
+!!! info "16-sep-2026: sonda exploratoria de integración de M pulsos — debilita la hipótesis pesimista del presupuesto, pero no la sustituye"
+    Retoma el punto que dejaba abierto la "medición auxiliar" del 9-sep (segunda sesión): el
+    presupuesto de este documento asume que el espurio de cuantización sin dither es "una línea
+    coherente que el FFT Doppler integra igual que la señal" (mejora 0 dB con `M`) y que el de
+    `Phase_Dithering` sí baja con la ganancia del FFT — pero nadie había construido ese modelo de
+    integración, solo enunciado el argumento. Esta entrada lo construye, en Python, fuera del árbol,
+    reusando `Nco`/`NcoTaylor` de `model/drx_model/nco.py` (sin tocarlos).
+
+    **Método:** un "gate" = un offset de fase inicial fijo (una posición de rango). El NCO corre en
+    continuo entre pulsos, así que la fase en el pulso `m` del mismo gate es la del acumulador en
+    `n = m·PRI_samples`, con `PRI_samples = prf_div` (valor de registro, idéntico en las dos
+    plataformas — se usaron los dos extremos ya declarados en `config/params.toml`,
+    `prf_div_min`/`prf_div_max`, más el caso de 326 Hz que cita [D-09](decisiones.md#d-09)). Error de
+    cuantización por pulso = salida de `Nco`/`NcoTaylor` menos la referencia continua ideal
+    (`FULL·cos/sin` del ángulo de 32 bits sin truncar) — la misma definición de espurio que ya usan
+    los números de arriba. `Phase_Dithering` se modeló como ruido i.i.d. gaussiano con el rms YA
+    MEDIDO el 9-sep contra IP real (5,72 LSB, `Output_Width=16`) — un proxy de MEJOR CASO
+    (incoherencia total pulso a pulso), no una medición: el LFSR real es opaco (VHDL cifrado) y no se
+    sabe si decorrelaciona así a la cadencia real de PRI. Se barrieron 8 gates aleatorios y
+    `M` ∈ {16, 64, 256}; se midió el pico del espectro lento tanto en el bin DC como excluyéndolo
+    (el bin DC es donde cae el clutter fijo, que el propio presupuesto ya da por perdido/rechazado —
+    el bin que de verdad importa es cualquier otro, donde podría cazerse un blanco real).
+
+    **Resultado, peor caso sobre los 8 gates:**
+
+    | PRI | `M` | técnica | dBc/1 pulso | dBc/`M`, excluyendo DC | mejora |
+    |---|---|---|---|---|---|
+    | 1200 Hz | 256 | `None` | −79,3 | −95,2 | −15,9 dB |
+    | 1200 Hz | 256 | `Taylor` | −96,2 | −116,2 | −19,9 dB |
+    | 200 Hz | 256 | `None` | −79,5 | −97,8 | −18,3 dB |
+    | 200 Hz | 256 | `Taylor` | −96,2 | −107,2 | −11,0 dB |
+    | cualquiera | 256 | Dither (sintético i.i.d.) | ~−64 | ~−90 | ~−26 dB |
+
+    (tabla completa, las tres PRI × tres `M` × tres técnicas, en el script — no conservado, ver
+    "Estado" más abajo).
+
+    **Lectura, separando lo que esto sí muestra de lo que NO puede mostrar:**
+
+    - **Sí debilita la hipótesis pesimista**: ni `None` ni `Taylor` se comportan como una línea
+      perfectamente coherente que no mejora nada con `M` — en los tres PRI probados, ambos ganan
+      entre 5,5 y 20 dB al integrar 256 pulsos. La suposición binaria del presupuesto ("sin dither no
+      baja con `M`") es más pesimista que lo que este modelo simplificado predice.
+    - **Pero el efecto es errático, no una ley limpia**: la mejora depende fuertemente de qué PRI se
+      elige (5,5 a 20 dB, sin patrón monótono claro con `M`), y el pico del espectro lento no siempre
+      cae lejos de DC — para PRI=200 Hz, el pico fuera de DC es en realidad *peor* que el de DC. No es
+      un resultado que se pueda generalizar a "la PRF que sea" sin más trabajo.
+    - **Dos huecos que esto NO modela, y que importan más que el resultado numérico:**
+        1. El modelo de `NcoTaylor` usado aquí llega al piso teórico de cuantización de fase (~0,5
+           LSB, ~−96 dBc) — NO al techo real de hardware ya medido el 9-sep con `K` recalibrado
+           (1,89–5,00 LSB, −84,8/−88,4 dBc), que es el error de implementación interna del core, no
+           reproducible sin leer el VHDL cifrado. No se sabe si ESE residuo (el que de verdad limita
+           hoy) decorrelaciona igual entre pulsos — esta sonda no puede verlo.
+        2. El origen de [P-11](#p-11) (8-sep) es explícito: el error del NCO es **multiplicativo**,
+           entra mezclado con el clutter, no como piso aditivo. Esta sonda mide el espectro lento del
+           error del NCO *aislado* — no modela la modulación cruzada con un retorno de clutter fuerte,
+           que es el mecanismo real que preocupa (podría producir una banda lateral del propio clutter
+           en un bin de Doppler ajeno a DC, justo donde se buscaría un blanco débil). Construir ESE
+           modelo es un trabajo distinto y más grande.
+
+    **Conclusión:** esto no cierra ni descarta la vía de `M` pulsos — quita a la hipótesis pesimista
+    del presupuesto la certeza con la que se citaba, sin poder afirmar por eso que el problema esté
+    resuelto. Sigue sin sustituir al bloqueante real: el número de especialistas de dominio (punto 1,
+    más arriba) sigue siendo la única fuente que puede decir qué margen hace falta de verdad, y sigue
+    siendo también quien puede decir si "peor bin fuera de DC" es siquiera el criterio correcto para
+    esta cadena.
+
+    **Estado:** ningún fichero comiteado se tocó — el script vive en `/tmp` (scratch de la sesión), no
+    se conserva. `Nco`/`NcoTaylor` no se modificaron para esta sonda.
+
 ### P-12 · Presupuesto de DSP48 en ZedBoard: el diseño de 4 canales ya no cabe con holgura { #p-12 }
 
 **Estado:** cerrado para la ZedBoard, 9-sep-2026 (ver la entrada de cierre más abajo) — la

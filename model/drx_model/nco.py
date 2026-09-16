@@ -72,3 +72,77 @@ class Nco:
         addr = self.phase(n, initial) >> shift
         cos_lut, sin_lut = self.lut()
         return cos_lut[addr], sin_lut[addr]
+
+
+@dataclass(frozen=True)
+class NcoTaylor:
+    """NCO con `Noise_Shaping {Taylor_Series_Corrected}` del DDS Compiler.
+
+    A diferencia de `Nco` (modo `None`: fase truncada a `lut_addr_bits` y
+    cuantizada contra una tabla fija de ese mismo tamaño), el DDS Compiler con
+    Taylor resuelve `lut_addr_bits + delta_bits` bits de fase en vez de solo
+    `lut_addr_bits` -- PG141 lo hace con una tabla gruesa más una corrección
+    lineal, `sin(θ+Δ) ≈ sin(θ) + Δ·cos(θ)`, contra los bits que de otro modo
+    se truncarían.
+
+    Reconstruir esa aritmética interna (tabla + pendiente cuantizada, con su
+    propio ancho y redondeo) se intentó y dejó más residuo del necesario --
+    ver docs/alcance/pendientes.md#p-11, entrada del 9-sep-2026. La vía que sí
+    cierra bien, confirmada contra IP real (`dds_compiler` v6.0, modo
+    `SIN_COS_LUT_only`, sonda fuera del árbol, 11-sep-2026, misma referencia):
+    tratar la fase como resuelta a `lut_addr_bits + delta_bits` bits sin más,
+    y evaluar el seno/coseno continuo a esa resolución -- exactamente lo que
+    hace `generate()` aquí. `delta_bits=9` es el valor confirmado contra la
+    IP real para la configuración de este proyecto (`Output_Width` 16 y 18):
+    el mismo core con `Noise_Shaping {None}` rechaza más de 16 bits totales de
+    fase, y con Taylor acepta hasta 25 -- 16 + 9, no 16 + 16 como asumía sin
+    comprobar el intento del 9-sep.
+
+    NO es bit-exacto. El residuo contra la IP real, medido en el círculo
+    completo de fase (6106 muestras dispersas, ambos anchos de salida), es de
+    hasta ±2 LSB en el 25-55 % de las muestras según canal y ancho -- la misma
+    escala de "el core calcula con un algoritmo propio que no coincide LSB a
+    LSB" que P-10 ya documentó y aceptó para el modo `None`, no un límite
+    propio de Taylor. `generate()` no es compatible con la comparación bit a
+    bit de L1 (D-05) hasta que el proyecto decida aceptar ese mismo residuo
+    para el bloque NCO -- ver P-11. Nada de esto está conectado hoy a
+    `config/params.toml` ni a `Ddc`/`drx_ddc_top.sv`: es una clase nueva,
+    independiente de `Nco`, que no cambia el comportamiento por defecto.
+    """
+
+    phase_bits: int
+    phase_inc: int
+    out_bits: int
+    lut_addr_bits: int = 16
+    delta_bits: int = 9
+
+    @classmethod
+    def from_params(
+        cls, params: Params, lut_addr_bits: int = 16, delta_bits: int = 9
+    ) -> NcoTaylor:
+        return cls(
+            phase_bits=int(params.invariant["nco_phase_bits"]),
+            phase_inc=params.nco_phase_inc,
+            out_bits=int(params.invariant["nco_out_bits"]),
+            lut_addr_bits=lut_addr_bits,
+            delta_bits=delta_bits,
+        )
+
+    def phase(self, n: int, initial: int = 0) -> np.ndarray:
+        """Fase del acumulador para `n` muestras, envuelta a `phase_bits`."""
+        mask = (1 << self.phase_bits) - 1
+        steps = initial + self.phase_inc * np.arange(n, dtype=np.int64)
+        return (steps & mask).astype(np.int64)
+
+    def generate(self, n: int, initial: int = 0) -> tuple[np.ndarray, np.ndarray]:
+        """`(cos, sin)` cuantizados, a la resolución que Taylor sí resuelve."""
+        used_bits = self.lut_addr_bits + self.delta_bits
+        shift = self.phase_bits - used_bits
+        if shift < 0:
+            raise ValueError("lut_addr_bits + delta_bits no puede superar phase_bits")
+        resolved = self.phase(n, initial) >> shift
+        angle = 2.0 * np.pi * resolved.astype(np.float64) / (1 << used_bits)
+        _, high = fixed.limits(self.out_bits)
+        cos = np.round(high * np.cos(angle)).astype(np.int64)
+        sin = np.round(high * np.sin(angle)).astype(np.int64)
+        return cos, sin
