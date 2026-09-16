@@ -94,6 +94,37 @@ original, menos JESD y menos DMA.
     pero ninguna de las dos configs de arriba es un subconjunto directo suyo — hace falta un
     top-level nuevo para canales heterogéneos, todavía sin escribir.
 
+!!! success "16-sep-2026: degradaciones analógicas inyectadas en los vectores L1, verificadas contra xsim real"
+    `tools/gen_l1_vectors.py::_cases()` suma cuatro casos a los cuatro ya existentes, cada uno con
+    una sola degradación deliberada sobre un tono ya cubierto — los mismos parámetros que ya usan
+    `model/tests/test_chain.py` y `model/tests/test_gating_y_vectores.py`, para que L1 caracterice
+    contra la IP real justo lo que L0 ya caracteriza contra el modelo:
+
+    - `tono_con_ruido` — AWGN a SNR = 10 dB.
+    - `tono_con_offset_dc` — offset de continua a −12 dBFS sobre un tono a −6 dBFS.
+    - `tono_desbalanceado` — desbalance I/Q de un frontal en cuadratura (1 dB / 3°), aplicado en
+      banda base antes de subir a IF. El desplazamiento en banda base usado es 0,001 (el mismo que ya
+      usa `tono_desplazado`), no el 0,01 del test de `vectors.py` — comprobado contra el modelo antes
+      de fijarlo: 0,01 cae fuera de la banda de paso de esta cadena de diezmado y el DDC lo deja en
+      cero, así que no serviría como caso de aceptación.
+    - `tono_sobre_escala` — entrada a +6 dBFS: el ADC real satura, no envuelve.
+
+    **Corridos los cuatro en modo fino contra xsim real** (`tcl/sim_l1.tcl`, IP de Xilinx, no el
+    modelo solo):
+
+    | Caso | Discrepancias | Lectura |
+    |---|---|---|
+    | `tono_con_ruido__fine` | 56/315 (18 %) | ±2-3 LSB — misma clase de residuo que [P-10](../alcance/pendientes.md#p-10) |
+    | `tono_con_offset_dc__fine` | **0/315** | exacto bit a bit |
+    | `tono_desbalanceado__fine` | 60/315 (19 %) | ±2-3 LSB — misma clase |
+    | `tono_sobre_escala__fine` | 307/315 (97 %) | degenerado (Q≈0 en régimen permanente), igual que `tono_if__fine` sin saturar — la saturación en sí no introduce nada nuevo, el residuo es el del NCO ya conocido |
+
+    Ninguna discrepancia es un bug nuevo: todas caen en la misma clase de residuo de cuantización del
+    NCO que [P-10](../alcance/pendientes.md#p-10) ya documentó y aceptó como suelo del propio bloque,
+    no en el mecanismo de la degradación inyectada. El modo grueso (`__coarse`) de estos cuatro casos
+    no se corrió todavía — es el siguiente paso obvio, mismo patrón que ya usó P-12 para completar su
+    matriz, pero no bloquea nada de lo de arriba.
+
 ## Z2 — Motor de timing, triggers y PRF (semanas 9–13) { #z2 }
 
 Trabajo:

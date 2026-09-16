@@ -38,6 +38,17 @@ N_SAMPLES = 65536
 SEED = 20260830
 
 
+#: Parámetros de las degradaciones inyectadas, iguales a los que ya usan los
+#: tests del modelo dorado (model/tests/test_chain.py,
+#: model/tests/test_gating_y_vectores.py) para que L1 caracterice exactamente
+#: lo que L0 ya caracteriza, contra la IP real en vez de contra el modelo solo.
+_RUIDO_SNR_DB = 10.0
+_OFFSET_DC_DBFS = -12.0
+_DESBALANCE_GANANCIA_DB = 1.0
+_DESBALANCE_FASE_DEG = 3.0
+_SOBRE_ESCALA_DBFS = 6.0
+
+
 def _cases(params: params_mod.Params) -> dict[str, object]:
     """Los casos de L1, por nombre.
 
@@ -69,6 +80,40 @@ def _cases(params: params_mod.Params) -> dict[str, object]:
         "tono_desplazado_neg": vectors.tone(
             params, N_SAMPLES, freq_norm=float(params.if_norm) - 0.001
         ),
+        # Degradaciones del frontal analógico (D9, registro delta de
+        # portabilidad): desde Z1 el DDC tiene que caracterizarse bajo estas
+        # condiciones contra la IP real, no solo contra el modelo. Cada una
+        # parte de un tono ya cubierto arriba y le añade una sola degradación,
+        # para no mezclar dos efectos en la misma comparación bit a bit.
+        "tono_con_ruido": vectors.add_noise(
+            vectors.tone(params, N_SAMPLES),
+            snr_db=_RUIDO_SNR_DB,
+            params=params,
+            seed=SEED,
+        ),
+        "tono_con_offset_dc": vectors.add_dc_offset(
+            vectors.tone(params, N_SAMPLES, dbfs=-6.0),
+            dbfs=_OFFSET_DC_DBFS,
+            params=params,
+        ),
+        # Desbalance I/Q de un frontal en cuadratura, aplicado en banda base
+        # antes de subir a IF (ver el docstring de vectors.modulated_tone).
+        # freq_norm=0.001 de desplazamiento en banda base, para quedar dentro
+        # de la banda de paso de la cadena de diezmado — el mismo desplazamiento
+        # que ya usa "tono_desplazado", no el 0,01 del test de vectors.py (ese
+        # prueba solo la función, no la cadena: 0,01 cae fuera de la banda de
+        # paso y el DDC lo deja en cero, verificado antes de fijar este valor).
+        "tono_desbalanceado": vectors.modulated_tone(
+            params,
+            N_SAMPLES,
+            baseband_norm=0.001,
+            gain_imbalance_db=_DESBALANCE_GANANCIA_DB,
+            phase_imbalance_deg=_DESBALANCE_FASE_DEG,
+        ),
+        # Entrada sobre-escala: el ADC real satura, no envuelve. Ejercita el
+        # reporte de overflow de principio a fin de la cadena, no solo en
+        # `fixed.saturate` (ya cubierto en model/tests).
+        "tono_sobre_escala": vectors.tone(params, N_SAMPLES, dbfs=_SOBRE_ESCALA_DBFS),
     }
 
 
