@@ -192,6 +192,11 @@ Trabajo:
 **Hito ZM4 (fin S24):** rayos completos consumidos por un stub de DSP sobre 1GbE, con configuración
 íntegra desde el par remoto y el lazo AFC cerrado. Equivalente en ZedBoard de M2 + M3.
 
+!!! warning "El stub de DSP de este hito no es el banco de pruebas extremo a extremo"
+    Ningún plan de los tres proyectos apunta hoy la salida real de la ZedBoard (`vector_source`,
+    datos generados en el PL) contra el DSP y el RCP reales — ver
+    [P-10](../alcance/pendientes.md#p-10). Cerrar ZM4 contra el stub no cierra ese hueco.
+
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
 Trabajo:

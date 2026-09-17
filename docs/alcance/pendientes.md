@@ -1584,3 +1584,46 @@ es el **techo**, no un promedio.
 | El 7Z020-1 no cierra a 100 MHz con 4 canales | Media | Baja | Bajar a 62,5 MHz o a 2 canales; numéricamente idéntico |
 | Ancho de banda de DDR insuficiente para reproducir 4 canales | Media | Baja | Los modos BRAM-loop y Throttled ya lo cubren |
 | El equipo confunde «validado en ZedBoard» con «validado» | Media | Alta | El registro delta se lee en cada demo de sprint; ningún hito se declara sin él |
+
+## Integración extremo a extremo con DSP y RCP reales
+
+### P-10 · Ningún plan conecta la ZedBoard real con DSP y RCP reales { #p-10 }
+
+**Estado:** abierto, identificado 2026-09-17 · **Dueño:** los tres equipos (DRx + DSP + RCP), no
+tiene dueño único hoy · **Bloquea:** poder ejercitar con `vector_source` (datos generados en el PL,
+sin ADC ni JESD204B — ver [P-03](#p-03), que este pendiente no sustituye ni mitiga) todo lo que la
+ZedBoard sí permite probar, contra los otros dos proyectos reales en vez de contra un stub.
+
+Revisión de integración cruzada (2026-09-17) encontró que **cada proyecto para su cadena de
+pruebas en su propia frontera**, y ninguno de los tres planes la cruza:
+
+- **Z4 de este proyecto** (`docs/implementacion/fases.md#z4`) fija el hito ZM4 como «rayos
+  completos consumidos por **un stub de DSP** sobre 1GbE» — no el binario real del proyecto DSP.
+- El plan del **DSP** (`dsp-plan.md` §8.2, Fase 1) valida su M1 contra su propio **simulador
+  sintético de I/Q**, no contra tráfico real de un DRx corriendo en hardware.
+- El **RCP** (`lamula-rcp/docs/alcance/pendientes.md`, PEND-RCP-05 y PEND-RCP-13) solo ha ejercido
+  `adapters/dsp/moment_stream_receiver.py` contra un stub propio y contra `radar_emulator` — ninguno
+  de los dos tiene relación con este proyecto.
+- Los tres planes maestros (`rcp-plan.md`, `dsp-plan.md` de LAMULA DSP) fijan el criterio de éxito
+  de mes 8 como «validado extremo a extremo **contra simuladores propios**»; el hardware real queda
+  explícitamente para «field commissioning», **después** del mes 8, sin fecha ni plan operativo —
+  solo la promesa de un documento de plan (`FPGA-commissioning dry-run plan`, M4 de ambos planes).
+
+**Lo que sí se puede probar hoy, sin esperar a la ZU9 ni al frontal analógico real:** todo lo que
+está aguas abajo de la SSA (`docs/plataforma/fuente-de-muestras.md`) es indiferente a si la fuente
+es `vector_source` o `jesd204b_source`. Eso incluye, con vectores conocidos inyectados desde el
+PL: la cadena DDC completa, el range gating en los dos tamaños de celda, el motor de timing/PRF/
+triggers, el etiquetado az/el por los lectores SSI, el ensamblado de rayos en FreeRTOS, el AXI DMA,
+el framing DRx↔DSP real sobre 1GbE físico (no un stub), la ingesta y los algoritmos del DSP real
+alimentados por la cadencia y el jitter de hardware de verdad (no sintéticos), el tráfico real
+DSP↔RCP, y el control/archivo/MMI del RCP real. **Lo que no se puede probar así, y sigue siendo
+[P-03](#p-03):** JESD204B, clocking/SYSREF, 250 MSPS, el frontal analógico y el DAC AD9129.
+
+**Condición de cierre:** un hito conjunto, acordado por los tres equipos, que sustituya el «stub de
+DSP» del ZM4 de este proyecto por el binario real del DSP, y que ese DSP real alimente al RCP real
+(no a su stub ni a `radar_emulator`) — banco de pruebas de hardware-in-the-loop con datos 100%
+generados en el PL. Hoy no existe ni la fecha ni el documento que decida en qué semana de cuál de
+los tres calendarios (28 de este proyecto, 34 de DSP, 34 de RCP) entra ese hito. Ver también la nota
+correspondiente en `lamula-dsp/docs/algorithms/roadmap.md` (sección "Abierto (cross-proyecto):
+banco de pruebas extremo a extremo contra ZedBoard real") y PEND-RCP-13 en
+`lamula-rcp/docs/alcance/pendientes.md`.
