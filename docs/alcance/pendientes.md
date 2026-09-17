@@ -1587,7 +1587,7 @@ es el **techo**, no un promedio.
 
 ## Integración extremo a extremo con DSP y RCP reales
 
-### P-10 · Ningún plan conecta la ZedBoard real con DSP y RCP reales { #p-10 }
+### P-13 · Ningún plan conecta la ZedBoard real con DSP y RCP reales { #p-13 }
 
 **Estado:** abierto, identificado 2026-09-17 · **Dueño:** los tres equipos (DRx + DSP + RCP), no
 tiene dueño único hoy · **Bloquea:** poder ejercitar con `vector_source` (datos generados en el PL,

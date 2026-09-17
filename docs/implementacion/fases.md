@@ -195,7 +195,7 @@ Trabajo:
 !!! warning "El stub de DSP de este hito no es el banco de pruebas extremo a extremo"
     Ningún plan de los tres proyectos apunta hoy la salida real de la ZedBoard (`vector_source`,
     datos generados en el PL) contra el DSP y el RCP reales — ver
-    [P-10](../alcance/pendientes.md#p-10). Cerrar ZM4 contra el stub no cierra ese hueco.
+    [P-13](../alcance/pendientes.md#p-13). Cerrar ZM4 contra el stub no cierra ese hueco.
 
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
