@@ -121,9 +121,33 @@ original, menos JESD y menos DMA.
 
     Ninguna discrepancia es un bug nuevo: todas caen en la misma clase de residuo de cuantización del
     NCO que [P-10](../alcance/pendientes.md#p-10) ya documentó y aceptó como suelo del propio bloque,
-    no en el mecanismo de la degradación inyectada. El modo grueso (`__coarse`) de estos cuatro casos
-    no se corrió todavía — es el siguiente paso obvio, mismo patrón que ya usó P-12 para completar su
-    matriz, pero no bloquea nada de lo de arriba.
+    no en el mecanismo de la degradación inyectada.
+
+!!! success "18-sep-2026: matriz completada — modo grueso (`__coarse`) de los cuatro casos, mismo patrón que P-12"
+    Los cuatro casos ya se habían corrido en modo `__coarse` contra xsim real el propio 16-sep-2026,
+    en la misma sesión que cerró el bloque anterior — quedó sin documentar. Verificado antes de
+    escribir esta entrada que `rtl/`, `tcl/`, `config/`, `ip/`, `sim/`, `model/` y `tools/` no
+    cambiaron una línea desde ese commit (`git diff --stat b762171 HEAD` vacío para esos directorios),
+    así que los resultados siguen siendo válidos contra el árbol actual — no hubo que volver a
+    correrlos. Contraste adicional: `tono_if__coarse` (3/157), `dos_tonos__coarse` (7/157) y
+    `tono_desplazado__coarse` (18/157), ya documentados en [P-10](../alcance/pendientes.md#p-10) y en
+    el mensaje del commit `21ba516`, coinciden cifra a cifra con los logs recuperados — confirma que
+    son corridas genuinas de este mismo flujo, no artefactos de otra cosa.
+
+    | Caso | Discrepancias | Lectura |
+    |---|---|---|
+    | `tono_con_ruido__coarse` | 20/157 (13 %) | ±2-5 LSB — misma clase de residuo que [P-10](../alcance/pendientes.md#p-10); proporción menor que en fino (18 %), consistente con menos muestras y distinta fase de aliasing del residuo del NCO, no con un mecanismo nuevo |
+    | `tono_con_offset_dc__coarse` | **0/157** | exacto bit a bit, igual que en fino |
+    | `tono_desbalanceado__coarse` | 31/157 (20 %) | ±2-5 LSB — misma clase, proporción parecida a fino (19 %) |
+    | `tono_sobre_escala__coarse` | 145/157 (92 %) | degenerado (Q≈0 en régimen permanente), igual lectura que en fino (97 %) — la saturación no introduce nada nuevo |
+
+    Mismo veredicto que en modo fino: ninguna discrepancia es un mecanismo nuevo, todas caen en el
+    residuo de cuantización del NCO ya aceptado. Con esto la matriz de ocho corridas (cuatro casos ×
+    dos modos) que anotaba el bloque anterior como «siguiente paso obvio» queda completa y
+    documentada. **Esto no cierra ZM1**: el hito exige coincidencia bit a bit y tres de los ocho casos
+    (`tono_con_ruido`, `tono_desbalanceado`, `tono_sobre_escala`, en ambos modos) siguen con residuo
+    distinto de cero. Sigue pendiente, como ya dejó anotado el cierre de P-10, la decisión del equipo
+    de DSP sobre si ese nivel de residuo bloquea ZM1 o amerita redefinir el criterio bit a bit.
 
 ## Z2 — Motor de timing, triggers y PRF (semanas 9–13) { #z2 }
 
