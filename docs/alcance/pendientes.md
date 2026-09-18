@@ -952,11 +952,17 @@ abierto. **Dueño:** equipo (RTL) + especialistas de dominio (el número de supr
     cifra que el modo `None` ya documentaba (306/315) para este mismo caso degenerado (P-10). No es
     una sorpresa ni una regresión: confirma en hardware real lo que D-11 ya asumía del modelo.
 
-    **Falta correr el resto de la matriz L1** (7 casos × 2 modos que quedan, de los 8×2 totales) —
-    cada corrida de xsim tardó ~36 min de tiempo de simulación en esta máquina (más que los ~20-25
-    min que tomaba el modo `None`, con la carga adicional de las corridas de regeneración de IP de
-    hoy), así que la matriz completa es un compromiso de varias horas, no de minutos. Queda
-    pendiente decidir cuándo se lanza esa corrida completa.
+    **Matriz completa lanzada, 18-sep-2026:** cada corrida de xsim tarda ~36 min en esta máquina
+    (más que los ~20-25 min que tomaba el modo `None`), así que las 15 corridas que quedan (8
+    casos × 2 modos, menos `tono_if__fine` de arriba) son un compromiso de varias horas. Corre
+    desatendida, un caso a la vez, y cada fila de la tabla de abajo se comitea y se sube en cuanto
+    termina esa corrida — si esto se lee a medio llenar, la corrida sigue en curso o se cortó; el
+    último commit con este mensaje dice cuál fue la última completada.
+
+    | Caso | Discrepancias | Lectura |
+    |---|---|---|
+    | `tono_if__fine` | 303/315 (96 %) | ±1-2 LSB, misma clase que `None` (P-10) |
+    <!-- L1_TAYLOR_MATRIX_MARKER -->
 
 **Origen, 8-sep-2026 (sesión):** el marco de tolerancia que se venía usando para el residuo de
 P-10 (comparar contra el MDS) estaba mal planteado — el error del NCO es multiplicativo (entra
