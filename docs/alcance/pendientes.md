@@ -962,6 +962,7 @@ abierto. **Dueño:** equipo (RTL) + especialistas de dominio (el número de supr
     | Caso | Discrepancias | Lectura |
     |---|---|---|
     | `tono_if__fine` | 303/315 (96 %) | ±1-2 LSB, misma clase que `None` (P-10) |
+    | `tono_if__coarse` | 3/157 (2 %) | ±0-5 LSB (primeras 16 impresas), misma clase que `None` (P-10) |
     <!-- L1_TAYLOR_MATRIX_MARKER -->
 
 **Origen, 8-sep-2026 (sesión):** el marco de tolerancia que se venía usando para el residuo de
