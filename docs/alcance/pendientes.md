@@ -943,9 +943,20 @@ abierto. **Dueño:** equipo (RTL) + especialistas de dominio (el número de supr
     que el de `None`, y ZM1 sigue sin cerrarse por el mismo motivo que documenta
     [Fases, Z1](../implementacion/fases.md#z1).
 
-    **Migración pendiente de ejecutar** (ver alcance completo en D-11): `model/drx_model/chain.py`
-    y `tcl/gen_ip.tcl` cambiados; huellas `GOLDEN` de `model/tests/test_chain.py` actualizadas;
-    falta correr la matriz L1 completa contra xsim real bajo el modo nuevo.
+    **Migración ejecutada, 18-sep-2026 (misma sesión):** `ip/dds_compiler_nco.xci` regenerado de
+    verdad contra Vivado 2022.2 real (`4c7eae5`, `a7e5681`) — `Latency` sube de 8 a 9,
+    `C_NOISE_SHAPING` de 0 a 2, exactamente lo que ya medían las sondas fuera del árbol de esta
+    entrada. Los otros tres XCI (CIC, FIR droop, FIR semibanda) regeneran byte a byte idénticos —
+    confirma que el cambio no tocó nada fuera del NCO. Sanidad contra xsim real, un caso
+    (`tono_if__fine`): **303/315 discrepancias (96 %), ±1-2 LSB** — la misma clase y casi la misma
+    cifra que el modo `None` ya documentaba (306/315) para este mismo caso degenerado (P-10). No es
+    una sorpresa ni una regresión: confirma en hardware real lo que D-11 ya asumía del modelo.
+
+    **Falta correr el resto de la matriz L1** (7 casos × 2 modos que quedan, de los 8×2 totales) —
+    cada corrida de xsim tardó ~36 min de tiempo de simulación en esta máquina (más que los ~20-25
+    min que tomaba el modo `None`, con la carga adicional de las corridas de regeneración de IP de
+    hoy), así que la matriz completa es un compromiso de varias horas, no de minutos. Queda
+    pendiente decidir cuándo se lanza esa corrida completa.
 
 **Origen, 8-sep-2026 (sesión):** el marco de tolerancia que se venía usando para el residuo de
 P-10 (comparar contra el MDS) estaba mal planteado — el error del NCO es multiplicativo (entra
