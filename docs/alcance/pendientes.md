@@ -1625,5 +1625,46 @@ DSP» del ZM4 de este proyecto por el binario real del DSP, y que ese DSP real a
 generados en el PL. Hoy no existe ni la fecha ni el documento que decida en qué semana de cuál de
 los tres calendarios (28 de este proyecto, 34 de DSP, 34 de RCP) entra ese hito. Ver también la nota
 correspondiente en `lamula-dsp/docs/algorithms/roadmap.md` (sección "Abierto (cross-proyecto):
-banco de pruebas extremo a extremo contra ZedBoard real") y PEND-RCP-13 en
+banco de pruebas extremo a extremo contra ZedBoard real") y PEND-RCP-13/PEND-RCP-14 en
 `lamula-rcp/docs/alcance/pendientes.md`.
+
+**Plan por fases (2026-09-17), para dar contenido concreto a la condición de cierre de arriba.**
+Ninguna fase depende del frontal analógico; todas caen dentro del límite de [P-03](#p-03). Ninguna
+está agendada en ningún calendario todavía — esto es la propuesta, no un compromiso de fecha.
+
+- **Fase A — cadena DRx sola, en hardware real.** Z1→Z2→Z3 tal como ya están planeados (P-10/11/12
+  en marcha). Sin diseño nuevo.
+- **Fase B — DSP real contra tráfico real de esta placa, selección de vector local/manual.**
+  Completar Z4 apuntado al binario real de DSP (no al stub); `crates/ingest` de ese proyecto
+  validado contra cadencia/jitter/contrapresión reales en vez de su simulador sintético. Selección
+  de qué vector reproduce `vector_source`: recarga de DDR/SD + rearranque, o registro AXI-Lite por
+  JTAG — sin RCP ni contrato nuevo todavía.
+- **Fase C — RCP real contra ese DSP real.** `adapters/dsp/wire.py`/`moment_stream_receiver.py` del
+  RCP contra el DSP real (cierra el resto de PEND-RCP-05); Level-II y feed RDA/ORPG del RCP
+  ejercitados con radiales de cadencia/jitter reales, no sintéticos (estresa PEND-RCP-12). Ver
+  PEND-RCP-14 del RCP: el `status`/`bite_event` de este contrato no llega hoy a ningún sitio del
+  lado RCP.
+- **Fase D — selección de señal de prueba desde el RCP, como función BITE permanente del
+  operador.** Decisión del usuario (2026-09-17): esto **no** es una herramienta de desarrollo
+  desechable, es una capacidad de auto-prueba del operador, útil también en comisionamiento de
+  campo con hardware real. Diseño propuesto, **pendiente de ADR propio antes de tocar el
+  schema** (mismo criterio que D-08 para el contrato v0.1 — esto es un cambio de formato, sube
+  `version_minor`):
+    - **DRx** (dueño del contrato): mensaje nuevo `down`, p. ej. `test_stimulus_select` —
+      `vector_id` (u16, catálogo en SD/DDR) y `repeat` (bool). Reutiliza el catálogo de
+      degradaciones que **ya existe** en `tools/gen_l1_vectors.py::_cases()` (ruido, offset DC,
+      desbalance I/Q, saturación) en vez de inventar uno nuevo.
+    - **DSP**: relay puro del `command` de su mensaje `control` (`dsp_rcp`, ya tiene el campo
+      extensible) hacia este mensaje nuevo — no toca el pipeline de moments.
+    - **RCP**: panel nuevo en la MMI (BITE self-test / inyector de señal), arma el catálogo y
+      dispara.
+    - Esto convierte el catálogo de vectores de `gen_l1_vectors.py` en producto, no solo en
+      fixture de test — al escribir el ADR, revisar si eso cambia algo de su mantenimiento.
+- **Fase E — red y resistencia con hardware real.** Throughput real sobre el PHY 1GbE contra la
+  estimación de `## Presupuesto de 1GbE` de este documento (hoy es papel); soak/endurance bajo
+  jitter real, no simulado.
+- **Fase F (stretch, no bloqueante) — sincronizar los dos dobles de la antena.** `radar_emulator`
+  (Modbus, lo que mueve/lee el RCP) y el emulador SSI en fabric de esta placa (lo que tagea az/el
+  este proyecto) son dos simuladores independientes de la misma antena física, sin verdad
+  compartida. Un HIL completo con "el RCP mueve, el DRx tagea correcto" pide un puente entre los
+  dos. No bloquea A-E: la cadena de señal se valida con az/el fijos en el emulador SSI.
