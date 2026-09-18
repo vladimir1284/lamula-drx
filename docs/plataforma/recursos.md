@@ -11,9 +11,9 @@
 
     | Bloque | DSP48 medido |
     |---|---|
-    | Un canal DDC completo (NCO + mixer + CIC + FIR-droop + FIR-semibanda + escalado de ganancia, dos ramas I/Q), `Noise_Shaping {None}` (config actual) | **50** |
-    | El mismo canal, NCO en `Noise_Shaping {Taylor_Series_Corrected}` | **53** (NCO: 0 → 3 DSP48; a cambio libera 7 RAMB36) |
-    | **4 canales Rx** (`drx_ddc_quad_top`, config actual — medido, no extrapolado) | **200 / 220 (91 %)** |
+    | Un canal DDC completo (NCO + mixer + CIC + FIR-droop + FIR-semibanda + escalado de ganancia, dos ramas I/Q), `Noise_Shaping {None}` | **50** |
+    | El mismo canal, NCO en `Noise_Shaping {Taylor_Series_Corrected}` (config actual desde [D-11](../alcance/decisiones.md#d-11), 18-sep-2026) | **53** (NCO: 0 → 3 DSP48; a cambio libera 7 RAMB36) |
+    | **4 canales Rx** (`drx_ddc_quad_top`, `None` — medido, no extrapolado) | **200 / 220 (91 %)** |
     | 4 canales Rx + Taylor en los 4 NCO (extrapolado desde el delta medido de 1 canal) | 212 / 220 (96 %) |
     | 5 canales (si el conversor de muestra de Tx también necesita cadena DDC completa — **no decidido**, ver A10) | **250 / 220 — no cabe**, sin tocar Taylor |
     | 5 canales + Taylor | **265 / 220 — no cabe**, 45 DSP48 por encima |

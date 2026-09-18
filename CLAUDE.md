@@ -58,7 +58,7 @@ Lo que sí está hecho y verificado:
 - El sitio de documentación se construye y se despliega solo a
   <https://lamula-drx-docs.pages.dev> en cada push a `main` que toque `docs/`. Detalles,
   credenciales y deuda conocida del CI en `docs/implementacion/infraestructura.md`.
-- El plan de 28 semanas (Z0–Z5), las diez decisiones congeladas, el plan de verificación y el
+- El plan de 28 semanas (Z0–Z5), las once decisiones congeladas, el plan de verificación y el
   registro delta de portabilidad están escritos y publicados.
 - Existe un brief de investigación ejecutable para el hallazgo P-01 en
   `research/p-01-orpg-gate-spacing.md`.
@@ -66,7 +66,7 @@ Lo que sí está hecho y verificado:
 ## Orden de lectura
 
 1. `docs/alcance/contexto.md` — qué es y qué no es, y la relación con los proyectos DSP y RCP.
-2. `docs/alcance/decisiones.md` — las diez decisiones congeladas (D-01…D-10). Ninguna se revierte
+2. `docs/alcance/decisiones.md` — las once decisiones congeladas (D-01…D-11). Ninguna se revierte
    sin discutirlo.
 3. `docs/alcance/pendientes.md` — hallazgos abiertos (P-01…P-06), supuestos de entorno a verificar y
    riesgos de la estrategia ZedBoard.

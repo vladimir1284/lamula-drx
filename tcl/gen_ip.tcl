@@ -150,6 +150,12 @@ proc veo_port_width {veo_path port_name} {
 # en régimen permanente pasa de +3 LSB de sesgo a 0 exacto (`I` mantiene un
 # residuo de -2, mismo orden que el suelo de cuantización ya caracterizado).
 # Detalle completo, con los números, en docs/alcance/pendientes.md (P-10).
+#
+# NO CAMBIA con Taylor (ver abajo): recalibrado el 9-sep-2026 con
+# `Noise_Shaping {Taylor_Series_Corrected}` activo, el mejor K sigue siendo
+# 655 (medido como 64881 ≡ -655 mod 65536, mismo signo que ya documenta el
+# hallazgo #2 de arriba) para los dos anchos de salida probados. Detalle en
+# docs/alcance/pendientes.md (P-11).
 set NCO_LUT_OFFSET_K 655
 set NCO_POFF [expr {($NCO_LUT_OFFSET_K % 65536) << 16}]
 
@@ -172,6 +178,15 @@ create_ip -name dds_compiler -vendor xilinx.com -library ip -version 6.0 \
 # latencia FIJA (`Latency`, ver XCI) y sin FIFO de por medio, así que la
 # primera muestra válida tras `aresetn` corresponde de verdad a fase 0 — el
 # mezclador ya no necesita autocalibrarse contra un sesgo de arranque.
+#
+# `Noise_Shaping {Taylor_Series_Corrected}` (D-11, 18-sep-2026): modo
+# principal del NCO desde esta decisión, en vez de `{None}` (el valor de
+# fábrica que documentaba P-10 hasta ahora). Sube `Latency` de 8 a 9 ciclos
+# -- no hace falta fijarlo aparte, lo decide el propio core -- y reduce el
+# residuo de cuantización medido de ~5,7 a ~1,15 LSB rms (P-11) sin mover
+# `NCO_LUT_OFFSET_K` (ver el comentario de arriba). Coste: +3 DSP48 / +1
+# RAMB18 (0,5 tile) por canal, ya dentro del presupuesto de 3 canales de
+# ZedBoard (P-12).
 set_property -dict [list \
   CONFIG.Parameter_Entry  {Hardware_Parameters} \
   CONFIG.Output_Selection {Sine_and_Cosine} \
@@ -186,6 +201,7 @@ set_property -dict [list \
   CONFIG.Has_TREADY       {false} \
   CONFIG.Phase_offset     {Fixed} \
   CONFIG.POFF1            [to_binary $NCO_POFF $::drx::NCO_PHASE_BITS] \
+  CONFIG.Noise_Shaping    {Taylor_Series_Corrected} \
 ] [get_ips dds_compiler_nco]
 
 # --- CIC Compiler: N/R/M fijos, precisión completa a la salida --------------

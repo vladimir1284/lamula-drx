@@ -22,7 +22,7 @@ import numpy as np
 from drx_model import fir as fir_mod
 from drx_model import fixed
 from drx_model.cic import Cic
-from drx_model.nco import Nco
+from drx_model.nco import NcoTaylor
 from drx_model.params import Params
 
 MODE_FINE = "fine"
@@ -56,7 +56,7 @@ class Ddc:
 
     params: Params
     mode: str = MODE_FINE
-    nco: Nco = field(init=False)
+    nco: NcoTaylor = field(init=False)
     cic: Cic = field(init=False)
     fir: fir_mod.Fir = field(init=False)
     halfband: fir_mod.Fir = field(init=False)
@@ -67,7 +67,7 @@ class Ddc:
         if self.mode not in (MODE_FINE, MODE_COARSE):
             raise ValueError(f"modo desconocido: {self.mode!r}")
         chain = self.params.chain
-        self.nco = Nco.from_params(self.params)
+        self.nco = NcoTaylor.from_params(self.params)
         self.cic = Cic(
             stages=int(chain["cic_stages"]),
             rate=int(chain["cic_rate"]),

@@ -157,3 +157,42 @@ contrato DRx↔DSP. Es un caso de prueba de aceptación y se implementa entero e
 A 100 MHz la salida de fabric es `100e6/208 × 4 B × 4 ch = 7,69 MB/s = 61,5 Mbps`, muy por debajo
 de los 154 Mbps reales. Los ensayos de throughput sobre el camino de fabric dilatado **no son
 representativos** y hay que desacoplarlos. Ver [Fases, Z5](../implementacion/fases.md#throughput).
+
+## D-11 · `Noise_Shaping {Taylor_Series_Corrected}` es el modo principal del NCO { #d-11 }
+
+**Decisión, 18-sep-2026 (vladimir, en sesión):** de aquí en adelante, el DDS Compiler del NCO se
+genera con `Noise_Shaping {Taylor_Series_Corrected}`, no con el modo `None` que documentaba
+[P-10](pendientes.md#p-10) hasta ahora. `Output_Width` se queda en 16 — esta decisión no toca el
+ancho de salida, y cambiarlo es un asunto aparte con su propio ripple (`rtl/drx_round.sv`,
+`rtl/drx_ddc_mixer.sv`, `rtl/drx_ddc_top.sv`, ver [P-11](pendientes.md#p-11)).
+
+Lo que [P-11](pendientes.md#p-11) ya había medido, contra xsim real, antes de esta decisión:
+
+- Techo de error frente al modo `None`: de ~5,7 LSB rms a **1,15 LSB rms / 1,89 LSB pico**
+  (`Output_Width=16`), −84,8/−89,1 dBc.
+- `NCO_LUT_OFFSET_K` **no cambia**: 655 ya comitteado sigue siendo el valor correcto con Taylor
+  (`64881 ≡ −655 mod 65536`, confirmado contra xsim real el 9-sep-2026, segunda sesión).
+- Coste de recursos: +3 DSP48 / +1 RAMB18 (0,5 tile) por canal frente a `None`. Con la config de 3
+  canales de ZedBoard ya decidida (ver el cierre de P-12 en `pendientes.md`), el presupuesto queda
+  en 159/220 DSP48 (72 %) — margen real, no al límite.
+- La reproducción bit-exacta de Taylor en el modelo dorado (`NcoTaylor` en
+  `model/drx_model/nco.py`) **no cierra en sentido estricto**: residuo de hasta ±2 LSB en 25-75 %
+  de las muestras, contra las 2²⁵ fases posibles del círculo completo. Es, medido, **la misma clase
+  y magnitud de residuo** que el proyecto ya acepta para el modo `None` desde P-10 — no una
+  regresión nueva.
+
+**Lo que esta decisión NO resuelve**, y sigue abierto exactamente como antes:
+
+- El número real de supresión de clutter / longitud de CPI objetivo, que es lo único que puede
+  decir si el techo de Taylor (~−88/−92 dBc) alcanza para el rango dinámico intra-celda que exige
+  P-11. Sigue sin responder de especialistas de dominio.
+- Por lo mismo, el criterio de aceptación de L1 para el bloque NCO sigue siendo bit a bit estricto
+  (D-05, `sim/tb_sv/drx_l1_checker.sv` sin tolerancia) — esta decisión **no** lo cambia a un
+  criterio espectral/estadístico. El residuo de Taylor se acepta bajo el mismo argumento que ya
+  rige para `None`: no bloquea Z1, pero tampoco cierra ZM1 por sí solo.
+
+**Alcance de la migración:** `model/drx_model/chain.py` (el oráculo pasa de `Nco` a `NcoTaylor`,
+huellas `GOLDEN` de `model/tests/test_chain.py` actualizadas con esta fecha) y `tcl/gen_ip.tcl`
+(`CONFIG.Noise_Shaping {Taylor_Series_Corrected}` añadido al `dds_compiler_nco`). La matriz L1
+completa (8 casos × 2 modos, ver [Fases, Z1](../implementacion/fases.md#z1)) queda pendiente de
+volver a correr contra xsim real bajo este modo — es trabajo de Vivado, no de esta entrada.

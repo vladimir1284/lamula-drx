@@ -921,9 +921,31 @@ asume el máximo estándar de complemento a dos, `2^(N-1) - 1`.~~ Descartado arr
 
 ### P-11 · Presupuesto de bits del NCO frente al rango dinámico intra-celda { #p-11 }
 
-**Estado:** abierto · **Dueño:** equipo (RTL) + especialistas de dominio (el número de supresión de
-clutter) · **Bloquea:** nada hoy — Z1 sigue su curso; esto decide si el residuo de ±1-5 LSB que ya
-documenta [P-10](#p-10) importa o no, y si `nco_out_bits` se queda en 16.
+**Estado:** decisión operativa tomada, 18-sep-2026 ([D-11](decisiones.md#d-11)) — parcialmente
+abierto. **Dueño:** equipo (RTL) + especialistas de dominio (el número de supresión de clutter) ·
+**Bloquea:** nada hoy — Z1 sigue su curso.
+
+!!! success "18-sep-2026: Taylor pasa a ser el modo principal del NCO — decisión operativa, no cierre técnico ([D-11](decisiones.md#d-11))"
+    Sin esperar el número real de supresión de clutter (sigue sin responder de especialistas, ver
+    "lo que falta" más abajo), se decide en sesión adoptar `Noise_Shaping
+    {Taylor_Series_Corrected}` como modo principal del NCO para el resto de las pruebas. La
+    justificación técnica es la que ya había dejado esta investigación: Taylor reduce el residuo
+    medido de ~5,7 a ~1,15 LSB rms sin costo de DSP48 relevante dado el presupuesto de 3 canales ya
+    cerrado en P-12 (159/220, 72 %), y su propio residuo de reproducción en el modelo dorado
+    (±2 LSB en 25-75 % de las muestras) es la misma clase que el proyecto ya acepta para `None`
+    desde P-10 — detalle completo, con las cifras, en [D-11](decisiones.md#d-11).
+
+    **Esto no cierra P-11 en sentido estricto**: sigue sin conocerse el número real de supresión de
+    clutter, así que sigue sin poder afirmarse que el techo de Taylor (~−88/−92 dBc) alcanza. Es una
+    decisión de avanzar con la mejor opción medida en vez de esperar esa respuesta — el mismo patrón
+    que ya usó la sesión del 9-sep-2026 para no bloquearse en el punto 1 de abajo. Tampoco cambia el
+    criterio de aceptación bit a bit de L1 (D-05): el residuo de Taylor se compara igual de estricto
+    que el de `None`, y ZM1 sigue sin cerrarse por el mismo motivo que documenta
+    [Fases, Z1](../implementacion/fases.md#z1).
+
+    **Migración pendiente de ejecutar** (ver alcance completo en D-11): `model/drx_model/chain.py`
+    y `tcl/gen_ip.tcl` cambiados; huellas `GOLDEN` de `model/tests/test_chain.py` actualizadas;
+    falta correr la matriz L1 completa contra xsim real bajo el modo nuevo.
 
 **Origen, 8-sep-2026 (sesión):** el marco de tolerancia que se venía usando para el residuo de
 P-10 (comparar contra el MDS) estaba mal planteado — el error del NCO es multiplicativo (entra
