@@ -952,12 +952,10 @@ abierto. **Dueño:** equipo (RTL) + especialistas de dominio (el número de supr
     cifra que el modo `None` ya documentaba (306/315) para este mismo caso degenerado (P-10). No es
     una sorpresa ni una regresión: confirma en hardware real lo que D-11 ya asumía del modelo.
 
-    **Matriz completa lanzada, 18-sep-2026:** cada corrida de xsim tarda ~36 min en esta máquina
-    (más que los ~20-25 min que tomaba el modo `None`), así que las 15 corridas que quedan (8
-    casos × 2 modos, menos `tono_if__fine` de arriba) son un compromiso de varias horas. Corre
-    desatendida, un caso a la vez, y cada fila de la tabla de abajo se comitea y se sube en cuanto
-    termina esa corrida — si esto se lee a medio llenar, la corrida sigue en curso o se cortó; el
-    último commit con este mensaje dice cuál fue la última completada.
+    **Matriz completa, 18/19-sep-2026:** las 16 combinaciones (8 casos × 2 modos) corridas contra
+    xsim real, ~30 min por corrida en esta máquina. Lanzada desatendida, un caso a la vez, con cada
+    fila comiteada y subida en cuanto terminaba esa corrida — conclusión completa después de la
+    tabla.
 
     | Caso | Discrepancias | Lectura |
     |---|---|---|
@@ -976,7 +974,31 @@ abierto. **Dueño:** equipo (RTL) + especialistas de dominio (el número de supr
     | `tono_desbalanceado__fine` | 87/315 (28 %) | ±0-3 LSB (primeras 16 impresas), misma clase que `None` (P-10) |
     | `tono_desbalanceado__coarse` | 30/157 (19 %) | ±0-5 LSB (primeras 16 impresas), misma clase que `None` (P-10) |
     | `tono_sobre_escala__fine` | 222/315 (70 %) | ±0-3 LSB (primeras 16 impresas), misma clase que `None` (P-10) |
-    <!-- L1_TAYLOR_MATRIX_MARKER -->
+    | `tono_sobre_escala__coarse` | 103/157 (66 %) | ±0-4 LSB (primeras 16 impresas), misma clase que `None` (P-10) |
+
+    **Matriz completa, 19-sep-2026.** Las 16 combinaciones (8 casos × 2 modos) corrieron contra
+    xsim real bajo `Taylor_Series_Corrected`. Se cortó una vez a medio camino por un timeout de red
+    en `git push` (no un fallo de xsim ni del propio flujo) — el commit local sobrevivió, se
+    recuperó subiéndolo a mano y se retomó desde el único caso que faltaba
+    (`tono_sobre_escala__coarse`).
+
+    Comparado caso a caso contra la matriz que ya documentaba `None` (P-10, y la entrada del
+    16-sep-2026 en [Fases, Z1](../implementacion/fases.md#z1)): el techo de residuo se queda igual
+    de acotado, ±0-5 LSB en las 16 combinaciones, sin ningún mecanismo nuevo. Los dos casos exactos
+    (`tono_con_offset_dc`, ambos modos) siguen siendo exactos con Taylor. El *conteo* de
+    discrepancias sube en algunos casos (`tono_con_ruido__fine`: 56→91;
+    `tono_desbalanceado__fine`: 60→87) y baja en otros (`tono_sobre_escala__fine`: 307→222;
+    `tono_sobre_escala__coarse`: 145→103) — no es una tendencia limpia de "mejor" o "peor", y no
+    debería leerse como una porque el criterio de L1 es bit a bit (D-05): un valor que cae justo en
+    el borde de redondeo cambia de "coincide" a "discrepa en 1 LSB" por razones de fase, no de
+    magnitud del error. Lo único que importa para la pregunta que abrió esta migración —¿cambia
+    Taylor la naturaleza del residuo?— es el techo de LSB, y ese no se movió.
+
+    **Esto no cierra ZM1**: 14 de las 16 combinaciones siguen con residuo distinto de cero. Tampoco
+    cierra P-11 en sentido estricto — sigue pendiente el número real de supresión de clutter, igual
+    que ya dejó anotado la decisión D-11. Lo que sí queda resuelto es la pregunta operativa que
+    motivó correr esta matriz: Taylor se comporta en hardware real exactamente como predecían las
+    sondas fuera del árbol, sin sorpresas ni regresiones al migrar.
 
 **Origen, 8-sep-2026 (sesión):** el marco de tolerancia que se venía usando para el residuo de
 P-10 (comparar contra el MDS) estaba mal planteado — el error del NCO es multiplicativo (entra
