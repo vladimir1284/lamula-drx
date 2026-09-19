@@ -975,6 +975,7 @@ abierto. **Dueño:** equipo (RTL) + especialistas de dominio (el número de supr
     | `tono_con_offset_dc__coarse` | **0/157** | exacto bit a bit |
     | `tono_desbalanceado__fine` | 87/315 (28 %) | ±0-3 LSB (primeras 16 impresas), misma clase que `None` (P-10) |
     | `tono_desbalanceado__coarse` | 30/157 (19 %) | ±0-5 LSB (primeras 16 impresas), misma clase que `None` (P-10) |
+    | `tono_sobre_escala__fine` | 222/315 (70 %) | ±0-3 LSB (primeras 16 impresas), misma clase que `None` (P-10) |
     <!-- L1_TAYLOR_MATRIX_MARKER -->
 
 **Origen, 8-sep-2026 (sesión):** el marco de tolerancia que se venía usando para el residuo de
