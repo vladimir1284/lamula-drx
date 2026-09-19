@@ -969,6 +969,7 @@ abierto. **Dueño:** equipo (RTL) + especialistas de dominio (el número de supr
     | `dos_tonos__coarse` | 9/157 (6 %) | ±0-5 LSB (primeras 16 impresas), misma clase que `None` (P-10) |
     | `tono_desplazado_neg__fine` | 62/315 (20 %) | ±0-3 LSB (primeras 16 impresas), misma clase que `None` (P-10) |
     | `tono_desplazado_neg__coarse` | 24/157 (15 %) | ±0-5 LSB (primeras 16 impresas), misma clase que `None` (P-10) |
+    | `tono_con_ruido__fine` | 91/315 (29 %) | ±0-3 LSB (primeras 16 impresas), misma clase que `None` (P-10) |
     <!-- L1_TAYLOR_MATRIX_MARKER -->
 
 **Origen, 8-sep-2026 (sesión):** el marco de tolerancia que se venía usando para el residuo de
