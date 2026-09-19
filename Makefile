@@ -10,7 +10,7 @@
 PY := .venv/bin/python
 RUFF := .venv/bin/ruff
 
-.PHONY: check gen figures l1-vectors lint lint-hdl lint-hdl-tb lint-hdl-tb-quad lint-hdl-tb-tri lint-hdl-tb-range-tri test sim clean venv
+.PHONY: check gen figures l1-vectors vector-source-init lint lint-hdl lint-hdl-tb lint-hdl-tb-quad lint-hdl-tb-tri lint-hdl-tb-range-tri test sim clean venv
 
 venv:
 	uv venv .venv
@@ -38,6 +38,7 @@ lint-hdl:
 	verilator --lint-only -Wall --timing \
 	  sim/verilator_waivers.vlt \
 	  $$(grep -v '^\s*\#' rtl/filelist.f | grep -v '^\s*$$') \
+	  sim/tb_sv/xilinx_ip_verilator_stubs.sv \
 	  --top-module drx_top
 
 # El arnés de L1 y su testbench son SystemVerilog que hoy no puede ejecutar
@@ -92,6 +93,13 @@ lint-hdl-tb-range-tri:
 # versionan. Lo que se versiona es el generador.
 l1-vectors:
 	$(PY) tools/gen_l1_vectors.py
+
+# Precarga de `rtl/vector_source.sv`, mismo principio que l1-vectors: build,
+# no fuente. Hace falta antes de sintetizar `drx_top` de verdad
+# (`tcl/build.tcl`) — `$readmemh` sí necesita el fichero para síntesis, a
+# diferencia del lint de Verilator (no lo abre, ver make lint-hdl).
+vector-source-init:
+	$(PY) tools/gen_vector_source_init.py
 
 test:
 	$(PY) -m pytest -q

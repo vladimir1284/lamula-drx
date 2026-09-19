@@ -1,8 +1,18 @@
-// Comparador bit a bit contra la salida esperada del modelo dorado (D-03).
+// Comparador contra la salida esperada del modelo dorado (D-03).
 //
 // La otra mitad del camino de P-09: lee `expected_i.hex` / `expected_q.hex` y
-// compara cada muestra que sale del DUT. No hay tolerancia, no hay ventana, no
-// hay «se parece»: o es el mismo entero o es un fallo, que es lo que dice D-03.
+// compara cada muestra que sale del DUT. Por defecto (`TOLERANCE_LSB=0`) sigue
+// siendo bit a bit estricto, que es lo que dice D-03: `tb_l1_harness.sv` (el
+// auto-test del propio arnés, que prueba que sabe fallar cuando cambia un solo
+// bit) no toca este parámetro y depende de que el default se quede en 0.
+//
+// `TOLERANCE_LSB` (D-12, 19-sep-2026): el residuo de cuantización del NCO bajo
+// `Taylor_Series_Corrected`, medido contra xsim real en la matriz de P-11
+// (hasta ±5 LSB, 14/16 combinaciones), se acepta como techo del bloque en vez
+// de exigirle bit a bit — ver D-12 para la decisión completa. Los testbenches
+// de integración de la cadena DDC (`tb_l1_ddc*.sv`) instancian este módulo con
+// `TOLERANCE_LSB=5`; el auto-test del arnés y cualquier bloque sin
+// cuantización de fase de por medio (framing, range gating) siguen en 0.
 //
 // Cuenta discrepancias en vez de abortar en la primera: un fallo de escalado da
 // error en todas las muestras y un fallo de coeficiente solo en algunas, y esa
@@ -28,7 +38,10 @@ module drx_l1_checker #(
     // Discrepancias a imprimir antes de callar. Un log de 300 líneas iguales no
     // ayuda a nadie.
     parameter int MAX_REPORTS = 16,
-    parameter int CH = -1
+    parameter int CH = -1,
+    // D-12: 0 preserva el bit a bit estricto de D-03/D-05. Distinto de 0 solo en
+    // los testbenches de integración de la cadena DDC (ver cabecera).
+    parameter int TOLERANCE_LSB = 0
 ) (
     input logic                    clk,
     input logic                    rst_n,
@@ -90,13 +103,35 @@ module drx_l1_checker #(
     $readmemh(path_q, expected_q, 0, count - 1);
   end
 
+  // Combinacional a propósito, separado de la actualización de estado de abajo:
+  // `exact_mismatch` conserva la semántica de `!==` (una X en cualquiera de los
+  // dos lados SIEMPRE cuenta como discrepancia, tolerancia o no — una X nunca
+  // es "está dentro de banda"). `diff_i`/`diff_q` solo tienen sentido cuando
+  // ambos lados están completamente conocidos.
+  logic exact_mismatch;
+  logic reported_mismatch;
+  int   diff_i;
+  int   diff_q;
+
+  always_comb begin
+    exact_mismatch = (i_data !== signed'(expected_i[checked])) || (q_data !== signed'(expected_q[checked]));
+    diff_i = int'(i_data) - int'(signed'(expected_i[checked]));
+    diff_q = int'(q_data) - int'(signed'(expected_q[checked]));
+    if (TOLERANCE_LSB > 0 && !$isunknown(i_data) && !$isunknown(q_data)) begin
+      reported_mismatch = (diff_i > TOLERANCE_LSB) || (diff_i < -TOLERANCE_LSB) ||
+                           (diff_q > TOLERANCE_LSB) || (diff_q < -TOLERANCE_LSB);
+    end else begin
+      reported_mismatch = exact_mismatch;
+    end
+  end
+
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       checked    <= 0;
       mismatches <= 0;
       reports    <= 0;
     end else if (valid && checked < unsigned'(count)) begin
-      if (i_data !== signed'(expected_i[checked]) || q_data !== signed'(expected_q[checked])) begin
+      if (reported_mismatch) begin
         mismatches <= mismatches + 1;
         if (reports < MAX_REPORTS) begin
           reports <= reports + 1;

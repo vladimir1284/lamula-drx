@@ -24,10 +24,20 @@ runs/
 ip/*/hdl/
 ip/*/sim/
 ip/*/constraints/
+ip/*/cmodel/
+ip/*/demo_tb/
+ip/*/doc/
+ip/*/synth/
 ip/*/*.veo
 ip/*/*.vho
 ip/*/*.xml
 ip/*/*.mif
+ip/*/*.dcp
+ip/*/*_sim_netlist.v
+ip/*/*_sim_netlist.vhdl
+ip/*/*_stub.v
+ip/*/*_stub.vhdl
+ip/*/*_ooc.xdc
 
 # Datasheets de fabricante descargados como referencia de trabajo -- no se
 # versionan (copyright del fabricante); lo que sí se versiona va en

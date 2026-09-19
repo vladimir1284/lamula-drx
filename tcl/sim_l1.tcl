@@ -12,11 +12,21 @@
 #   vivado -mode batch -source tcl/sim_l1.tcl -tclargs \
 #          -platform zedboard -case tono_if__fine
 #
-# NOTA DE FASE: igual que `tcl/build.tcl`, este flujo está ESCRITO Y REVISADO
-# PERO NO EJECUTADO — no hay Vivado en el entorno (supuesto A7). Y el DUT
-# `drx_ddc_top` es trabajo de Z1: hasta que exista, la elaboración falla a
-# propósito. Lo que sí está verificado hoy es el arnés que usa, en
-# `sim/tests/test_l1_harness.py` sobre Verilator.
+# Ejecutado de verdad y en verde muchas veces desde el 5-sep-2026 (A7
+# resuelto) — la nota de fase que decía "escrito pero no ejecutado" ya no
+# aplica, se deja este párrafo solo para que no reaparezca la duda.
+#
+# CUIDADO con la caché de `launch_simulation` (19-sep-2026, ver P-09 en
+# pendientes.md): si cambias un parámetro de un testbench (p. ej.
+# `TOLERANCE_LSB` en `drx_l1_checker.sv`) o `config/params.toml`, xelab puede
+# decidir que "no hay nada que recompilar" y reutilizar en silencio el
+# kernel viejo del directorio `build/sim/xsim/<platform>/<case>/` de una
+# corrida anterior — sin ningún aviso más allá de que `elaborate.log` no
+# muestra el parámetro nuevo en el nombre del módulo compilado
+# (`drx_l1_checker` a secas en vez de `drx_l1_checker(TOLERANCE_LSB=5)`, por
+# ejemplo). Si el resultado de una corrida no cuadra con lo esperado tras un
+# cambio así, borra el directorio de ese caso en `build/sim/xsim/` antes de
+# desconfiar del diseño.
 
 set repo_root [file normalize [file join [file dirname [info script]] ..]]
 source [file join $repo_root tcl generated drx_params.tcl]

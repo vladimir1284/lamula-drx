@@ -11,7 +11,7 @@
 package drx_params_pkg;
 
   localparam int SCHEMA_VERSION = 1;
-  localparam string PARAMS_SHA256 = "f2334247721b95ee52e4145a7483c02aa3f37e82a56d73068af822f53d5ad391";
+  localparam string PARAMS_SHA256 = "87a45203b7be6d20563172607bbb9464e8aef1f2b20411c665117d12841944e1";
 
   // -------------------------------------------------------------------------
   // Plataforma seleccionada. Se sobreescribe en la línea de comandos de síntesis
@@ -29,8 +29,8 @@ package drx_params_pkg;
 `endif
 
   // --- zedboard: Digilent ZedBoard rev. D ---
-  localparam longint FS_HZ_ZEDBOARD = 100000000;
-  localparam longint IF_HZ_ZEDBOARD = 24000000;
+  localparam longint FS_HZ_ZEDBOARD = 62500000;
+  localparam longint IF_HZ_ZEDBOARD = 15000000;
   // --- zu9: portadora ZU9 + 2x VadaTech FMC213 (no comprada) ---
   localparam longint FS_HZ_ZU9 = 250000000;
   localparam longint IF_HZ_ZU9 = 60000000;

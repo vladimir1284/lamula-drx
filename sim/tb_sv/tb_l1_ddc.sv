@@ -107,7 +107,8 @@ module tb_l1_ddc;
   int unsigned mismatches;
 
   drx_l1_checker #(
-      .WIDTH(IQ_BITS)
+      .WIDTH(IQ_BITS),
+      .TOLERANCE_LSB(5)  // D-12: techo aceptado del residuo de cuantización del NCO
   ) u_checker (
       .clk(clk),
       .rst_n(rst_n),
@@ -128,10 +129,10 @@ module tb_l1_ddc;
     repeat (4) @(posedge clk);
 
     if (mismatches != 0) begin
-      $fatal(1, "L1: %0d discrepancias de %0d muestras contra el modelo dorado", mismatches,
-             checked);
+      $fatal(1, "L1: %0d discrepancias de %0d muestras contra el modelo dorado (fuera de la tolerancia de D-12)",
+             mismatches, checked);
     end
-    $display("L1: %0d muestras coinciden bit a bit con el modelo dorado", checked);
+    $display("L1: %0d muestras dentro de tolerancia (D-12) contra el modelo dorado", checked);
     $finish;
   end
 

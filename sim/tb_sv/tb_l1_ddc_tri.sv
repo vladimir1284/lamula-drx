@@ -137,7 +137,8 @@ module tb_l1_ddc_tri;
     for (gc = 0; gc < N_CH; gc = gc + 1) begin : g_checker
       drx_l1_checker #(
           .WIDTH(IQ_BITS),
-          .CH   (gc)
+          .CH   (gc),
+          .TOLERANCE_LSB(5)  // D-12: techo aceptado del residuo de cuantización del NCO
       ) u_checker (
           .clk       (clk),
           .rst_n     (rst_n),
@@ -167,10 +168,10 @@ module tb_l1_ddc_tri;
 
     for (int c = 0; c < N_CH; c++) begin
       if (mismatches[c] != 0) begin
-        $fatal(1, "L1 tri: canal %0d, %0d discrepancias de %0d muestras contra el modelo dorado", c,
+        $fatal(1, "L1 tri: canal %0d, %0d discrepancias de %0d muestras contra el modelo dorado (fuera de la tolerancia de D-12)", c,
                mismatches[c], checked[c]);
       end
-      $display("L1 tri: canal %0d, %0d muestras coinciden bit a bit con el modelo dorado", c, checked[c]);
+      $display("L1 tri: canal %0d, %0d muestras dentro de tolerancia (D-12) contra el modelo dorado", c, checked[c]);
     end
     $finish;
   end

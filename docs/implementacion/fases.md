@@ -90,9 +90,15 @@ original, menos JESD y menos DMA.
     - **Config B** — Tx + canal nominal + canal atenuado, una sola polarización.
 
     La combinación completa (4-5 canales reales simultáneos) se prueba en la ZU9, donde el margen de
-    DSP48/BRAM es mucho mayor. `rtl/drx_ddc_quad_top.sv` (4 canales Rx homogéneos) sigue existiendo,
-    pero ninguna de las dos configs de arriba es un subconjunto directo suyo — hace falta un
-    top-level nuevo para canales heterogéneos, todavía sin escribir.
+    DSP48/BRAM es mucho mayor.
+
+    **Corrección, mismo día (esta entrada quedó obsoleta en cuestión de horas):** lo de abajo decía
+    que hacía falta un top-level nuevo para las dos configs de 3 canales heterogéneos. Es falso —
+    quedó resuelto el mismo 9-sep-2026 sin escribir ningún módulo nuevo: `rtl/drx_ddc_quad_top.sv`
+    es genérico en `N_CH` (su `generate` no distingue Rx de Tx), así que instanciarlo con `N_CH=3`
+    ya es el top-level de Config A/B. Ídem `rtl/drx_range_gate_quad_top.sv`. Detalle completo, con
+    las corridas reales contra xsim que lo confirman (`tb_l1_ddc_tri.sv`,
+    `tb_l1_ddc_range_tri.sv`), en el cierre de [P-12](../alcance/pendientes.md#p-12), punto 1.
 
 !!! success "16-sep-2026: degradaciones analógicas inyectadas en los vectores L1, verificadas contra xsim real"
     `tools/gen_l1_vectors.py::_cases()` suma cuatro casos a los cuatro ya existentes, cada uno con
@@ -148,6 +154,118 @@ original, menos JESD y menos DMA.
     (`tono_con_ruido`, `tono_desbalanceado`, `tono_sobre_escala`, en ambos modos) siguen con residuo
     distinto de cero. Sigue pendiente, como ya dejó anotado el cierre de P-10, la decisión del equipo
     de DSP sobre si ese nivel de residuo bloquea ZM1 o amerita redefinir el criterio bit a bit.
+
+!!! success "19-sep-2026: la decisión pendiente se toma — el hito ZM1 exige tolerancia, no bit a bit; queda un comparador por actualizar y tres huecos de Z1 sin cerrar"
+    La decisión que este documento dejaba pendiente arriba se toma hoy
+    ([D-12](../alcance/decisiones.md#d-12)): el residuo de cuantización del NCO (hasta ±5 LSB, 14 de
+    16 combinaciones de la matriz completa de [P-11](../alcance/pendientes.md#p-11)) se acepta como
+    techo normal del bloque, no como fallo. El hito ZM1 de arriba queda enmendado: para el bloque
+    NCO/mezclador el criterio es «discrepancia ≤5 LSB por muestra I/Q», no bit a bit; para todo lo
+    demás (framing, range gating) el bit a bit de D-05 no cambia. [P-11](../alcance/pendientes.md#p-11)
+    cierra en la misma sesión, con la confirmación de dominio de que el techo de Taylor (~−88/−92
+    dBc) alcanza.
+
+    **Esto no cierra ZM1 técnicamente todavía** — es la decisión de producto, no la implementación:
+    `sim/tb_sv/drx_l1_checker.sv` sigue comparando bit a bit sin tolerancia, y la matriz de 16
+    combinaciones no se ha vuelto a correr contra xsim con un comparador tolerante para confirmar
+    «pass» formal. Ver [D-12](../alcance/decisiones.md#d-12) para el trabajo exacto que falta.
+
+    **Cierre, misma sesión (más tarde, 19-sep-2026):** hecho. `TOLERANCE_LSB` añadido a
+    `sim/tb_sv/drx_l1_checker.sv` (0 por defecto, 5 en los testbenches de integración de la cadena
+    DDC) y la matriz de 16 combinaciones corrida de nuevo contra xsim real —
+    **16/16 "PASS"**. Dos de los 16 dieron falso-fallo en la primera pasada por un directorio de
+    build de xsim con un kernel compilado de antes de esta tolerancia (hallazgo de infraestructura,
+    no del diseño, ver [P-09](../alcance/pendientes.md#p-09)); corregido y reconfirmado limpio. Con
+    esto, ZM1 bajo el criterio de D-12 queda formalmente cumplido, no solo decidido.
+
+    **Revisión del resto de entregables de Z1 de la lista de arriba, la misma sesión:**
+
+    - El top-level de 3 canales heterogéneos (Config A/B) **ya estaba resuelto** desde el 9-sep-2026
+      (`N_CH=3` sobre `drx_ddc_quad_top.sv`/`drx_range_gate_quad_top.sv`, sin módulo nuevo) — la
+      entrada del 9-sep de más arriba decía lo contrario por no haberse actualizado tras resolverlo
+      el mismo día; queda corregida in situ.
+    - `report_utilization` real está publicado para 4 canales homogéneos
+      ([Presupuesto de recursos](../plataforma/recursos.md), 200/220 DSP48, medido) pero **no** para
+      las dos configs de 3 canales que de verdad se usan en la mayoría de las pruebas: la tabla de
+      150/159 DSP48 en el cierre de [P-12](../alcance/pendientes.md#p-12) es una estimación de peor
+      caso ("si la cadena de Tx cuesta igual que un canal Rx completo — no confirmado"), no una
+      síntesis real de un build `N_CH=3`. Sigue pendiente correr `report_utilization` sobre Config A
+      y Config B de verdad.
+    - **El mapa de registros AXI-Lite, listado arriba como «congelado en este punto», no existe
+      todavía** — ni RTL ni documento de registros en el repo. No es una tarea menor pendiente de
+      pulir: es un entregable completo de Z1 sin empezar.
+    - La conmutación en caliente fino/grueso (continuidad de fase al cambiar `mode_coarse` a mitad
+      de rayo) sigue explícitamente diferida — ver la cabecera de `rtl/drx_ddc_top.sv` y de
+      `rtl/drx_range_gate.sv`.
+
+!!! success "19-sep-2026: primer P&R real del datapath completo — `vector_source` escrito, `drx_top` deja de estar vacío, WNS real medido (y no cerraba a 100 MHz)"
+    Al ir a diseñar el mapa de registros AXI-Lite apareció algo más grande: `rtl/drx_top.sv` seguía
+    siendo el diseño vacío de Z0 (solo el latido) y `vector_source` —el primer ítem del trabajo de
+    Z1 de arriba— no existía como RTL sintetizable en ningún sitio (solo `sim/tb_sv/
+    drx_l1_file_source.sv`, marcado en su propia cabecera como "código de testbench, no de
+    síntesis"). Consecuencia: el único WNS medido hasta hoy (5,850 ns, más arriba) era del diseño
+    vacío del latido — nunca se había corrido un P&R real de la cadena DDC + range gating.
+
+    **`vector_source` (nuevo, modo BRAM-loop únicamente):** `rtl/vector_source.sv`, `N_CH` bancos
+    de BRAM independientes precargados con `$readmemh` desde un `.hex` generado por
+    `tools/gen_vector_source_init.py` (reutiliza `model/drx_model/vectors.tone()`, no reinventa la
+    matemática del tono). `last` pulsa cada `DEPTH` muestras como marcador artificial de "fin de
+    ventana" para ejercitar el framing de `drx_range_gate` — **no** es PRF real, Z2 no existe
+    todavía. `drx_top.sv` ahora instancia de verdad `vector_source` → `drx_ddc_quad_top` →
+    `drx_range_gate_quad_top`, con `N_CH=3` (Config A/B de P-12, no los 4 canales Rx homogéneos).
+
+    **Dos hallazgos de síntesis real que la simulación nunca había visto, los dos en RTL ya
+    verificado por xsim (`drx_range_gate.sv`), no en código nuevo:**
+
+    1. `mem0`/`mem1` no sintetizaban a BRAM. Primera causa: vivían en un proceso con reset
+       asíncrono en su sensibilidad, aunque el reset nunca las tocara — "RAM is sensitive to
+       asynchronous reset signal. this RTL style is not supported" (ninguna BRAM real de Xilinx
+       tiene borrado asíncrono de contenido). Corregido separando cada banco en sus propios
+       procesos de lectura y escritura, sin reset y sin ninguna sentencia compartida entre `mem0` y
+       `mem1` — reestructuración puramente sintáctica (mismas condiciones, mismo flanco, mismo
+       resultado), verificada de nuevo contra xsim real en fine y coarse antes de seguir: TLAST
+       bit a bit, dato dentro de tolerancia D-12, igual que antes de tocar nada.
+    2. Las salidas de `drx_range_gate_quad_top` no tenían adónde ir. Exponerlas una a una como
+       puertos del top pedía 105 pines físicos contra los 50 disponibles en el paquete de la
+       ZedBoard ("IO placement is infeasible"); `(* keep = "true" *)` sobre las señales internas,
+       sin ningún puerto real aguas abajo, tampoco bastó — `opt_design` se llevó la cadena entera
+       de todas formas (post-route quedó en 22 LUTs, 0 DSP, 0 BRAM: solo el latido). Se resolvió
+       reduciéndolas a un único bit `debug_probe` registrado (XOR de todo el datapath), mismo
+       patrón que ya usa el propio árbol para "hacer real" una señal sin consumidor
+       (`unused_nco_ready` en `drx_ddc_top.sv`) — sin significado en sí mismo, solo evita que la
+       síntesis real elimine lo que alimenta.
+
+    **Primer WNS real, con los dos hallazgos ya corregidos:** `vivado -mode batch -source
+    tcl/build.tcl -tclargs -platform zedboard -step impl` (sin `-step bitstream`: sin AXI-Lite ni
+    DMA todavía, las salidas de range-gate no tienen destino físico, y el gate de WNS de
+    `tcl/build.tcl` corre en `impl`, no en `bitstream`) — **WNS = −1,209 ns a 100 MHz. No cierra.**
+    Camino crítico real: un FIFO interno del FIR Compiler (droop) de un canal hasta el puerto de
+    escritura de una BRAM del range gate, 10,903 ns de dato contra 10 ns de periodo. Es exactamente
+    el escenario que [Dilatación temporal](../plataforma/dilatacion-temporal.md) ya preveía como
+    contingencia ("bajar a 62,5 MHz... si 100 MHz no cierra con un datapath DSP no trivial") —
+    nunca antes se había medido con la cadena real para saber si hacía falta.
+
+    **Decisión, misma sesión (vladimir):** aplicar la contingencia ya prevista — `fs_hz` de
+    `zedboard` baja de 100 a 62,5 MHz en `config/params.toml`. Dilatación numérica pura (D-02):
+    mismo RTL, mismo comportamiento bit a bit, más lento en tiempo real; no toca `R₁`/`R₂`/`fs` de
+    la ZU9 (P-08/ADR-001 sigue sin firmar, eso es el sample rate del ADC real, un knob distinto).
+    Dos tests de `model/tests/test_params.py` tenían la razón 100/250=2,5× y la PRF de pared de
+    zedboard (480 Hz) grabadas a mano — actualizados a 4,0× y 300 Hz, los valores reales con el
+    nuevo `fs_hz`, no un cambio de comportamiento.
+
+    **WNS real, a 62,5 MHz:** `vivado -mode batch -source tcl/build.tcl -tclargs -platform
+    zedboard -step impl` — **WNS = +2,770 ns. Cierra**, con margen. Mismo camino crítico (FIR
+    Compiler droop → BRAM del range gate), ahora dentro de los 16 ns de periodo. Utilización real
+    post-route: LUT 7,6 %, BRAM Tile ~21 %, DSP48 153/220 (69,6 %, coincide con la cifra ya medida
+    en [P-12](../alcance/pendientes.md#p-12) fuera de contexto).
+
+    **Con esto, ZM1 en hardware real tiene, por primera vez, un P&R completo que cierra** — antes
+    de esta sesión, todo lo verificado de Z1 era simulación (xsim) o síntesis fuera de contexto. Lo
+    que sigue faltando para cerrar Z1 del todo no cambia de lista, solo de orden de urgencia: el
+    mapa de registros AXI-Lite (sin empezar, ahora el hueco más grande, con un top real contra el
+    que diseñarlo), la conmutación en caliente fino/grueso, y `report_utilization`/timing reales
+    para Config A específicamente (esta corrida fue Config B por defecto — Tx + nominal + atenuado
+    genérico, el `N_CH=3` no distingue cuál de las dos).
 
 ## Z2 — Motor de timing, triggers y PRF (semanas 9–13) { #z2 }
 

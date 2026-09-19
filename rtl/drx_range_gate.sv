@@ -109,12 +109,34 @@ module drx_range_gate
   // `mem0`/`mem1` cuando no hay nada válido todavía, o cuando lo que había
   // acaba de aceptarse — nunca pisa un dato que el consumidor no ha tomado
   // todavía.
+  //
+  // `mem0_rd_r`/`mem1_rd_r`/`rd_from_bank1_r` + el `assign m_data_r` de más
+  // abajo sustituyen lo que antes era un solo `m_data_r` cargado con un
+  // if/else entre `mem0[rd_ptr]`/`mem1[rd_ptr]` en el mismo proceso que la
+  // escritura de las dos memorias. Contra Vivado real (19-sep-2026) esa
+  // forma nunca sintetizó a BRAM —ni con el if/else, ni con
+  // `(* ram_style = "block" *)` (Vivado la marcó "Infeasible... trying to
+  // implement using LUTRAM")—, aunque siempre fue bit a bit correcta en
+  // xsim: la simulación funcional no verifica qué primitiva usaría síntesis
+  // real. La estructura de abajo separa cada banco en su propio proceso de
+  // lectura y de escritura, sin ninguna sentencia compartida entre `mem0` y
+  // `mem1` — el patrón que Vivado sí reconoce como BRAM de libro. El
+  // resultado es EL MISMO valor en el MISMO ciclo: `rd_from_bank1_r` se
+  // registra en el proceso de control exactamente cuando se decide leer
+  // (misma condición que antes decidía `mem0` vs `mem1`), y el `assign`
+  // combinacional de `m_data_r` solo elige entre los dos registros de
+  // lectura YA cargados ese mismo ciclo — cero ciclos de latencia extra, no
+  // invalida la matriz L1 ya corrida.
   logic                  m_valid_r;
   logic                  m_last_r;
+  logic [2*IQ_BITS-1:0]  mem0_rd_r;
+  logic [2*IQ_BITS-1:0]  mem1_rd_r;
+  logic                  rd_from_bank1_r;
   logic [2*IQ_BITS-1:0]  m_data_r;
   logic                  can_advance;
 
   assign can_advance = !m_valid_r || m_ready;
+  assign m_data_r    = rd_from_bank1_r ? mem1_rd_r : mem0_rd_r;
 
   assign m_valid = m_valid_r;
   assign m_last  = m_last_r;
@@ -131,12 +153,12 @@ module drx_range_gate
       overrun <= 1'b0;
       m_valid_r <= 1'b0;
       m_last_r  <= 1'b0;
+      rd_from_bank1_r <= 1'b0;
     end else begin
-      // Escritura: nunca se detiene, sigue el ritmo de `s_valid`.
+      // Escritura: nunca se detiene, sigue el ritmo de `s_valid`. El propio
+      // dato (`mem0`/`mem1`) se escribe en los procesos de abajo, cada uno
+      // bajo esta misma condición exacta más su propio banco.
       if (s_valid) begin
-        if (wr_bank) mem1[wr_ptr] <= {s_i, s_q};
-        else mem0[wr_ptr] <= {s_i, s_q};
-
         if (wr_ptr == last_idx) begin
           bank_last_idx[wr_bank] <= last_idx;
           if (bank_pending[wr_bank]) overrun <= 1'b1;
@@ -150,12 +172,15 @@ module drx_range_gate
 
       // Lectura: registrada. Solo intenta cargar el siguiente dato cuando el
       // registro de salida está libre (nunca tuvo nada válido, o lo que tenía
-      // ya se aceptó este mismo ciclo).
+      // ya se aceptó este mismo ciclo). `mem0_rd_r`/`mem1_rd_r` se cargan en
+      // los procesos de abajo, cada uno bajo esta misma condición exacta más
+      // su propio banco; `rd_from_bank1_r` registra aquí cuál de los dos hay
+      // que mirar.
       if (can_advance) begin
         if (bank_pending[rd_bank]) begin
-          m_data_r  <= rd_bank ? mem1[rd_ptr] : mem0[rd_ptr];
           m_last_r  <= (rd_ptr == bank_last_idx[rd_bank]);
           m_valid_r <= 1'b1;
+          rd_from_bank1_r <= rd_bank;
           if (rd_ptr == bank_last_idx[rd_bank]) begin
             rd_ptr <= '0;
             bank_pending[rd_bank] <= 1'b0;
@@ -167,6 +192,28 @@ module drx_range_gate
         end
       end
     end
+  end
+
+  // Cuatro procesos, uno por (banco × operación), cada uno tocando UN solo
+  // array sin reset y sin ninguna sentencia compartida con el otro banco —
+  // ver la nota de arriba sobre por qué. Ninguna BRAM real de Xilinx tiene
+  // borrado asíncrono de contenido, y mezclar los dos bancos en un mismo
+  // proceso (con o sin ternario) es lo que Vivado real no reconocía como
+  // BRAM. Las condiciones son las mismas de siempre, solo repartidas.
+  always_ff @(posedge clk) begin
+    if (s_valid && !wr_bank) mem0[wr_ptr] <= {s_i, s_q};
+  end
+
+  always_ff @(posedge clk) begin
+    if (s_valid && wr_bank) mem1[wr_ptr] <= {s_i, s_q};
+  end
+
+  always_ff @(posedge clk) begin
+    if (can_advance && bank_pending[rd_bank] && !rd_bank) mem0_rd_r <= mem0[rd_ptr];
+  end
+
+  always_ff @(posedge clk) begin
+    if (can_advance && bank_pending[rd_bank] && rd_bank) mem1_rd_r <= mem1[rd_ptr];
   end
 
 endmodule : drx_range_gate

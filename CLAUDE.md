@@ -14,61 +14,75 @@ con el RCP ni con ORPG.
   16 bits, 250 MSPS, JESD204B). **Aún no comprada.**
 - **Plataforma de desarrollo actual:** Digilent ZedBoard, XC7Z020-CLG484-1.
 
-## Estado, a 5 de septiembre de 2026
+## Estado, a 19 de septiembre de 2026
 
-**Fase Z0 — substrato. Casi cerrada.** Ya hay código, y corre: `make check` deja 69 tests en verde
-sobre Verilator, gcc y NumPy. Lo construido está explicado en el tutorial de `docs/tutorial/` e
-inventariado en `docs/implementacion/substrato.md`; el resumen es:
+**Z0 — substrato: cerrada.** `make check` sigue en verde (79 tests hoy, Verilator + gcc + NumPy +
+lint). Detalle en el tutorial de `docs/tutorial/` e inventario en `docs/implementacion/substrato.md`.
+El runner de CI con Vivado (`[self-hosted, vivado]`, `HAS_VIVADO_RUNNER`) sigue sin montarse — ZM0
+tal como lo define `docs/implementacion/fases.md` («`git push` produce un `BOOT.BIN` byte a byte sin
+intervención humana») sigue sin cumplirse en CI, solo demostrado a mano (5-sep-2026). Ver A7/A8 en
+`docs/alcance/pendientes.md`.
 
-- Paquete único de parámetros en `config/params.toml`, con generación a SystemVerilog, C y Tcl, gate
-  de regeneración y gate de constante de reloj hardcodeada — los dos fallan la build.
-- Modelo dorado en NumPy: NCO, mezclador, CIC de Hogenauer, FIR de coeficientes congelados, enrejado
-  en rango y generador de vectores con degradaciones. Con huella SHA-256 del oráculo en los tests.
-- Runner cocotb con L0 sobre Verilator en verde. **L1 no pasa por cocotb** —no tiene backend para
-  xsim, hallazgo P-09, ya decidido—: es SystemVerilog nativo con el oráculo cruzando por fichero.
-  El arnés (lector de vectores y comparador bit a bit) está verificado sobre Verilator 5.006 y sobre
-  xsim; `tcl/sim_l1.tcl` ya corrió de punta a punta el 5-sep-2026 (ver más abajo).
-- Contrato DRx↔DSP v0.1 congelado, con codegen para C, Rust y Python y test de contrato que compara
-  bytes entre C y Python.
-- RTL: diseño vacío a propósito (latido derivado de `FS_HZ`) más el paquete del interfaz SSA.
-- Firmware: auto-comprobación de parámetros que compila para las dos plataformas.
+**Z1 — DDC + range gating: en curso, avanzada, no cerrada.** `rtl/drx_ddc_top.sv` existe, corre
+contra IP real de Xilinx (DDS Compiler, CIC Compiler, FIR Compiler ×2) y está verificado con la
+matriz completa de L1 (8 casos × {fine, coarse} = 16 corridas contra xsim real, con tolerancia
+D-12). **`rtl/drx_top.sv` dejó de ser el diseño vacío de Z0**: instancia de verdad `vector_source`
+(nuevo) → `drx_ddc_quad_top` → `drx_range_gate_quad_top`, `N_CH=3`, y tiene un P&R real (no solo
+simulación) que cierra temporización. Estado de cada entregable de Z1, `docs/implementacion/
+fases.md#z1` es la fuente viva:
 
-**El 5 de septiembre de 2026, primera máquina con Vivado (desarrollo, no CI):** se instaló Vivado ML
-Standard 2022.2 (WebPACK) y se ejecutó, por primera vez, todo el flujo que hasta entonces estaba
-«escrito y revisado pero nunca ejecutado»:
+- **Bit-exactitud del NCO:** resuelta y CUMPLIDA. [D-12](docs/alcance/decisiones.md#d-12) acepta el
+  residuo medido (≤5 LSB) como techo del bloque; `sim/tb_sv/drx_l1_checker.sv` ya tiene
+  `TOLERANCE_LSB` y la matriz completa de 16 combinaciones corrió contra xsim real bajo ese
+  comparador — **16/16 "PASS", confirmado con reverificación limpia** (2 de las 16 dieron
+  falso-fallo en la primera pasada por un directorio de build de xsim reutilizado de antes de D-12
+  — kernel con `TOLERANCE_LSB=0` por defecto, detectado por timestamp; corregido borrando el build
+  y regenerando vectores, ver `pendientes.md`#p-09). [P-11](docs/alcance/pendientes.md#p-11)
+  cerrado, confirmado que el techo de Taylor (~−88/−92 dBc) alcanza.
+- **Top-level de 3 canales heterogéneos (Config A Tx+H+V / Config B Tx+nominal+atenuado):**
+  resuelto — `rtl/drx_ddc_quad_top.sv` y `rtl/drx_range_gate_quad_top.sv` son genéricos en `N_CH`,
+  `N_CH=3` ya es ese top-level, verificado contra xsim real (`tb_l1_ddc_tri.sv`,
+  `tb_l1_ddc_range_tri.sv`). Ver [P-12](docs/alcance/pendientes.md#p-12).
+- **`vector_source` (BRAM-loop):** escrito (`rtl/vector_source.sv`), el primer ítem de Z1 que no
+  existía como RTL sintetizable hasta el 19-sep-2026. Solo modo BRAM-loop; RT y Throttled (DDR)
+  siguen sin implementar.
+- **P&R real del datapath completo, 19-sep-2026:** primera vez que se mide temporización de la
+  cadena real (antes, el único WNS medido era del diseño vacío del latido). A 100 MHz **no
+  cerraba** (WNS = −1,209 ns, camino crítico FIR Compiler droop → BRAM de range-gate) — la
+  contingencia que ya preveía `docs/plataforma/dilatacion-temporal.md` resultó necesaria de
+  verdad. **`fs_hz` de zedboard bajó de 100 a 62,5 MHz** (`config/params.toml`, dilatación
+  numérica pura, D-02 — no toca `R₁`/`R₂`/`fs` de la ZU9). A 62,5 MHz: **WNS = +2,770 ns, cierra**.
+  Dos hallazgos de síntesis real en `drx_range_gate.sv` (RTL ya verificado por xsim, no código
+  nuevo) tuvieron que corregirse en el camino — ver `fases.md#z1`, entrada del 19-sep — sin cambiar
+  su comportamiento (reverificado bit a bit / D-12 contra xsim tras cada uno).
+- **Mapa de registros AXI-Lite:** **no existe todavía** — ni RTL ni documento de registros. Es
+  ahora el entregable más atrasado de Z1: con `drx_top` ya real, es lo próximo a diseñar.
+- **`report_utilization`/timing reales:** publicados para el datapath de 3 canales de verdad
+  (post-route: LUT 7,6 %, BRAM ~21 %, DSP48 153/220 — 69,6 %, coincide con la cifra ya medida fuera
+  de contexto en P-12). Corresponde a Config B genérica (`N_CH=3` no distingue A de B); falta medir
+  Config A específicamente si llega a importar la diferencia.
+- **Conmutación en caliente fino/grueso:** diferida explícitamente, sin empezar (`rtl/drx_ddc_top.sv`,
+  `rtl/drx_range_gate.sv`).
+- Nuevo hallazgo abierto, no bloqueante: [P-14](docs/alcance/pendientes.md#p-14) — falta evaluar la
+  varianza de los estimadores de momento bajo el residuo aceptado por D-12, contra Doviak & Zrnic
+  cap. 6. Deuda de validación sobre una decisión ya tomada, no una condición de cierre de Z1.
 
-- `tcl/build.tcl -platform zedboard -step bitstream`: síntesis + place & route + bitstream,
-  **WNS = 5,850 ns** (timing cerrado, con margen).
-- `tcl/sim_l1.tcl`: encontró y corrigió tres bugs propios de la infraestructura de simulación (no
-  del diseño) — dos en el propio `tcl/sim_l1.tcl`, uno de compatibilidad de xsim con
-  `$value$plusargs`. Detalle completo en [P-09](docs/alcance/pendientes.md#p-09). Con los tres
-  fixes, llega exactamente al abort **diseñado** para esta fase: falta `drx_ddc_top` (Z1).
-- `tools/make_boot.sh zedboard`: se comporta como está documentado, falla limpio por los
-  entregables de Z4 que aún no existen (`fsbl.elf`, `drx_app.elf`).
-
-**Lo que sigue sin estar hecho:** todo lo anterior fue manual, en una máquina de desarrollo — **no
-hay todavía un runner de CI con Vivado**, así que el hito ZM0 tal como lo define
-`docs/implementacion/fases.md` (`git push` produce un `BOOT.BIN` reproducible byte a byte, sin
-intervención humana) sigue sin cumplirse. El job `gateware` de `.github/workflows/ci.yml` ya existe
-y está listo, condicionado a `vars.HAS_VIVADO_RUNNER` y a un runner `[self-hosted, vivado]` que
-todavía no se ha montado. Ver los supuestos A7 y A8 en `docs/alcance/pendientes.md`.
-
-Lo que sí está hecho y verificado:
+Lo que sí está hecho y verificado, además de lo de arriba:
 
 - El sitio de documentación se construye y se despliega solo a
   <https://lamula-drx-docs.pages.dev> en cada push a `main` que toque `docs/`. Detalles,
   credenciales y deuda conocida del CI en `docs/implementacion/infraestructura.md`.
-- El plan de 28 semanas (Z0–Z5), las once decisiones congeladas, el plan de verificación y el
-  registro delta de portabilidad están escritos y publicados.
-- Existe un brief de investigación ejecutable para el hallazgo P-01 en
-  `research/p-01-orpg-gate-spacing.md`.
+- El plan de 28 semanas (Z0–Z5), doce decisiones congeladas, el plan de verificación y el registro
+  delta de portabilidad están escritos y publicados.
+- P-01 (tolerancia de celda) cerró el 7-sep-2026: exactitud requerida, confirmado también en modo
+  fino. P-05 (`RDA_Backend_Py`) sigue abierto, sin localizar.
 
 ## Orden de lectura
 
 1. `docs/alcance/contexto.md` — qué es y qué no es, y la relación con los proyectos DSP y RCP.
-2. `docs/alcance/decisiones.md` — las once decisiones congeladas (D-01…D-11). Ninguna se revierte
+2. `docs/alcance/decisiones.md` — las doce decisiones congeladas (D-01…D-12). Ninguna se revierte
    sin discutirlo.
-3. `docs/alcance/pendientes.md` — hallazgos abiertos (P-01…P-06), supuestos de entorno a verificar y
+3. `docs/alcance/pendientes.md` — hallazgos abiertos (P-01…P-14), supuestos de entorno a verificar y
    riesgos de la estrategia ZedBoard.
 4. `docs/implementacion/fases.md` — el plan de trabajo.
 5. `AGENTS.md` — las reglas que no se negocian, antes de escribir la primera línea de código.
@@ -78,21 +92,24 @@ de ZedBoard y el project plan original de 34 semanas para la ZU9.
 
 ## Lo primero que hay que hacer
 
-El flujo ya se demostró a mano (ver arriba). Lo que falta para cerrar Z0 del todo:
+Para cerrar Z1 de verdad, en orden:
 
-1. **Montar el runner de CI `[self-hosted, vivado]`** y poner `HAS_VIVADO_RUNNER=true` — el job
-   `gateware` ya está escrito en `.github/workflows/ci.yml`, solo falta la máquina. Sin esto, ZM0
-   sigue siendo «se demostró en una máquina, no lo garantiza el CI», que no es lo mismo.
-2. Con eso resuelto, **Z1 (`drx_ddc_top`) queda desbloqueado**: el substrato (flujo guionizado +
-   regresión de L0 y L1) ya existe y ya corrió de verdad, así que empezar por el DDC ahora ya no es
-   saltarse el orden — antes de la sesión del 5-sep-2026 sí lo era, por eso la regla existía.
+1. **Diseñar e implementar el mapa de registros AXI-Lite** — no existe ni RTL ni documento. Ahora
+   hay un `drx_top` real contra el que diseñarlo (antes no lo había, por eso no se empezó
+   directamente). Es el entregable más atrasado de Z1.
+2. **Conmutación en caliente fino/grueso** (continuidad de fase en `drx_ddc_top`/`drx_range_gate`) —
+   diferida desde el diseño original, sin empezar.
+3. Medir `report_utilization`/timing real de Config A específicamente (Tx+H+V) — la corrida del
+   19-sep midió Config B genérica (`N_CH=3` no distingue cuál).
+4. Montar el runner de CI `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` — sigue
+   pendiente desde Z0, el job `gateware` de `.github/workflows/ci.yml` ya está escrito.
 
-El argumento de fondo sigue siendo el mismo: sin flujo guionizado y sin regresión el modelo de
-entrega acelerado por agentes no funciona, y reconstruirlo al final cuesta un mes. Ya no falta
-construirlo — falta automatizarlo en CI.
+`sim/tb_sv/drx_l1_checker.sv` ya tiene tolerancia (`TOLERANCE_LSB`, D-12) y la matriz de 16 corrió
+16/16 «PASS» contra xsim real, confirmado — ese punto ya está cerrado, no solo decidido.
 
-Y no toques `R₁`/`R₂` ni `fs` en `config/params.toml` hasta que haya ADR: P-01 y P-08 siguen
-abiertos. Cuando lo haya, el cambio es de dos líneas más `python3 tools/gen_params.py`.
+Y no toques `R₁`/`R₂` ni `fs` en `config/params.toml` hasta que haya ADR: P-08 sigue abierto (P-01
+ya cerró — exactitud requerida). Cuando lo haya, el cambio es de dos líneas más
+`python3 tools/gen_params.py`.
 
 P-08 ya no espera ningún dato externo: el rate mínimo del ADS42JB69 es de 60 MSPS en modo 10x, así
 que los 143,9 MHz propuestos están en spec. Lo que falta es escribir el ADR que sustituya a D-04.
@@ -101,13 +118,12 @@ que los 143,9 MHz propuestos están en spec. Lo que falta es escribir el ADR que
 
 | Bloqueante | Bloquea | Dueño |
 |---|---|---|
-| [P-01](docs/alcance/pendientes.md) — ¿tolera ORPG el error de celda del 0,24 %? | La arquitectura de la cadena CIC/FIR de Z1. Si la respuesta es «exactitud requerida», D-04 se cae y cambia el presupuesto de DSP48 | Especialistas de dominio |
-| P-05 — `RDA_Backend_Py` sin localizar | La parte empírica de P-01. Es la única fuente que demuestra qué acepta un ORPG real | vladimir |
+| P-14 — varianza de los estimadores de momento (Doviak & Zrnic cap. 6) bajo el residuo aceptado por D-12 | No bloquea Z1 hoy, pero sí la confianza en D-12 a largo plazo | Especialistas de dominio |
+| P-05 — `RDA_Backend_Py` sin localizar | Cerrar del todo P-01 con evidencia empírica de ORPG real (P-01 ya cerró por decisión, esto es la verificación que faltó) | vladimir |
 | P-02 — capa física de los encoders SSI | La especificación de la portadora ZU9. Si es RS-422 y la portadora no lleva transceptores, falta hardware | Compra + especialistas |
 | P-03 — plataforma de spike para JESD204B | El riesgo número uno del proyecto, que la ZedBoard no mitiga en absoluto | Dirección técnica |
 
-P-01 y P-05 son el par urgente: Z1 va a escribir la cadena de diezmado y necesita saber si R₁ = 208 /
-R₂ = 416 sobrevive. El brief de `research/` está listo para lanzarse en cuanto aparezca
+El brief de `research/` para P-01/P-05 sigue listo para lanzarse en cuanto aparezca
 `RDA_Backend_Py`; sin esa fuente el agente solo puede leer especificación, y ya hay precedente
 documentado en `lamula-rcp/spike-fase0/RESULTADO-rda-orpg.md` de que eso no basta.
 
@@ -124,8 +140,12 @@ make check         # todos los gates del CI que corren sin Vivado
 make gen           # regenera parámetros, coeficientes y contrato
 make sim           # solo la suite L0 sobre Verilator
 
-# gateware: ejecutado a mano el 5-sep-2026 en una máquina de desarrollo con Vivado
-# 2022.2; el runner de CI con Vivado todavía no existe (A7)
+# gateware: ejecutado a mano, máquina de desarrollo con Vivado 2022.2; el
+# runner de CI con Vivado todavía no existe (A7). `-step impl` (P&R real, sin
+# bitstream: sin AXI-Lite/DMA las salidas de range-gate no tienen destino
+# físico) cierra a 62,5 MHz desde el 19-sep-2026 (WNS = +2,770 ns)
+python3 tools/gen_vector_source_init.py   # antes de sintetizar: $readmemh de vector_source lo necesita
+vivado -mode batch -source tcl/build.tcl -tclargs -platform zedboard -step impl
 vivado -mode batch -source tcl/build.tcl -tclargs -platform zedboard -step bitstream
 vivado -mode batch -source tcl/sim_l1.tcl -tclargs -platform zedboard -case tono_if__fine
 tools/make_boot.sh zedboard

@@ -6,7 +6,7 @@
 
 namespace eval ::drx {
   variable SCHEMA_VERSION 1
-  variable PARAMS_SHA256 f2334247721b95ee52e4145a7483c02aa3f37e82a56d73068af822f53d5ad391
+  variable PARAMS_SHA256 87a45203b7be6d20563172607bbb9464e8aef1f2b20411c665117d12841944e1
 
   # Invariantes de dilatación y de la cadena de diezmado (D-02): idénticos
   # en las dos plataformas, y de aquí los toma tcl/gen_ip.tcl para
@@ -45,9 +45,9 @@ namespace eval ::drx {
   variable COARSE_GAIN_FRAC_BITS 13
 
   # zedboard: Digilent ZedBoard rev. D
-  variable FS_HZ_ZEDBOARD 100000000
-  variable IF_HZ_ZEDBOARD 24000000
-  variable CLK_PERIOD_NS_ZEDBOARD 10.000000
+  variable FS_HZ_ZEDBOARD 62500000
+  variable IF_HZ_ZEDBOARD 15000000
+  variable CLK_PERIOD_NS_ZEDBOARD 16.000000
   variable PART_ZEDBOARD xc7z020clg484-1
 
   # zu9: portadora ZU9 + 2x VadaTech FMC213 (no comprada)

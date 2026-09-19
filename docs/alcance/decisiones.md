@@ -196,3 +196,44 @@ huellas `GOLDEN` de `model/tests/test_chain.py` actualizadas con esta fecha) y `
 (`CONFIG.Noise_Shaping {Taylor_Series_Corrected}` añadido al `dds_compiler_nco`). La matriz L1
 completa (8 casos × 2 modos, ver [Fases, Z1](../implementacion/fases.md#z1)) queda pendiente de
 volver a correr contra xsim real bajo este modo — es trabajo de Vivado, no de esta entrada.
+
+## D-12 · El residuo de cuantización del NCO se acepta como techo documentado; L1 deja de exigirle bit a bit { #d-12 }
+
+**Decisión, 19-sep-2026 (vladimir, en sesión):** el residuo que [P-11](pendientes.md#p-11) viene
+midiendo contra xsim real bajo `Taylor_Series_Corrected` —hasta ±5 LSB por muestra I/Q, en 14 de
+las 16 combinaciones de la matriz `tono_*` × {fine, coarse} del 18/19-sep-2026— se acepta como el
+techo normal del bloque NCO, no como un defecto pendiente de corregir. El criterio de aceptación de
+L1 para ese residuo concreto deja de ser bit a bit estricto (D-05) y pasa a ser:
+
+> **Discrepancia ≤ 5 LSB por muestra I/Q**, frente al modelo dorado, para el bloque NCO/mezclador
+> bajo `Taylor_Series_Corrected`.
+
+Con esto:
+
+- Las 16 combinaciones ya corridas de la matriz de [P-11](pendientes.md#p-11) pasan bajo el nuevo
+  criterio: 14 dentro de la banda ±0-5 LSB ya documentada, 2 (`tono_con_offset_dc`, ambos modos)
+  exactas bit a bit.
+- [ZM1](../implementacion/fases.md#z1) puede darse por cumplido bajo este criterio en cuanto se
+  actualice el comparador (ver "lo que falta" abajo) — ni el RTL ni los vectores cambian por esta
+  decisión.
+- D-05 se mantiene sin cambio para todo lo demás: framing (`TLAST`), range gating y cualquier
+  bloque sin cuantización de fase de por medio siguen exigiendo coincidencia bit a bit estricta.
+  Esta es una excepción puntual para el residuo del NCO, no un cambio general del criterio de L1.
+
+**Lo que esta decisión NO resuelve:**
+
+- Confirmar que el techo de Taylor (~−88/−92 dBc) alcanza para el rango dinámico intra-celda es un
+  dato de dominio aparte, no derivado de aceptar el residuo — ver el cierre de
+  [P-11](pendientes.md#p-11) el mismo día.
+- La varianza de los estimadores de momento (reflectividad, velocidad, ancho espectral) que resulta
+  de este residuo, frente a la teoría de Doviak & Zrnic cap. 6, no se evalúa aquí. Esta decisión fija
+  el techo aceptado del bloque NCO; no certifica su efecto en los productos finales del radar — ver
+  el hallazgo nuevo [P-14](pendientes.md#p-14).
+
+**Lo que falta para que esto sea más que una decisión de producto:** `sim/tb_sv/drx_l1_checker.sv`
+hoy compara bit a bit sin tolerancia ("No hay tolerancia, no hay ventana", cabecera del fichero).
+Para que `make check` / `tcl/sim_l1.tcl` apliquen de verdad este criterio hace falta añadirle un
+parámetro de tolerancia en LSB (por defecto 0, para no tocar ningún testbench que siga exigiendo
+bit a bit) y volver a correr la matriz de 16 combinaciones contra xsim real para confirmar que con
+esa tolerancia las 16 dan «pass». **No se ha hecho todavía** — es el trabajo pendiente concreto que
+deja esta decisión.

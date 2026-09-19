@@ -5,9 +5,15 @@
 
 `verilator_config
 
-// drx_ssa_pkg define el formato del interfaz SSA (D-01). En Z0 no hay todavía
-// ninguna implementación que lo consuma, así que sus anchos aparecen sin usar.
-// El waiver desaparece solo en Z1, cuando `vector_source` los use.
+// drx_ssa_pkg define el formato del interfaz SSA (D-01): el TDATA entrelazado
+// y el TUSER (channel_id/sample_valid_mask/source_tag) para status/BITE.
+// `vector_source` (Z1, BRAM-loop) decidió NO pasar por ese formato: expone
+// arrays por canal ya demultiplexados directamente, igual que ya delega
+// `drx_ddc_quad_top.sv` en su propia cabecera ("ese demux es responsabilidad
+// de vector_source/jesd204b_source"), así que sigue sin haber ningún
+// consumidor real de `drx_ssa_pkg`. El waiver desaparece cuando algo
+// reporte `source_tag`/`sample_valid_mask` de verdad (status/BITE, o
+// `jesd204b_source` el día que exista) — no antes.
 lint_off -rule UNUSEDPARAM -file "*/drx_ssa_pkg.sv"
 
 // drx_params_pkg es el paquete de parámetros: por definición contiene valores
@@ -23,3 +29,19 @@ lint_off -rule UNUSEDPARAM -file "*/drx_params_pkg.sv"
 // el uso real en drx_ddc_top. Confirmado el 7-sep-2026 al correr `make check`
 // con Vivado/Verilator ya en PATH.
 lint_off -rule UNUSEDPARAM -file "*/drx_ddc_ip_pkg.sv"
+
+// xilinx_ip_verilator_stubs.sv (ver su propia cabecera) declara los cuatro
+// blackboxes de IP que necesita `--top-module drx_top` en un solo fichero a
+// propósito, no uno por módulo — son piezas del mismo problema (dar forma a
+// la IP que Verilator no puede elaborar), no cuatro diseños independientes.
+lint_off -rule DECLFILENAME -file "*/xilinx_ip_verilator_stubs.sv"
+
+// drx_ddc_top.sv: `branch_valid`, dentro del `generate` de rama I/Q (gi=0/1),
+// se calcula igual en las dos ramas a propósito — el comentario de esa
+// sección es explícito ("las dos ramas son idénticas"), y solo `g_out_i`
+// (gi==0) lo consume para `m_valid`; `g_out_q` (gi==1) nunca lo necesita. Es
+// el precio de mantener las dos ramas simétricas en vez de sacar `gi==0` como
+// caso especial. Nadie había lintado `drx_top` de verdad hasta esta
+// integración (Z1) — antes ningún top alcanzaba `drx_ddc_top` en Verilator —
+// así que este hallazgo es nuevo hoy, no una regresión de esta sesión.
+lint_off -rule UNUSEDSIGNAL -file "*/drx_ddc_top.sv" -match "*branch_valid*"

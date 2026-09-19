@@ -483,6 +483,26 @@ dos casos (vectores limpios y con un bit corrupto) siguen en verde, igual que to
 completa. **P-09 no tiene ningún bug conocido pendiente**; lo único que falta para el hito ZM1 es
 que Z1 escriba `drx_ddc_top`.
 
+!!! success "19-sep-2026: `launch_simulation` reutilizó un kernel compilado de antes de D-12 — dos casos de la matriz dieron falso-fallo"
+    Al correr la matriz completa de 16 combinaciones bajo el comparador con tolerancia (D-12),
+    `tono_sobre_escala__fine` y `tono_sobre_escala__coarse` fallaron con conteos de discrepancias
+    altos (222/315 y 103/157) pese a que las muestras impresas mostraban residuos de solo 3-4 LSB,
+    dentro de la banda ya aceptada. La causa: `build/sim/xsim/zedboard/tono_sobre_escala__*/` traía
+    un directorio de simulación de una corrida del 18-sep (antes de que existiera
+    `TOLERANCE_LSB`) — `elaborate.log` mostraba `drx_l1_checker` sin el sufijo `(TOLERANCE_LSB=5)`
+    que sí aparecía en los otros 14 casos, y su fecha de modificación era literalmente del día
+    anterior. `launch_simulation`/xelab decidió que no había nada que recompilar y reutilizó el
+    kernel viejo, con el parámetro en su valor por defecto (0, bit a bit estricto) — silencioso, sin
+    ningún aviso de "usando snapshot en caché" que lo delatara aparte de la ausencia del sufijo en
+    el log. **Corregido** borrando esos dos directorios de build y `build/l1-vectors/` (el sha de
+    parámetros también había quedado desactualizado por el cambio de `fs_hz` de la misma sesión,
+    ver [Fases, Z1](../implementacion/fases.md#z1)) y corriendo limpio: **16/16 "PASS"**, confirmado
+    con el `(TOLERANCE_LSB=5)` correcto en el log de elaboración de los dos casos. Mismo patrón de
+    hallazgo que el resto de P-09 —infraestructura de simulación, no del diseño— así que se
+    documenta aquí. **Lección para la próxima vez que cambie algo en `drx_l1_checker.sv` o en
+    `config/params.toml`:** borrar `build/sim/xsim/` (o al menos el caso afectado) antes de confiar
+    en una corrida, no asumir que `launch_simulation` detecta el cambio.
+
 ### P-10 · `drx_ddc_top` contra IP real: cuatro bugs corregidos { #p-10 }
 
 **Estado:** cerrado, 7 de septiembre de 2026 · **Dueño:** equipo. Queda un residuo nuevo y mucho
@@ -921,9 +941,10 @@ asume el máximo estándar de complemento a dos, `2^(N-1) - 1`.~~ Descartado arr
 
 ### P-11 · Presupuesto de bits del NCO frente al rango dinámico intra-celda { #p-11 }
 
-**Estado:** decisión operativa tomada, 18-sep-2026 ([D-11](decisiones.md#d-11)) — parcialmente
-abierto. **Dueño:** equipo (RTL) + especialistas de dominio (el número de supresión de clutter) ·
-**Bloquea:** nada hoy — Z1 sigue su curso.
+**Estado:** cerrado, 19-sep-2026 — confirmado que el techo de Taylor alcanza (ver el cierre más
+abajo); el criterio de aceptación de L1 para este residuo queda fijado en
+[D-12](decisiones.md#d-12). **Dueño:** equipo (RTL) + especialistas de dominio · **Cerraba:**
+[D-11](decisiones.md#d-11) y el criterio de aceptación de L1 para el residuo del NCO.
 
 !!! success "18-sep-2026: Taylor pasa a ser el modo principal del NCO — decisión operativa, no cierre técnico ([D-11](decisiones.md#d-11))"
     Sin esperar el número real de supresión de clutter (sigue sin responder de especialistas, ver
@@ -994,11 +1015,28 @@ abierto. **Dueño:** equipo (RTL) + especialistas de dominio (el número de supr
     magnitud del error. Lo único que importa para la pregunta que abrió esta migración —¿cambia
     Taylor la naturaleza del residuo?— es el techo de LSB, y ese no se movió.
 
-    **Esto no cierra ZM1**: 14 de las 16 combinaciones siguen con residuo distinto de cero. Tampoco
-    cierra P-11 en sentido estricto — sigue pendiente el número real de supresión de clutter, igual
-    que ya dejó anotado la decisión D-11. Lo que sí queda resuelto es la pregunta operativa que
-    motivó correr esta matriz: Taylor se comporta en hardware real exactamente como predecían las
-    sondas fuera del árbol, sin sorpresas ni regresiones al migrar.
+    **Esto no cierra ZM1** bajo el criterio bit a bit original: 14 de las 16 combinaciones siguen
+    con residuo distinto de cero. Tampoco cierra P-11 en sentido estricto todavía — sigue pendiente
+    el número real de supresión de clutter, igual que ya dejó anotado la decisión D-11. Lo que sí
+    queda resuelto es la pregunta operativa que motivó correr esta matriz: Taylor se comporta en
+    hardware real exactamente como predecían las sondas fuera del árbol, sin sorpresas ni
+    regresiones al migrar.
+
+!!! success "19-sep-2026: cierre — confirmado que −88/−92 dBc alcanza; criterio de L1 redefinido ([D-12](decisiones.md#d-12))"
+    Confirmación de dominio (vladimir, en sesión): el techo de Taylor (~−88/−92 dBc, medido contra
+    xsim real, ver la tabla de arriba) **alcanza** para el rango dinámico intra-celda que exige este
+    hallazgo. Con esto se responde la única pregunta que D-11 dejaba abierta ("¿alcanza?") y P-11
+    cierra.
+
+    En la misma sesión se decide aceptar el residuo de cuantización medido (hasta ±5 LSB, 14 de las
+    16 combinaciones de la matriz de arriba) como el techo normal del bloque NCO en vez de seguirle
+    exigiendo bit a bit — ver [D-12](decisiones.md#d-12) para el criterio exacto y para lo que falta
+    (actualizar `sim/tb_sv/drx_l1_checker.sv` y volver a correr la matriz) para que ZM1 quede
+    formalmente cumplido bajo el nuevo criterio, no solo decidido.
+
+    **Lo que sigue abierto, fuera del alcance de P-11:** la varianza de los estimadores de momento
+    bajo este residuo, frente a la teoría de Doviak & Zrnic cap. 6 — no evaluada aquí, ver el
+    hallazgo nuevo [P-14](#p-14).
 
 **Origen, 8-sep-2026 (sesión):** el marco de tolerancia que se venía usando para el residuo de
 P-10 (comparar contra el MDS) estaba mal planteado — el error del NCO es multiplicativo (entra
@@ -1614,6 +1652,37 @@ entrada de cierre de abajo: se tomó una tercera vía, ni (a) ni (b).**
        `dos_tonos` en coarse siguen sin comparar su dato hasta el final por el mismo aborto del
        checker en el primer canal — no es una limitación nueva de esta corrida.
 
+!!! success "19-sep-2026: primer P&R real de `drx_ddc_quad_top` + `drx_range_gate_quad_top` dentro de `drx_top` — confirma la cifra fuera de contexto, y encuentra dos hallazgos de síntesis que xsim nunca vio"
+    Hasta hoy, todo lo de arriba (incluida la tabla de DSP48 de esta entrada) salió de síntesis
+    **fuera de contexto** (`synth_design -mode out_of_context` apuntando directo a
+    `drx_ddc_top`/`drx_ddc_quad_top`) o de simulación funcional (xsim). Con `vector_source` escrito
+    y `rtl/drx_top.sv` instanciando de verdad la cadena completa (ver
+    [Fases, Z1](../implementacion/fases.md#z1) para el detalle), se corrió por primera vez el flujo
+    real de `tcl/build.tcl` hasta `-step impl` (P&R completo, no fuera de contexto).
+
+    **DSP48 real, post-route: 153/220 (69,6 %)** — coincide exacto con la fila "1 canal... — medido"
+    de la tabla de arriba multiplicada por 3 canales, confirma que la extrapolación fuera de
+    contexto no mentía. LUT 7,6 %, BRAM Tile ~21 % (a 62,5 MHz, después de bajar el reloj — ver
+    abajo). Es la cifra real de Config B (Tx + nominal + atenuado) tal como está hoy — Config A no
+    se ha medido por separado, `N_CH=3` no distingue cuál de las dos.
+
+    **Dos hallazgos que el flujo out-of-context/xsim nunca hubiera mostrado**, los dos en
+    `drx_range_gate.sv` (RTL ya verificado bit a bit contra xsim, no código nuevo): sus arrays
+    `mem0`/`mem1` no sintetizaban a Block RAM (primero por vivir en un proceso con reset asíncrono
+    en su sensibilidad, después porque el patrón de lectura con dos condiciones anidadas seguía sin
+    reconocerse como BRAM aunque se forzara `ram_style="block"` — Vivado lo marcaba "Infeasible").
+    Corregido separando cada banco en procesos de lectura/escritura propios, sin ninguna sentencia
+    compartida entre `mem0` y `mem1`; reverificado contra xsim real (fine y coarse) antes de seguir,
+    mismo resultado bit a bit / D-12 que antes de tocar nada. Detalle completo en
+    [Fases, Z1](../implementacion/fases.md#z1).
+
+    **Con el datapath real ya sintetizando de verdad, el primer P&R completo a 100 MHz no cerró**
+    (WNS = −1,209 ns) — la contingencia de `docs/plataforma/dilatacion-temporal.md` (bajar a 62,5
+    MHz) resultó necesaria, no solo teórica. Aplicada, misma sesión: `fs_hz` de zedboard baja a
+    62,5 MHz en `config/params.toml`, WNS pasa a +2,770 ns. No cambia nada de lo que esta entrada
+    documenta sobre presupuesto de DSP48/BRAM — la dilatación temporal (D-02) no toca área, solo
+    velocidad de reloj.
+
 ## Supuestos de entorno a verificar
 
 Estos son supuestos del plan de ZedBoard. Todo número marcado como *estimación* en este sitio es una
@@ -1743,3 +1812,37 @@ está agendada en ningún calendario todavía — esto es la propuesta, no un co
   este proyecto) son dos simuladores independientes de la misma antena física, sin verdad
   compartida. Un HIL completo con "el RCP mueve, el DRx tagea correcto" pide un puente entre los
   dos. No bloquea A-E: la cadena de señal se valida con az/el fijos en el emulador SSI.
+
+### P-14 · Varianza de los estimadores de momento bajo el residuo aceptado (Doviak & Zrnic cap. 6) { #p-14 }
+
+**Estado:** abierto, identificado 2026-09-19 · **Dueño:** especialistas de dominio · **Bloquea:**
+nada hoy — es deuda de validación sobre una decisión ya tomada ([D-12](decisiones.md#d-12)), no una
+condición de cierre de Z1.
+
+[D-12](decisiones.md#d-12) acepta el residuo de cuantización del NCO (hasta ±5 LSB por muestra,
+medido contra xsim real en [P-11](#p-11)) como techo del bloque, en vez de exigirle bit a bit. Esa
+aceptación se apoya en que el residuo "es la misma clase y magnitud" que el proyecto ya acepta desde
+[P-10](#p-10) — un argumento de semejanza con un caso previo, no una evaluación de su efecto sobre
+los productos finales del radar.
+
+Queda sin construir el análisis que sí respondería eso: caracterizar la varianza de los estimadores
+de momento (reflectividad, velocidad Doppler, ancho espectral) que resulta de inyectar este residuo
+en la cadena, contra el marco teórico de Doviak & Zrnic, *Doppler Radar and Weather Observations*,
+cap. 6 (estadística del retorno del radar meteorológico — varianza de estimadores en función de
+SNR, número de pulsos integrados M y ancho espectral). Sin ese análisis, "la misma clase de residuo
+que ya se acepta" es la mejor evidencia disponible hoy, pero es indirecta: no dice si ±5 LSB de
+residuo mueve la varianza de un estimador de velocidad o de reflectividad de forma perceptible para
+el M real del proyecto.
+
+**Nota de honestidad:** esta entrada describe qué falta responder, no la respuesta — no hay acceso
+al texto de Doviak & Zrnic en este repo ni en esta sesión. Cualquier resumen de lo que dice
+específicamente el capítulo 6 debe venir de quien tenga el libro a mano, no inferirse aquí.
+
+**Condición de cierre:** un especialista de dominio, con el capítulo 6 (o equivalente) a mano,
+construye el modelo de varianza del estimador para los M/SNR relevantes del proyecto y lo compara
+contra el residuo ya medido en [P-11](#p-11). Si la varianza inducida es despreciable frente a la
+varianza propia del estimador (la que ya existe sin ningún residuo de cuantización, solo por M
+finito), P-14 cierra sin tocar nada más. Si no lo es, reabre la pregunta de
+[D-12](decisiones.md#d-12) y de si Taylor —o dithering, la vía que [P-11](#p-11) dejó sin explorar
+del todo (falta el modelo de integración de M pulsos sobre el ruido de fase, ver esa entrada,
+9-sep-2026)— sigue siendo la elección correcta.

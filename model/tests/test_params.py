@@ -22,7 +22,12 @@ def test_if_normalizado_identico_en_las_dos_plataformas():
     zed, zu9 = load("zedboard"), load("zu9")
     assert zed.if_norm == zu9.if_norm
     assert zed.if_hz != zu9.if_hz
-    assert zu9.fs_hz / zed.fs_hz == pytest.approx(2.5)
+    # 4,0 desde el 19-sep-2026: fs_hz de zedboard bajó de 100 a 62,5 MHz (P&R
+    # real, WNS=-1,209 ns a 100 MHz con la cadena completa de Z1 — contingencia
+    # ya prevista en dilatacion-temporal.md). La razón en sí no es un
+    # invariante del diseño, solo lo que resulta de la fs_hz elegida en cada
+    # plataforma.
+    assert zu9.fs_hz / zed.fs_hz == pytest.approx(4.0)
 
 
 def test_palabra_de_fase_del_nco_es_invariante():
@@ -59,7 +64,10 @@ def test_prf_de_pared_se_dilata_y_el_registro_no():
     zed, zu9 = load("zedboard"), load("zu9")
     div = zu9.invariant["prf_div_min"]
     assert zu9.prf_hz(div) == pytest.approx(1200.0, abs=0.1)
-    assert zed.prf_hz(div) == pytest.approx(480.0, abs=0.1)
+    # 300,0 desde el 19-sep-2026 (fs_hz de zedboard: 100 -> 62,5 MHz, ver
+    # test_if_normalizado_identico_en_las_dos_plataformas) — mismo `div`
+    # (el registro no se dilata), la PRF de pared baja porque fs_hz bajó.
+    assert zed.prf_hz(div) == pytest.approx(300.0, abs=0.1)
 
 
 def test_los_ficheros_generados_estan_al_dia():

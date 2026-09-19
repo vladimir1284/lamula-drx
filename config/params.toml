@@ -90,8 +90,18 @@ coarse_extra_decim = 2
 # ---------------------------------------------------------------------------
 # Plataformas. Lo único que cambia entre ellas es `fs_hz` y la pieza.
 # ---------------------------------------------------------------------------
+# fs_hz bajado de 100 a 62,5 MHz, 19-sep-2026: P&R real de la cadena completa
+# (vector_source + drx_ddc_quad_top N_CH=3 + drx_range_gate_quad_top) a 100
+# MHz no cerraba temporización (WNS = -1,209 ns; camino crítico real: FIFO
+# interno del FIR Compiler droop -> puerto de escritura de BRAM del range
+# gate). Contingencia ya prevista en docs/plataforma/dilatacion-temporal.md
+# ("bajar a 62,5 MHz... si 100 MHz no cierra con un datapath DSP no
+# trivial") — dilatación numérica pura (D-02): mismo RTL, mismo
+# comportamiento, más lento en tiempo real. No es lo mismo que R1/R2/fs de
+# la ZU9 (P-08/ADR-001, sin tocar): eso es el sample rate del ADC real:
+# esto es solo el reloj de fabric de la placa experimental.
 [platform.zedboard]
-fs_hz = 100_000_000
+fs_hz = 62_500_000
 part = "xc7z020clg484-1"
 board = "Digilent ZedBoard rev. D"
 is_target = false
