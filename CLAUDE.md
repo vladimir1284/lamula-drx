@@ -119,12 +119,16 @@ Para cerrar Z1 de verdad, en orden:
    este repo — no existe ni se ha diseñado. Nuevo, no estaba en esta lista antes del P&R del 20-sep.
 2. **Conmutación en caliente fino/grueso** (continuidad de fase en `drx_ddc_top`/`drx_range_gate`) —
    diferida desde el diseño original, sin empezar.
-3. Medir `report_utilization`/timing real de Config A específicamente (Tx+H+V) — las corridas hasta
-   ahora midieron Config B genérica (`N_CH=3` no distingue cuál).
-4. Montar el runner de CI `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` — sigue
+3. Montar el runner de CI `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` — sigue
    pendiente desde Z0, el job `gateware` de `.github/workflows/ci.yml` ya está escrito. Vivado/xsim
    están en PATH en esta máquina (`/home/orlando/tools/Xilinx/Vivado/2022.2`), confirmado corriendo
    el flujo real (síntesis + P&R + xsim), no solo el binario.
+
+«Medir `report_utilization`/timing real de Config A específicamente» ya **no** está en esta lista:
+cerrado el 20-sep-2026 sin correr ninguna síntesis nueva — Config A (Tx+H+V) y Config B (Tx+nominal+
+atenuado) no tienen, hoy, ninguna diferencia sintetizable (mismo `generate` de `N_CH=3`, mismo
+`INIT_FILE` replicado en los tres bancos de `vector_source.sv`). El P&R de `N_CH=3` ya corrido es a
+la vez el de A y el de B. Detalle en `fases.md#z1`, entrada del 20-sep más tarde.
 
 La discrepancia de DSP48 entre el P&R del 19-sep (153/220) y el del 20-sep (111/220) ya **no** está
 en esta lista: quedó explicada el 20-sep más tarde — era una comparación entre post-síntesis y

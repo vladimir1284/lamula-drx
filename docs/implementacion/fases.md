@@ -426,6 +426,32 @@ original, menos JESD y menos DMA.
     de síntesis, en las dos fechas. `CLAUDE.md` y [Mapa de registros AXI-Lite](registros.md#verificacion)
     quedan actualizados con esto; deja de figurar como pendiente en "Lo primero que hay que hacer".
 
+!!! success "20-sep-2026 (más tarde): «`report_utilization` de Config A específicamente» — pendiente mal planteado, cerrado sin nueva síntesis"
+    Este pendiente pedía correr P&R por separado para Config A (Tx+H+V) y Config B (Tx+nominal+
+    atenuado), asumiendo que podían dar cifras distintas. Revisando el árbol para intentarlo:
+    **no hay nada, hoy, que las distinga a nivel de RTL sintetizable.**
+
+    - `rtl/drx_ddc_quad_top.sv` y `rtl/drx_range_gate_quad_top.sv` son el mismo `generate` genérico
+      en `N_CH` para las dos — la diferencia entre A y B es qué frontend analógico alimentaría cada
+      canal en la placa real, fuera de este repo, no la cadena digital (ver la cabecera de
+      `drx_ddc_quad_top.sv`).
+    - `rtl/vector_source.sv` toma un único `INIT_FILE` cargado con `$readmemh` **dentro** del
+      `generate` por canal: los `N_CH` bancos de BRAM se precargan hoy con el mismo contenido
+      replicado — no hay forma de que el bitstream sintetizado difiera entre A y B, ni siquiera por
+      datos. El propio comentario del fichero ya anota como trabajo futuro (no hecho) pasar a un
+      array de parámetros para contenido distinto por canal.
+    - Y aunque lo hubiera: `tools/gen_vector_source_init.py` ya documenta que el contenido de la BRAM
+      no afecta el cierre de temporización (STA es estructural). El único lugar donde Config A y B
+      producen resultados distintos hoy es la simulación L1 funcional (`tb_l1_ddc_tri.sv`, vía
+      manifiestos `stimulus_path_0/1/2` distintos en `drx_l1_file_source`) — no la síntesis ni el P&R.
+
+    **Conclusión:** el P&R de `N_CH=3` ya corrido (19-sep y 20-sep) *es* al mismo tiempo el de
+    Config A y el de Config B — son indistinguibles con el RTL actual, no dos builds pendientes de
+    correr. No se ejecutó ninguna síntesis nueva porque no hay ninguna diferencia que sintetizar.
+    Si algún día `vector_source` gana contenido por canal (el array de parámetros ya anotado como
+    pendiente), o si la ZU9 introduce una diferencia real de ancho/generics entre configs, esta
+    equivalencia hay que volver a revisarla — no es una garantía permanente, es el estado de hoy.
+
 ## Z2 — Motor de timing, triggers y PRF (semanas 9–13) { #z2 }
 
 Trabajo:
