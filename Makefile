@@ -20,6 +20,7 @@ gen:
 	$(PY) tools/gen_params.py
 	$(PY) tools/gen_coeffs.py
 	$(PY) tools/gen_contract.py
+	$(PY) tools/gen_registers.py
 
 # Las figuras del tutorial salen del propio modelo. No hay gate de CI sobre los
 # SVG —matplotlib no garantiza salida byte a byte entre versiones— pero sí hay
@@ -31,6 +32,7 @@ lint:
 	$(PY) tools/gen_params.py --check
 	$(PY) tools/gen_coeffs.py --check
 	$(PY) tools/gen_contract.py --check
+	$(PY) tools/gen_registers.py --check
 	$(PY) tools/check_hardcoded_clock.py
 	$(RUFF) check .
 

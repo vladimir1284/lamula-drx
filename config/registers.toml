@@ -1,0 +1,45 @@
+# LAMULA DRx — mapa de registros AXI-Lite de `drx_top`.
+#
+# Fuente única de verdad de este mapa, mismo patrón que `contract/schema/*.toml`:
+# `tools/gen_registers.py` genera `rtl/generated/drx_regs_pkg.sv` y
+# `fw/include/drx_regs.h` a partir de este fichero. Ninguno de los dos se edita
+# a mano — regenerar con `python3 tools/gen_registers.py` tras cualquier cambio
+# aquí; el CI falla si no coinciden (`--check`).
+#
+# v1, CONGELADO para Z1 (docs/implementacion/fases.md#z1). Ver
+# docs/implementacion/registros.md para la explicación completa, incluida la
+# semántica de "access" de cada registro.
+#
+# Deliberadamente NO cubre todavía:
+#   - El overflow de saturación del DDC (`drx_saturate`, dentro de
+#     `drx_ddc_top`). Exponerlo obliga a tocar los puertos de
+#     `drx_ddc_top.sv`/`drx_ddc_quad_top.sv`, ya verificados bit-exacto contra
+#     el modelo dorado (matriz L1, 16/16 PASS bajo D-12) — el costo de rehacer
+#     esa matriz no se justifica para este primer corte. Pendiente explícito,
+#     no descartado.
+#   - Ningún registro de Z2 (triggers, PRF): no se diseña por adelantado.
+
+schema_version = 1
+
+# Bytes direccionables: 2^addr_width = 64 B = 16 palabras de 32 bits. Dos
+# registros ocupan hoy las dos primeras palabras; el resto queda reservado sin
+# implementar (lee 0, escritura sin efecto) para Z2, sin diseñarlo ahora.
+addr_width = 6
+
+[[register]]
+name = "version"
+offset = 0x00
+access = "ro"
+doc = "Versión de ESTE mapa de registros (= schema_version de arriba). Permite a firmware confirmar que habla con el mapa que espera antes de tocar CTRL/STATUS."
+
+[[register]]
+name = "ctrl"
+offset = 0x04
+access = "rw"
+doc = "Bit 0: mode_coarse (0 = fino, valor de reset; 1 = grueso), compartido por los N_CH canales de drx_top, igual que ya lo era como localparam. Bits 31:1 reservados: leen 0, una escritura ahí no tiene efecto."
+
+[[register]]
+name = "status"
+offset = 0x08
+access = "w1c"
+doc = "Bit c: overrun sticky del canal c de range-gate (drx_range_gate_quad_top.overrun). Escribir 1 en el bit c lo limpia en origen (nuevo puerto `clear` de drx_range_gate); si hay un overrun genuino el mismo ciclo que el clear, el set gana y el bit queda en 1. Bits >= N_CH leen 0."

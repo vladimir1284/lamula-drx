@@ -4,9 +4,12 @@
 // `drx_round`, sin saturar, porque el modelo tampoco satura ahí.
 //
 // `overflow` queda reservado para el status/BITE de Z1 («escalado de ganancia
-// y saturación con reporte de overflow», fases.md#z1); `drx_ddc_top` no lo
-// expone todavía porque no hay ningún consumidor — se conecta el día que haya
-// un mapa de registros que lo reciba.
+// y saturación con reporte de overflow», fases.md#z1). El mapa de registros
+// AXI-Lite ya existe (`rtl/drx_axil_regs.sv`, v1, Z1), pero deliberadamente NO
+// lo cubre todavía: exponer `overflow` fuera de `drx_ddc_top` obliga a tocar
+// sus puertos y los de `drx_ddc_quad_top.sv`, ya verificados bit-exacto contra
+// el modelo dorado (matriz L1, D-12) — pendiente explícito, ver la cabecera de
+// `config/registers.toml`. `drx_ddc_top` sigue sin exponerlo por lo mismo.
 
 `ifndef DRX_SATURATE_SV
 `define DRX_SATURATE_SV

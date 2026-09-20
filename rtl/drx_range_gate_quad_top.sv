@@ -41,6 +41,9 @@ module drx_range_gate_quad_top
     output logic signed [IQ_BITS-1:0] m_q    [N_CH],
     output logic                      m_last [N_CH],
 
+    // Write-1-to-clear por canal, desde el mapa de registros AXI-Lite — ver
+    // la cabecera de `drx_range_gate.sv`.
+    input  logic clear  [N_CH],
     output logic overrun[N_CH]
 );
 
@@ -66,6 +69,7 @@ module drx_range_gate_quad_top
           .m_q    (m_q[gc]),
           .m_last (m_last[gc]),
 
+          .clear  (clear[gc]),
           .overrun(overrun[gc])
       );
     end

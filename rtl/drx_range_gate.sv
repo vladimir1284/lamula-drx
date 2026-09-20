@@ -13,16 +13,22 @@
 // consumidor imponga. Es la primera vez en la cadena que hay backpressure de
 // verdad, y por diseño: aquí, y no antes.
 //
-// `overrun` se trata igual que `overflow` en `drx_saturate.sv`: sticky, sin
-// nada que lo lea todavía porque el mapa de registros AXI-Lite es trabajo
-// posterior de esta misma fase (fases.md#z1) — se conecta el día que exista.
-// Dispara si el consumidor no vació un banco durante el rayo entero que tardó
-// en llenarse el otro; con solo dos bancos ese es el único margen que hay, y
-// con cualquier consumidor a la velocidad de fabric (órdenes de magnitud por
-// encima de la tasa decimada) no debería dispararse nunca en operación normal.
-// No hay forma de frenar al DDC para evitarlo, así que la muestra entrante
-// sigue escribiéndose encima del banco no vaciado en vez de perderse en
-// silencio — el propio `overrun` es la señal de que eso pasó.
+// `overrun` es sticky: dispara si el consumidor no vació un banco durante el
+// rayo entero que tardó en llenarse el otro; con solo dos bancos ese es el
+// único margen que hay, y con cualquier consumidor a la velocidad de fabric
+// (órdenes de magnitud por encima de la tasa decimada) no debería dispararse
+// nunca en operación normal. No hay forma de frenar al DDC para evitarlo, así
+// que la muestra entrante sigue escribiéndose encima del banco no vaciado en
+// vez de perderse en silencio — el propio `overrun` es la señal de que eso
+// pasó.
+//
+// `clear` (nuevo, mapa de registros AXI-Lite — `rtl/drx_axil_regs.sv`, STATUS
+// write-1-to-clear): sin este puerto, `overrun` una vez disparado se queda en
+// alto para siempre (solo lo borra `rst_n`), así que firmware jamás podría ver
+// un SEGUNDO overrun tras limpiar el primero — no habría forma de rearmarlo.
+// Un evento de overrun nuevo el mismo ciclo que `clear` gana (ver el
+// `always_ff` de abajo): un fallo real nunca se pierde por una carrera con la
+// limpieza de firmware.
 //
 // `BINS_FINE`/`BINS_COARSE` son parámetros, no los `localparam` del paquete
 // directamente, por lo mismo que `DIV` lo es en `drx_heartbeat.sv`: para que
@@ -75,6 +81,8 @@ module drx_range_gate
     output logic signed [IQ_BITS-1:0] m_q,
     output logic                      m_last,
 
+    // Write-1-to-clear desde el mapa de registros AXI-Lite (ver cabecera).
+    input  logic clear,
     output logic overrun
 );
 
@@ -155,6 +163,12 @@ module drx_range_gate
       m_last_r  <= 1'b0;
       rd_from_bank1_r <= 1'b0;
     end else begin
+      // `clear` tiene prioridad más baja que un overrun nuevo el mismo ciclo:
+      // si las dos coinciden, el `overrun <= 1'b1` de más abajo se evalúa
+      // después en este mismo `always_ff` y gana (última asignación no
+      // bloqueante sobre la misma señal manda). Ver la cabecera del fichero.
+      if (clear) overrun <= 1'b0;
+
       // Escritura: nunca se detiene, sigue el ritmo de `s_valid`. El propio
       // dato (`mem0`/`mem1`) se escribe en los procesos de abajo, cada uno
       // bajo esta misma condición exacta más su propio banco.

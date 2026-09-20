@@ -35,6 +35,7 @@ async def _reset(dut) -> None:
     dut.s_q.value = 0
     dut.mode_coarse.value = 0
     dut.m_ready.value = 1
+    dut.clear.value = 0
     for _ in range(3):
         await RisingEdge(dut.clk)
     dut.rst_n.value = 1
@@ -211,3 +212,68 @@ async def test_overrun_se_dispara_si_el_lector_no_vacia_a_tiempo(dut):
 
     await _run_one_ray()
     assert int(dut.overrun.value) == 1, "overrun no se disparó al reusar un banco nunca leído"
+
+
+@cocotb.test()
+async def test_clear_limpia_overrun_y_permite_un_segundo_disparo(dut):
+    """`clear` (mapa de registros AXI-Lite) borra `overrun`, y un overrun
+    genuino posterior se vuelve a ver — sin esto, `overrun` es sticky para
+    siempre y firmware nunca podría rearmarlo (ver la cabecera del RTL).
+    """
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    dut.mode_coarse.value = 0
+    dut.m_ready.value = 0
+
+    async def _run_one_ray() -> None:
+        for n in range(BINS_FINE):
+            dut.s_valid.value = 1
+            dut.s_i.value = n
+            dut.s_q.value = n
+            await RisingEdge(dut.clk)
+        dut.s_valid.value = 0
+        await RisingEdge(dut.clk)
+
+    for _ in range(3):
+        await _run_one_ray()
+    assert int(dut.overrun.value) == 1, "precondición: overrun disparado tras el tercer rayo"
+
+    # Se sondea en vez de asumir un ciclo exacto: un valor recién escrito
+    # desde la corrutina justo al reanudar tras un `await RisingEdge` puede
+    # tardar un flanco extra en verse desde el lado de cocotb/Verilator —
+    # mismo tipo de desfase de un ciclo que ya documenta `_sample()` más
+    # arriba para valid/ready, aquí sobre una entrada en vez de un handshake.
+    dut.clear.value = 1
+    for _ in range(4):
+        await RisingEdge(dut.clk)
+        if int(dut.overrun.value) == 0:
+            break
+    else:
+        raise AssertionError("clear no limpió overrun en un margen razonable de ciclos")
+    dut.clear.value = 0
+
+    # Bancos ya sucios de la secuencia anterior (ninguno se ha vaciado nunca,
+    # `m_ready` sigue en 0): el siguiente rayo que reutilice un banco pendiente
+    # dispara un overrun NUEVO, y clear ya lo había limpiado — confirma que de
+    # verdad se rearmó, no que se quedó en 0 por casualidad.
+    await _run_one_ray()
+    assert int(dut.overrun.value) == 1, (
+        "overrun no se volvió a disparar tras limpiarlo con clear: no se rearmó"
+    )
+
+    # Un overrun genuino el mismo ciclo que `clear` tiene que ganar: no se
+    # puede perder un fallo real por una carrera con la limpieza de firmware.
+    dut.clear.value = 1
+    for n in range(BINS_FINE):
+        dut.s_valid.value = 1
+        dut.s_i.value = n
+        dut.s_q.value = n
+        await RisingEdge(dut.clk)
+    dut.s_valid.value = 0
+    dut.clear.value = 0
+    # Mismo ciclo de asentamiento que ya usa `_run_one_ray()` antes de que su
+    # llamador lea `overrun` — sin él, la lectura cae justo en el flanco en que
+    # `s_valid`/`clear` todavía se están soltando.
+    await RisingEdge(dut.clk)
+    assert int(dut.overrun.value) == 1, "el set debe ganar sobre un clear concurrente"

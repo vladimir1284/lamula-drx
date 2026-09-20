@@ -104,6 +104,7 @@ module tb_l1_ddc_range_tri;
   logic signed [IQ_BITS-1:0] gate_i    [N_CH];
   logic signed [IQ_BITS-1:0] gate_q    [N_CH];
   logic                      gate_last [N_CH];
+  logic                      gate_clear[N_CH];
   logic                      gate_overrun[N_CH];
 
   logic mode_coarse;
@@ -120,6 +121,12 @@ module tb_l1_ddc_range_tri;
       // Backpressure real ya la cubre L0 (tb_drx_range_gate.py); aquí el
       // lector nunca frena, igual que el resto de la cadena L1.
       assign gate_ready[gr] = 1'b1;
+      // Puerto `clear` (mapa de registros AXI-Lite) nuevo en `drx_range_gate`:
+      // el disparo de `overrun` y su limpieza ya los cubre
+      // `sim/tb/tb_drx_range_gate.py`/`sim/tb/tb_drx_axil_regs.py` en L0; aquí
+      // se ata a 0, igual que el resto de la cadena L1 no ejercita reset
+      // parcial de status.
+      assign gate_clear[gr] = 1'b0;
     end
   endgenerate
 
@@ -162,6 +169,7 @@ module tb_l1_ddc_range_tri;
       .m_q    (gate_q),
       .m_last (gate_last),
 
+      .clear  (gate_clear),
       .overrun(gate_overrun)
   );
 `else
@@ -183,7 +191,7 @@ module tb_l1_ddc_range_tri;
 
       logic unused_no_dut_ch;
       assign unused_no_dut_ch = &{1'b0, stim_valid[gu], stim_last[gu], stim_done[gu], stim_data[gu],
-                                   gate_ready[gu], ddc_valid[gu], ddc_i[gu], ddc_q[gu]};
+                                   gate_ready[gu], gate_clear[gu], ddc_valid[gu], ddc_i[gu], ddc_q[gu]};
     end
   endgenerate
 

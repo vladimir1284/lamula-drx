@@ -267,6 +267,35 @@ original, menos JESD y menos DMA.
     para Config A específicamente (esta corrida fue Config B por defecto — Tx + nominal + atenuado
     genérico, el `N_CH=3` no distingue cuál de las dos).
 
+!!! success "19-sep-2026 (más tarde): mapa de registros AXI-Lite v1, congelado — deja de ser el hueco más grande de Z1"
+    `rtl/drx_axil_regs.sv` (nuevo) más `config/registers.toml`/`tools/gen_registers.py` (mismo
+    patrón de fuente única + codegen que el contrato DRx↔DSP): VERSION (RO), CTRL (RW, bit 0 =
+    `mode_coarse`, sustituye al `localparam` fijo que tenía `drx_top.sv`) y STATUS (write-1-to-clear,
+    un bit por canal = `overrun` de `drx_range_gate_quad_top`, antes reducido a un solo bit
+    `debug_probe` sin significado). Detalle completo del mapa, semántica y lo que queda fuera en
+    [Mapa de registros AXI-Lite](registros.md).
+
+    Para que write-1-to-clear funcione de verdad (que un overrun *nuevo* tras limpiar el anterior se
+    vuelva a ver), `drx_range_gate.sv`/`drx_range_gate_quad_top.sv` ganan un puerto `clear` nuevo —
+    antes `overrun` era sticky para siempre, sin forma de rearmarlo. Cambio de una sola línea en el
+    `always_ff` de `overrun`, nada del dato I/Q ni de `mem0`/`mem1`; `sim/tb_sv/drx_l1_checker.sv` no
+    compara `overrun`, así que el riesgo sobre la bit-exactitud ya verificada es bajo, pero sigue
+    siendo un cambio de puertos en RTL ya verificado por xsim.
+
+    **Decidido explícitamente fuera de v1** (con vladimir, antes de implementar): el overflow de
+    saturación del DDC (`drx_saturate`, dentro de `drx_ddc_top`). Exponerlo obliga a tocar los
+    puertos de `drx_ddc_top.sv`/`drx_ddc_quad_top.sv`, que sí forman parte de la matriz de 16
+    corridas bit-exactas de D-12 — el costo de rehacerla no se justificaba para este primer corte.
+    Sigue pendiente, explícito, no descartado.
+
+    Verificado en este entorno con L0 real (Verilator/cocotb, `make check`, 80 tests: los 79 que ya
+    había más el mapa de registros nuevo): `sim/tb/tb_drx_axil_regs.py` (VERSION/CTRL/STATUS/W1C/
+    dirección reservada) y la ampliación de `sim/tb/tb_drx_range_gate.py` (el puerto `clear`: limpia,
+    rearma, y el set gana sobre un clear concurrente). **Pendiente, siguiente en la cola**: rehacer
+    la matriz L1 de range-gate contra xsim real (`tb_l1_ddc_range_tri.sv`, con Vivado ya en PATH en
+    esta máquina) para reconfirmar TLAST/I-Q tras el puerto `clear`, y volver a cerrar P&R con el
+    AXI-Lite ya integrado en `drx_top` (WNS a 62,5 MHz). No se da por cerrado hasta correr eso.
+
 ## Z2 — Motor de timing, triggers y PRF (semanas 9–13) { #z2 }
 
 Trabajo:

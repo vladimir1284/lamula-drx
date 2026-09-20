@@ -30,6 +30,9 @@ lint_off -rule UNUSEDPARAM -file "*/drx_params_pkg.sv"
 // con Vivado/Verilator ya en PATH.
 lint_off -rule UNUSEDPARAM -file "*/drx_ddc_ip_pkg.sv"
 
+// drx_regs_pkg: mismo falso positivo que drx_ddc_ip_pkg.sv de arriba.
+lint_off -rule UNUSEDPARAM -file "*/drx_regs_pkg.sv"
+
 // xilinx_ip_verilator_stubs.sv (ver su propia cabecera) declara los cuatro
 // blackboxes de IP que necesita `--top-module drx_top` en un solo fichero a
 // propósito, no uno por módulo — son piezas del mismo problema (dar forma a
