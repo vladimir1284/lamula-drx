@@ -296,6 +296,47 @@ original, menos JESD y menos DMA.
     esta máquina) para reconfirmar TLAST/I-Q tras el puerto `clear`, y volver a cerrar P&R con el
     AXI-Lite ya integrado en `drx_top` (WNS a 62,5 MHz). No se da por cerrado hasta correr eso.
 
+!!! success "20-sep-2026: mapa de registros v2 (OVERFLOW) y matriz L1 de 16 corridas reconfirmada contra xsim real"
+    **Corrección de un supuesto de la entrada anterior:** se creía que este entorno no tenía acceso
+    a Vivado. Falso — `vivado`/`xsim` 2022.2 están instalados y en PATH
+    (`/home/orlando/tools/Xilinx/Vivado/2022.2`), confirmado corriendo el flujo real, no solo
+    comprobando el binario. Todo lo que las entradas de más arriba dejaban como "pendiente, fuera de
+    este entorno" se corrió de verdad esta misma noche.
+
+    **Validación del toolchain, primer caso suelto:** `tcl/sim_l1.tcl -case tono_if__fine` contra el
+    `drx_ddc_top` sin tocar — **PASS** (315/315 dentro de tolerancia D-12), confirmando que el flujo
+    completo (IP real, `drx_l1_checker.sv` con `TOLERANCE_LSB`) sigue funcionando en esta máquina
+    antes de comprometerse a la matriz completa.
+
+    **Mapa de registros v2 — OVERFLOW:** con el toolchain confirmado, se implementó el pendiente que
+    la sesión anterior dejó explícito: overflow de saturación del DDC en el mapa de registros.
+    `drx_ddc_top.sv` gana un puerto `overflow` (OR de las dos ramas I/Q, combinacional, sin estado
+    nuevo — el mismo criterio que `ray_flag.ddc_overflow` del contrato: por rayo, no por componente),
+    propagado por `drx_ddc_quad_top.sv`. El latch sticky + write-1-to-clear vive dentro de
+    `drx_axil_regs.sv` (no en `drx_ddc_top`, a propósito: `drx_saturate` es deliberadamente
+    combinacional y sin estado — ver su cabecera), como registro nuevo OVERFLOW en `0x0C`.
+    `config/registers.toml` sube a `schema_version = 2`. Detalle completo en
+    [Mapa de registros AXI-Lite](registros.md).
+
+    **Matriz L1 de D-12 reconfirmada tras el cambio de puertos** (`tcl/sim_l1.tcl`, los 8 casos ×
+    {fine, coarse} contra `tb_l1_ddc.sv`, 2 en paralelo): **16/16 PASS**, dentro de la tolerancia de
+    D-12, mismo patrón de discrepancias ya documentado (offset DC exacto bit a bit; ruido/desbalance/
+    sobre-escala dentro de ±5 LSB). Confirma que exponer `overflow` no movió ni un bit del dato I/Q.
+    Cada corrida real tardó entre 20 y 30 minutos contra xsim (IP de Xilinx real, no Verilator) — la
+    matriz completa se corrió durante la noche, no en el hilo interactivo.
+
+    **`tb_l1_ddc_range_tri.sv` (Config A/B, N_CH=3, con range gating) tras el puerto `clear` nuevo de
+    `drx_range_gate` — también reconfirmado:** fine y coarse, `tcl/sim_l1_range_tri.tcl`, los 3
+    canales de cada corrida (`tono_if`, `tono_desplazado`, `dos_tonos`) **PASS** — dentro de
+    tolerancia D-12 **y TLAST bit a bit** con el modelo dorado en los 6/6 (3 canales × 2 modos).
+    Confirma que el puerto `clear` nuevo no movió el dato I/Q ni el framing de rayos ya verificado.
+
+    **Con esto, las dos reverificaciones L1 que este cambio necesitaba quedan cerradas**: matriz de
+    D-12 (16/16) y range-gate tri (6/6). Lo único que sigue pendiente de Z1 por este lado es volver a
+    cerrar P&R (`-step impl`, WNS a 62,5 MHz) con el AXI-Lite y los puertos `overflow`/`clear` ya
+    integrados en `drx_top` — el P&R del 19-sep fue sobre el `drx_top` de antes del mapa de
+    registros.
+
 ## Z2 — Motor de timing, triggers y PRF (semanas 9–13) { #z2 }
 
 Trabajo:

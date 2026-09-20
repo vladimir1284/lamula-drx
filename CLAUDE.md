@@ -55,16 +55,17 @@ fases.md#z1` es la fuente viva:
   Dos hallazgos de síntesis real en `drx_range_gate.sv` (RTL ya verificado por xsim, no código
   nuevo) tuvieron que corregirse en el camino — ver `fases.md#z1`, entrada del 19-sep — sin cambiar
   su comportamiento (reverificado bit a bit / D-12 contra xsim tras cada uno).
-- **Mapa de registros AXI-Lite:** v1 **congelado**, `rtl/drx_axil_regs.sv` + `config/registers.toml`
+- **Mapa de registros AXI-Lite:** v2, `rtl/drx_axil_regs.sv` + `config/registers.toml`
   (fuente única, codegen con `tools/gen_registers.py`, mismo patrón que el contrato DRx↔DSP).
-  VERSION (RO), CTRL (RW, `mode_coarse`, sustituye el `localparam` fijo que tenía `drx_top`) y
-  STATUS (write-1-to-clear, `overrun` por canal de range-gate). Detalle en
-  `docs/implementacion/registros.md`. **NO cubre** el overflow de saturación del DDC — decidido
-  explícitamente fuera de v1 para no tocar los puertos de `drx_ddc_top.sv`/`drx_ddc_quad_top.sv`,
-  ya verificados bit-exacto bajo D-12; pendiente explícito. Verificado con L0 real (Verilator/cocotb,
-  80/80 en `make check`); **pendiente correr xsim/P&R reales** con el nuevo puerto `clear` de
-  `drx_range_gate` (Vivado está en PATH en esta máquina, ver `docs/implementacion/fases.md#z1`,
-  entrada del 19-sep más tarde) antes de dar esto por cerrado del todo.
+  VERSION (RO), CTRL (RW, `mode_coarse`, sustituye el `localparam` fijo que tenía `drx_top`),
+  STATUS (write-1-to-clear, `overrun` por canal de range-gate) y OVERFLOW (write-1-to-clear,
+  overflow de saturación del DDC por canal, añadido 20-sep-2026). Detalle en
+  `docs/implementacion/registros.md`. Verificado con L0 real (80/80 en `make check`) **y con xsim
+  real**: la matriz completa de D-12 (16 combinaciones, `tb_l1_ddc.sv`) se reconfirmó tras añadir
+  el puerto `overflow` — **16/16 PASS** — y `tb_l1_ddc_range_tri.sv` (fine/coarse, 3 canales cada
+  uno) tras el puerto `clear` de `drx_range_gate` — **6/6 PASS**, TLAST bit a bit incluido (ver
+  `docs/implementacion/fases.md#z1`, entrada del 20-sep). **Sigue pendiente:** volver a cerrar P&R
+  con el AXI-Lite ya integrado en `drx_top`.
 - **`report_utilization`/timing reales:** publicados para el datapath de 3 canales de verdad
   (post-route: LUT 7,6 %, BRAM ~21 %, DSP48 153/220 — 69,6 %, coincide con la cifra ya medida fuera
   de contexto en P-12). Corresponde a Config B genérica (`N_CH=3` no distingue A de B); falta medir
@@ -102,25 +103,24 @@ de ZedBoard y el project plan original de 34 semanas para la ZU9.
 
 Para cerrar Z1 de verdad, en orden:
 
-1. **Rehacer la matriz L1 de range-gate contra xsim real** (`tb_l1_ddc_range_tri.sv`) y volver a
-   cerrar P&R (WNS a 62,5 MHz) con el AXI-Lite ya integrado en `drx_top` — el mapa de registros v1
-   ya está escrito y verificado con L0 (Verilator/cocotb), pero el puerto `clear` nuevo de
-   `drx_range_gate` todavía no se reconfirmó contra la IP real de Xilinx. Vivado/xsim están en PATH
-   en esta máquina (`/home/orlando/.local/bin/vivado`), así que esto ya no depende de conseguir
-   acceso, solo de correrlo.
-2. **Overflow de saturación del DDC en el mapa de registros** (`drx_saturate`, dentro de
-   `drx_ddc_top`) — decidido explícitamente fuera de v1 el 19-sep-2026 para no tocar los puertos de
-   `drx_ddc_top.sv`/`drx_ddc_quad_top.sv` sin necesidad; ahora que el mapa existe, es lo siguiente
-   que se le añade. Exige rehacer la matriz L1 completa (16 corridas) tras el cambio de puertos.
-3. **Conmutación en caliente fino/grueso** (continuidad de fase en `drx_ddc_top`/`drx_range_gate`) —
+1. **Volver a cerrar P&R** (`-step impl`, WNS a 62,5 MHz) con el AXI-Lite ya integrado en `drx_top`
+   y los puertos `overflow`/`clear` nuevos — el P&R del 19-sep fue sobre el `drx_top` de antes del
+   mapa de registros. Vivado/xsim están en PATH en esta máquina
+   (`/home/orlando/tools/Xilinx/Vivado/2022.2`), confirmado corriendo el flujo real, no solo el
+   binario.
+2. **Conmutación en caliente fino/grueso** (continuidad de fase en `drx_ddc_top`/`drx_range_gate`) —
    diferida desde el diseño original, sin empezar.
-4. Medir `report_utilization`/timing real de Config A específicamente (Tx+H+V) — la corrida del
+3. Medir `report_utilization`/timing real de Config A específicamente (Tx+H+V) — la corrida del
    19-sep midió Config B genérica (`N_CH=3` no distingue cuál).
-5. Montar el runner de CI `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` — sigue
+4. Montar el runner de CI `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` — sigue
    pendiente desde Z0, el job `gateware` de `.github/workflows/ci.yml` ya está escrito.
 
 `sim/tb_sv/drx_l1_checker.sv` ya tiene tolerancia (`TOLERANCE_LSB`, D-12) y la matriz de 16 corrió
-16/16 «PASS» contra xsim real, confirmado — ese punto ya está cerrado, no solo decidido.
+16/16 «PASS» contra xsim real, confirmado — ese punto ya está cerrado, no solo decidido. La misma
+matriz se volvió a correr completa el 20-sep-2026 tras añadir el puerto `overflow` a
+`drx_ddc_top.sv`/`drx_ddc_quad_top.sv` (mapa de registros v2): **16/16 PASS** de nuevo.
+`tb_l1_ddc_range_tri.sv` (fine/coarse, 3 canales cada uno) también se reconfirmó el mismo día tras
+el puerto `clear` de `drx_range_gate`: **6/6 PASS**, TLAST bit a bit incluido.
 
 Y no toques `R₁`/`R₂` ni `fs` en `config/params.toml` hasta que haya ADR: P-08 sigue abierto (P-01
 ya cerró — exactitud requerida). Cuando lo haya, el cambio es de dos líneas más

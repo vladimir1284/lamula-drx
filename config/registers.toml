@@ -6,24 +6,23 @@
 # a mano — regenerar con `python3 tools/gen_registers.py` tras cualquier cambio
 # aquí; el CI falla si no coinciden (`--check`).
 #
-# v1, CONGELADO para Z1 (docs/implementacion/fases.md#z1). Ver
-# docs/implementacion/registros.md para la explicación completa, incluida la
-# semántica de "access" de cada registro.
+# v1 (19-sep-2026) congeló CTRL/STATUS/VERSION sin el overflow de saturación
+# del DDC a propósito (exponerlo exigía tocar los puertos de
+# drx_ddc_top.sv/drx_ddc_quad_top.sv, ya verificados bit-exacto bajo D-12,
+# y el costo de rehacer esa matriz no se justificaba para el primer corte).
+# v2 (misma sesión, más tarde) añade OVERFLOW ya con esos puertos añadidos.
+# La matriz L1 de 16 corridas contra xsim real (tb_l1_ddc.sv, D-12) se
+# reconfirmó tras el cambio de puertos: 16/16 PASS, 20-sep-2026 — ver
+# docs/implementacion/registros.md.
 #
-# Deliberadamente NO cubre todavía:
-#   - El overflow de saturación del DDC (`drx_saturate`, dentro de
-#     `drx_ddc_top`). Exponerlo obliga a tocar los puertos de
-#     `drx_ddc_top.sv`/`drx_ddc_quad_top.sv`, ya verificados bit-exacto contra
-#     el modelo dorado (matriz L1, 16/16 PASS bajo D-12) — el costo de rehacer
-#     esa matriz no se justifica para este primer corte. Pendiente explícito,
-#     no descartado.
-#   - Ningún registro de Z2 (triggers, PRF): no se diseña por adelantado.
+# Deliberadamente sigue sin cubrir cualquier registro de Z2 (triggers, PRF):
+# no se diseña por adelantado.
 
-schema_version = 1
+schema_version = 2
 
-# Bytes direccionables: 2^addr_width = 64 B = 16 palabras de 32 bits. Dos
-# registros ocupan hoy las dos primeras palabras; el resto queda reservado sin
-# implementar (lee 0, escritura sin efecto) para Z2, sin diseñarlo ahora.
+# Bytes direccionables: 2^addr_width = 64 B = 16 palabras de 32 bits. Tres
+# registros ocupan hoy las tres primeras palabras; el resto queda reservado
+# sin implementar (lee 0, escritura sin efecto) para Z2, sin diseñarlo ahora.
 addr_width = 6
 
 [[register]]
@@ -43,3 +42,9 @@ name = "status"
 offset = 0x08
 access = "w1c"
 doc = "Bit c: overrun sticky del canal c de range-gate (drx_range_gate_quad_top.overrun). Escribir 1 en el bit c lo limpia en origen (nuevo puerto `clear` de drx_range_gate); si hay un overrun genuino el mismo ciclo que el clear, el set gana y el bit queda en 1. Bits >= N_CH leen 0."
+
+[[register]]
+name = "overflow"
+offset = 0x0C
+access = "w1c"
+doc = "Bit c: overflow sticky de la saturación final del DDC del canal c (drx_ddc_quad_top.overflow, combinación de las ramas I/Q de drx_ddc_top). A diferencia de STATUS, el latch sticky vive AQUÍ, dentro de drx_axil_regs, no en drx_ddc_top: la fuente (drx_saturate) es deliberadamente combinacional, sin estado, y añadir un latch dentro de un núcleo ya verificado bit a bit (D-12) habría sido tocar más de lo necesario para un registro de solo lectura. Escribir 1 en el bit c lo limpia; si hay un overflow genuino el mismo ciclo que el clear, el set gana. Bits >= N_CH leen 0."

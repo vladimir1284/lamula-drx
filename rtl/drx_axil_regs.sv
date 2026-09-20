@@ -1,4 +1,4 @@
-// Mapa de registros AXI-Lite de `drx_top` — v1, congelado para Z1
+// Mapa de registros AXI-Lite de `drx_top` — Z1
 // (docs/implementacion/registros.md, config/registers.toml es la fuente única
 // de verdad de los offsets que importa este módulo vía `drx_regs_pkg`).
 //
@@ -28,8 +28,14 @@
 // `drx_range_gate.sv`): no se puede perder un fallo real por una carrera con
 // firmware limpiando el anterior.
 //
-// v1 NO expone el overflow de saturación del DDC (`drx_saturate`, dentro de
-// `drx_ddc_top`) — ver la cabecera de `config/registers.toml` para por qué.
+// OVERFLOW (offset REG_OVERFLOW_ADDR, añadido en v2) — bit `c` es el overflow
+// de saturación del canal `c` (`drx_ddc_quad_top.overflow`, combinación de
+// las ramas I/Q de `drx_ddc_top`). A DIFERENCIA de STATUS, el latch sticky
+// vive AQUÍ, no en la fuente: `drx_saturate` es deliberadamente combinacional
+// y sin estado (ver su propia cabecera), así que este bloque es quien lo
+// convierte en sticky-con-W1C, con la misma prioridad set-sobre-clear que
+// STATUS. No hace falta un puerto de vuelta hacia `drx_ddc_top` — el clear no
+// tiene que llegar a ninguna fuente externa, se resuelve entero aquí dentro.
 
 `ifndef DRX_AXIL_REGS_SV
 `define DRX_AXIL_REGS_SV
@@ -77,7 +83,11 @@ module drx_axil_regs
     // indexable vía VPI en esta versión). `drx_top.sv` hace el empaquetado/
     // desempaquetado contra los arrays de `drx_range_gate_quad_top`.
     input  logic [N_CH-1:0] overrun_in,
-    output logic [N_CH-1:0] overrun_clear
+    output logic [N_CH-1:0] overrun_clear,
+
+    // Overflow de saturación del DDC, por canal (ver cabecera: sticky
+    // mantenido dentro de este módulo, no en la fuente).
+    input logic [N_CH-1:0] overflow_in
 );
 
   // `s_axi_wstrb` no se usa a propósito (ver cabecera); se silencia en vez de
@@ -147,6 +157,27 @@ module drx_axil_regs
     end
   end
 
+  // OVERFLOW: sticky mantenido aquí (ver cabecera del módulo y de
+  // `config/registers.toml`), no en `drx_ddc_top`. El `if (overflow_in[c])`
+  // antes del `else if` de clear es lo que hace que el set gane sobre un
+  // clear concurrente, mismo orden de prioridad que ya usa
+  // `drx_range_gate.sv` para `overrun`.
+  logic [N_CH-1:0] overflow_sticky_r;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      overflow_sticky_r <= '0;
+    end else begin
+      for (int c = 0; c < N_CH; c++) begin
+        if (overflow_in[c]) begin
+          overflow_sticky_r[c] <= 1'b1;
+        end else if (write_commit && (awaddr_r == REG_OVERFLOW_ADDR) && wdata_r[c]) begin
+          overflow_sticky_r[c] <= 1'b0;
+        end
+      end
+    end
+  end
+
   assign s_axi_bresp = 2'b00;  // OKAY siempre, ver cabecera
 
   always_ff @(posedge clk or negedge rst_n) begin
@@ -191,6 +222,9 @@ module drx_axil_regs
       REG_CTRL_ADDR:    rdata_next[0] = mode_coarse_r;
       REG_STATUS_ADDR: begin
         for (int c = 0; c < N_CH; c++) rdata_next[c] = overrun_in[c];
+      end
+      REG_OVERFLOW_ADDR: begin
+        for (int c = 0; c < N_CH; c++) rdata_next[c] = overflow_sticky_r[c];
       end
       default: rdata_next = 32'h0000_0000;  // dirección reservada: lee 0
     endcase

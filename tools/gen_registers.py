@@ -28,9 +28,9 @@ BANNER_LINES = [
 ]
 
 NOTE_LINES = [
-    "Mapa de registros AXI-Lite de drx_top -- v1, congelado para Z1",
-    "(docs/implementacion/registros.md). NO cubre el overflow de saturacion",
-    "del DDC ni ningun registro de Z2: ver la cabecera de config/registers.toml.",
+    "Mapa de registros AXI-Lite de drx_top (Z1). Ver la cabecera de",
+    "config/registers.toml para el historial de versiones y",
+    "docs/implementacion/registros.md para la descripcion completa.",
 ]
 
 

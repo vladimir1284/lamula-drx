@@ -62,7 +62,11 @@ module drx_ddc_quad_top
 
     output logic                      m_valid[N_CH],
     output logic signed [IQ_BITS-1:0] m_i    [N_CH],
-    output logic signed [IQ_BITS-1:0] m_q    [N_CH]
+    output logic signed [IQ_BITS-1:0] m_q    [N_CH],
+
+    // Overflow de saturación por canal — ver la cabecera del puerto homónimo
+    // en `drx_ddc_top.sv`. Mapa de registros AXI-Lite v1.1.
+    output logic overflow[N_CH]
 );
 
   genvar gc;
@@ -81,7 +85,9 @@ module drx_ddc_quad_top
 
           .m_valid(m_valid[gc]),
           .m_i    (m_i[gc]),
-          .m_q    (m_q[gc])
+          .m_q    (m_q[gc]),
+
+          .overflow(overflow[gc])
       );
     end
   endgenerate

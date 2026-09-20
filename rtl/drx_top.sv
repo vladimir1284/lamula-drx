@@ -9,13 +9,12 @@
 //
 // Deliberadamente incompleto todavía, documentado aquí para que no se lea como
 // olvido:
-//   - `mode_coarse` y la visibilidad del `overrun` por canal ya son AXI-Lite
-//     de verdad (`rtl/drx_axil_regs.sv`, mapa v1 congelado — ver
-//     `docs/implementacion/registros.md`), no el `localparam ModeCoarse` fijo
-//     que tenía este fichero antes. Lo que ese mapa v1 NO cubre todavía es el
-//     overflow de saturación del DDC (`drx_saturate`, dentro de
-//     `drx_ddc_top`) — pendiente explícito, ver la cabecera de
-//     `config/registers.toml`.
+//   - `mode_coarse`, el `overrun` por canal de range-gate y el `overflow` de
+//     saturación del DDC ya son AXI-Lite de verdad (`rtl/drx_axil_regs.sv`,
+//     ver `docs/implementacion/registros.md`), no el `localparam ModeCoarse`
+//     fijo que tenía este fichero antes. El overflow se añadió después que
+//     mode_coarse/overrun (v2 del mapa, misma fase Z1) — ver la cabecera de
+//     `config/registers.toml` para el porqué de esa secuencia.
 //   - `m_ready` de range-gate va siempre a alto: no hay consumidor real (el
 //     AXI DMA es Z4).
 //   - Las salidas de I/Q de range-gate no tienen consumidor real todavía (ni
@@ -57,8 +56,8 @@ module drx_top
     output logic led_heartbeat,
     output logic debug_probe,
 
-    // Mapa de registros AXI-Lite — v1, congelado para Z1. Ver
-    // `rtl/drx_axil_regs.sv` y `docs/implementacion/registros.md`.
+    // Mapa de registros AXI-Lite (Z1). Ver `rtl/drx_axil_regs.sv` y
+    // `docs/implementacion/registros.md`.
     input  logic [REGS_ADDR_WIDTH-1:0] s_axi_awaddr,
     input  logic                       s_axi_awvalid,
     output logic                       s_axi_awready,
@@ -111,6 +110,16 @@ module drx_top
     for (int c = 0; c < N_CH; c++) gate_clear[c] = gate_clear_packed[c];
   end
 
+  // Mismo empaquetado que arriba, para el overflow de saturación del DDC
+  // (`drx_ddc_quad_top.overflow`, array sin empaquetar) hacia OVERFLOW de
+  // `drx_axil_regs` (vector empaquetado, ver la cabecera de ese módulo).
+  logic                      ddc_overflow[N_CH];
+  logic [N_CH-1:0]           ddc_overflow_packed;
+
+  always_comb begin
+    for (int c = 0; c < N_CH; c++) ddc_overflow_packed[c] = ddc_overflow[c];
+  end
+
   drx_axil_regs #(
       .N_CH(N_CH)
   ) u_regs (
@@ -138,7 +147,9 @@ module drx_top
       .mode_coarse(mode_coarse),
 
       .overrun_in   (gate_overrun_packed),
-      .overrun_clear(gate_clear_packed)
+      .overrun_clear(gate_clear_packed),
+
+      .overflow_in(ddc_overflow_packed)
   );
 
   // Mismo `` `ifdef DRX_PLATFORM_ZU9 `` que ya selecciona FS_HZ en
@@ -189,7 +200,9 @@ module drx_top
 
       .m_valid(ddc_valid),
       .m_i    (ddc_i),
-      .m_q    (ddc_q)
+      .m_q    (ddc_q),
+
+      .overflow(ddc_overflow)
   );
 
   logic gate_ready[N_CH];

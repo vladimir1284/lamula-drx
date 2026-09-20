@@ -1,5 +1,5 @@
-"""L0 — `drx_axil_regs`, el mapa de registros AXI-Lite de `drx_top` (v1,
-congelado para Z1, ver `docs/implementacion/registros.md`).
+"""L0 — `drx_axil_regs`, el mapa de registros AXI-Lite de `drx_top` (Z1, ver
+`docs/implementacion/registros.md`).
 
 Sin `cocotbext-axi` en el árbol (`requirements-dev.txt` solo trae `cocotb`
 puro) — los write/read de abajo son un maestro AXI-Lite mínimo escrito a mano,
@@ -28,9 +28,10 @@ N_CH = 3
 REG_VERSION_ADDR = 0x00
 REG_CTRL_ADDR = 0x04
 REG_STATUS_ADDR = 0x08
-REG_RESERVED_ADDR = 0x0C
+REG_OVERFLOW_ADDR = 0x0C
+REG_RESERVED_ADDR = 0x10
 
-REGS_VERSION = 1
+REGS_VERSION = 2
 
 
 async def _reset(dut) -> None:
@@ -45,6 +46,7 @@ async def _reset(dut) -> None:
     dut.s_axi_araddr.value = 0
     dut.s_axi_rready.value = 1
     dut.overrun_in.value = 0
+    dut.overflow_in.value = 0
     for _ in range(3):
         await RisingEdge(dut.clk)
     dut.rst_n.value = 1
@@ -184,6 +186,71 @@ async def test_status_write_1_to_clear_pulsa_overrun_clear(dut):
 
     await RisingEdge(dut.clk)
     assert int(dut.overrun_clear.value) == 0, "el pulso de clear dura un solo ciclo"
+
+
+@cocotb.test()
+async def test_overflow_es_sticky_y_write_1_to_clear_rearma(dut):
+    """OVERFLOW, a diferencia de STATUS, LATCHEA `overflow_in`: sigue en 1
+    aunque la fuente vuelva a 0 (sticky vive en `drx_axil_regs`, no en la
+    fuente — ver la cabecera del módulo). W1C lo limpia, y un overflow
+    genuino posterior se vuelve a ver (rearme).
+    """
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    assert await axil_read(dut, REG_OVERFLOW_ADDR) == 0
+
+    # Un pulso de un ciclo en el canal 1 basta para que quede latcheado.
+    dut.overflow_in.value = 0b010
+    await RisingEdge(dut.clk)
+    dut.overflow_in.value = 0b000
+    await RisingEdge(dut.clk)
+    assert await axil_read(dut, REG_OVERFLOW_ADDR) == 0b010, (
+        "OVERFLOW debe seguir en 1 aunque overflow_in ya haya vuelto a 0 (sticky)"
+    )
+
+    await axil_write(dut, REG_OVERFLOW_ADDR, 0b010)
+    assert await axil_read(dut, REG_OVERFLOW_ADDR) == 0, "write-1-to-clear no limpió OVERFLOW"
+
+    # Rearme: un segundo evento en el mismo canal, tras limpiar el primero,
+    # se tiene que volver a ver.
+    dut.overflow_in.value = 0b010
+    await RisingEdge(dut.clk)
+    dut.overflow_in.value = 0b000
+    await RisingEdge(dut.clk)
+    assert await axil_read(dut, REG_OVERFLOW_ADDR) == 0b010, "OVERFLOW no se rearmó tras el clear"
+
+
+@cocotb.test()
+async def test_overflow_set_gana_sobre_clear_concurrente(dut):
+    """Un overflow genuino el mismo ciclo que el W1C no se debe perder."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    dut.s_axi_awaddr.value = REG_OVERFLOW_ADDR
+    dut.s_axi_awvalid.value = 1
+    dut.s_axi_wdata.value = 0b1
+    dut.s_axi_wvalid.value = 1
+    dut.overflow_in.value = 0b1  # mantenido durante toda la ventana del write
+
+    aw_pending = True
+    w_pending = True
+    for _ in range(8):
+        aw_fires = aw_pending and int(dut.s_axi_awready.value)
+        w_fires = w_pending and int(dut.s_axi_wready.value)
+        await RisingEdge(dut.clk)
+        if aw_fires:
+            dut.s_axi_awvalid.value = 0
+            aw_pending = False
+        if w_fires:
+            dut.s_axi_wvalid.value = 0
+            w_pending = False
+
+    dut.overflow_in.value = 0
+    await RisingEdge(dut.clk)
+    assert await axil_read(dut, REG_OVERFLOW_ADDR) == 0b1, (
+        "el set debe ganar sobre un clear concurrente"
+    )
 
 
 @cocotb.test()

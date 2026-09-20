@@ -73,7 +73,17 @@ module drx_ddc_top
 
     output logic                       m_valid,
     output logic signed [IQ_BITS-1:0] m_i,
-    output logic signed [IQ_BITS-1:0] m_q
+    output logic signed [IQ_BITS-1:0] m_q,
+
+    // Overflow de la saturación final (drx_saturate), combinado de las dos
+    // ramas I/Q (`g_branch[0]`/`g_branch[1]`, ver el `assign` tras el
+    // `endgenerate`) — un solo bit por canal, igual granularidad que
+    // `overrun` en `drx_range_gate`. Mapa de registros AXI-Lite v1.1
+    // (docs/implementacion/registros.md); combinacional, sin latch aquí — el
+    // latch sticky + write-1-to-clear vive en `drx_axil_regs.sv`, no en este
+    // núcleo ya verificado bit a bit (D-12): añadir estado aquí sería tocar
+    // más de lo necesario para un solo puerto de solo lectura.
+    output logic overflow
 );
 
   // s_last no tiene consumidor todavía (ver aviso arriba); se silencia en vez
@@ -388,12 +398,13 @@ module drx_ddc_top
           .overflow(branch_overflow)
       );
 
-      // reservado para status/BITE (ver drx_saturate.sv); sin consumidor hoy.
-      // fir_ready/hb_ready se capturan por si acaso (visibilidad en forma de
-      // onda / debug) pero no se usan para backpressurear, por la razón de
-      // margen de tasa de la nota de arriba.
-      logic unused_overflow;
-      assign unused_overflow = &{1'b0, branch_overflow, fir_ready, hb_ready};
+      // `branch_overflow` ya tiene consumidor real (puerto `overflow` de este
+      // módulo, combinado tras el `endgenerate` de abajo) — ver la cabecera
+      // del puerto. fir_ready/hb_ready se capturan por si acaso (visibilidad
+      // en forma de onda / debug) pero no se usan para backpressurear, por la
+      // razón de margen de tasa de la nota de arriba; esos dos sí se silencian.
+      logic unused_ready;
+      assign unused_ready = &{1'b0, fir_ready, hb_ready};
 
       if (gi == 0) begin : g_out_i
         assign m_i    = branch_sat;
@@ -408,6 +419,12 @@ module drx_ddc_top
   // aceptar muestra nueva. Las dos ramas son idénticas y deberían responder
   // el mismo ciclo, pero se comprueban las dos en vez de asumirlo.
   assign mix_ready = g_branch[0].cic_ready && g_branch[1].cic_ready;
+
+  // Overflow combinado: basta con que UNA de las dos componentes (I o Q)
+  // sature para que la muestra completa cuente como saturada — mismo
+  // criterio que `ray_flag.ddc_overflow` del contrato DRx↔DSP (bandera por
+  // rayo, no por componente).
+  assign overflow = g_branch[0].branch_overflow || g_branch[1].branch_overflow;
 
 endmodule : drx_ddc_top
 
