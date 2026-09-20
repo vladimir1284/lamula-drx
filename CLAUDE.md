@@ -72,11 +72,13 @@ fases.md#z1` es la fuente viva:
 - **P&R re-cerrado con el AXI-Lite integrado, 20-sep-2026:** `-step impl` — **WNS = 2,528 ns,
   WHS = 0,017 ns** ("All user specified timing constraints are met"). Post-route: LUT 7,61 %
   (4049/53200), registros 8,33 % (8865/106400), BRAM Tile 21,07 % (29,5/140), **DSP48 111/220
-  (50,45 %)** — cifra que **no cuadra** con la medida el 19-sep (153/220, 69,6 %) para
-  prácticamente el mismo datapath; una inspección rápida no encontró eliminación de código muerto
-  de la rama gruesa, pero la discrepancia sigue sin explicar — ver `fases.md#z1`, entrada del
-  20-sep más tarde. El propio gate de `tcl/build.tcl` solo comprueba WNS de setup, no de hold (el
-  hold pasó brevemente a negativo en un reporte intermedio antes de resolverse solo).
+  (50,45 %) — cifra correcta para presupuesto de recursos, ya explicada** (20-sep, más tarde): el
+  153/220 del 19-sep era una medición de post-síntesis, no de post-rutamiento (se generó a mano,
+  fuera del flujo de `tcl/build.tcl`); dentro de la misma corrida del 20-sep, post-síntesis también
+  mide 153/220 y cae a 111/220 recién al rutar, toda la caída dentro de las seis instancias de
+  `fir_compiler_halfband` — ver `fases.md#z1`, entrada del 20-sep más tarde. El propio gate de
+  `tcl/build.tcl` solo comprueba WNS de setup, no de hold (el hold pasó brevemente a negativo en un
+  reporte intermedio antes de resolverse solo).
 - **Conmutación en caliente fino/grueso:** diferida explícitamente, sin empezar (`rtl/drx_ddc_top.sv`,
   `rtl/drx_range_gate.sv`).
 - Nuevo hallazgo abierto, no bloqueante: [P-14](docs/alcance/pendientes.md#p-14) — falta evaluar la
@@ -115,18 +117,19 @@ Para cerrar Z1 de verdad, en orden:
    ver más abajo), así que el mapa de registros existe y está verificado pero **no es alcanzable
    desde firmware de verdad todavía**. Hace falta un PS7 (o un puente JTAG-a-AXI) instanciado en
    este repo — no existe ni se ha diseñado. Nuevo, no estaba en esta lista antes del P&R del 20-sep.
-2. **Explicar la discrepancia de DSP48** entre el P&R del 19-sep (153/220) y el del 20-sep con el
-   AXI-Lite integrado (111/220) para prácticamente el mismo datapath — ver `fases.md#z1`, entrada
-   del 20-sep. No se investigó a fondo; no confiar en ninguna de las dos cifras para presupuesto de
-   recursos hasta resolverlo.
-3. **Conmutación en caliente fino/grueso** (continuidad de fase en `drx_ddc_top`/`drx_range_gate`) —
+2. **Conmutación en caliente fino/grueso** (continuidad de fase en `drx_ddc_top`/`drx_range_gate`) —
    diferida desde el diseño original, sin empezar.
-4. Medir `report_utilization`/timing real de Config A específicamente (Tx+H+V) — las corridas hasta
+3. Medir `report_utilization`/timing real de Config A específicamente (Tx+H+V) — las corridas hasta
    ahora midieron Config B genérica (`N_CH=3` no distingue cuál).
-5. Montar el runner de CI `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` — sigue
+4. Montar el runner de CI `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` — sigue
    pendiente desde Z0, el job `gateware` de `.github/workflows/ci.yml` ya está escrito. Vivado/xsim
    están en PATH en esta máquina (`/home/orlando/tools/Xilinx/Vivado/2022.2`), confirmado corriendo
    el flujo real (síntesis + P&R + xsim), no solo el binario.
+
+La discrepancia de DSP48 entre el P&R del 19-sep (153/220) y el del 20-sep (111/220) ya **no** está
+en esta lista: quedó explicada el 20-sep más tarde — era una comparación entre post-síntesis y
+post-rutamiento, no entre dos builds. **111/220 es la cifra correcta** para presupuesto de recursos.
+Detalle en `fases.md#z1`.
 
 `sim/tb_sv/drx_l1_checker.sv` ya tiene tolerancia (`TOLERANCE_LSB`, D-12) y la matriz de 16 corrió
 16/16 «PASS» contra xsim real, confirmado — ese punto ya está cerrado, no solo decidido. La misma

@@ -116,7 +116,10 @@ sitios distintos:
 - **P&R — re-cerrado, 20-sep-2026** (`-step impl`, con `drx_axil_regs` integrado y sus puertos
   atados a valores inertes — ver la sección de arriba): **WNS = 2,528 ns, WHS = 0,017 ns** ("All
   user specified timing constraints are met", setup y hold). Utilización post-route: LUT 7,61 %,
-  registros 8,33 %, BRAM Tile 21,07 %, DSP48 111/220 (50,45 %) — esta última cifra no cuadra con la
-  medida el 19-sep (153/220) para prácticamente el mismo datapath y queda como pregunta abierta sin
-  explicar, ver [`fases.md#z1`](fases.md#z1), entrada del 20-sep. El primer intento de este P&R
-  falló en `place_design` por el problema de pines descrito arriba, antes de la corrección.
+  registros 8,33 %, BRAM Tile 21,07 %, **DSP48 111/220 (50,45 %) — esta es la cifra correcta para
+  presupuesto de recursos.** La comparación inicial contra el 153/220 del 19-sep resultó ser entre
+  dos etapas distintas (síntesis contra rutamiento), no entre dos builds distintas — dentro de esta
+  misma corrida, post-síntesis también mide 153/220 y cae a 111/220 recién en el rutamiento, toda la
+  caída dentro de las seis instancias de `fir_compiler_halfband`. Detalle completo en
+  [`fases.md#z1`](fases.md#z1), entrada del 20-sep (más tarde). El primer intento de este P&R falló
+  en `place_design` por el problema de pines descrito arriba, antes de la corrección.

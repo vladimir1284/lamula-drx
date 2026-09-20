@@ -385,6 +385,47 @@ original, menos JESD y menos DMA.
     de Config A específica, runner de CI con Vivado, y ahora el puente PS7↔AXI para alcanzar el mapa
     de registros desde firmware de verdad) sigue exactamente donde estaba, sin resolver.
 
+!!! success "20-sep-2026 (más tarde): discrepancia de DSP48 explicada — 111/220 es la cifra correcta"
+    El hallazgo abierto de la entrada anterior quedó mal planteado: comparaba una cifra de
+    **post-síntesis** (153/220, del 19-sep) contra una de **post-rutamiento** (111/220, del 20-sep)
+    como si fueran la misma etapa. `post_synth_utilization_hier.rpt` — el reporte jerárquico que ya
+    existía en el árbol — tiene en su propia cabecera `Design State: Synthesized`, no `Routed`: se
+    generó a mano con `report_utilization -hierarchical`, fuera del flujo automatizado de
+    `tcl/build.tcl` (que solo emite `post_synth_utilization.rpt`/`post_route_utilization.rpt`
+    planos, nunca el jerárquico) — la propia entrada del 19-sep ya lo llamaba "fuera de contexto"
+    citando [P-12](../alcance/pendientes.md#p-12). No hubo nunca una medición de post-rutamiento del
+    19-sep con la que comparar.
+
+    **Confirmado dentro de la misma corrida del 20-sep** (mismo `post_route.dcp`, sin recompilar
+    nada): `post_synth_utilization.rpt` (`Design State: Synthesized`) mide **153/220**, idéntico al
+    del 19-sep; `post_route_utilization.rpt` (`Design State: Routed`) mide **111/220**. La caída de
+    42 DSP48 ocurre entre síntesis y rutamiento, dentro de esta misma build — no entre el 19 y el
+    20-sep, y no por el mapa de registros (que no usa DSP48).
+
+    Reabrir el checkpoint rutado y volver a correr `report_utilization -hierarchical` sobre él
+    (`build/gw-logs/post_route_utilization_hier.rpt`) localiza la caída por completo: la instancia
+    `fir_compiler_halfband` (7 DSP48 cada una, `KEEP_HIERARCHY = SOFT`) desaparece por completo de
+    las 6 instancias (2 ramas I/Q × 3 canales) — 6 × 7 = 42, exactamente el delta. El resto del
+    árbol (CIC, FIR droop, mixer, NCO, la fila propia de `drx_ddc_top` que absorbe el DSP de
+    `u_round_coarse_gain`) queda bit a bit idéntico entre síntesis y rutamiento.
+
+    **Mecanismo más probable, no verificado celda por celda (inferencia, no hecho comprobado):** el
+    propio log de `opt_design` de esta corrida (`build/gw-logs/impl_zedboard_v2.log`) muestra sus
+    fases de `Retarget`/`Constant propagation`/`Sweep` eliminando miles de celdas sobre el netlist ya
+    con las IP reales insertadas (no sobre cajas negras). Un filtro halfband tiene, por construcción
+    matemática, aproximadamente la mitad de sus coeficientes exactamente en cero — consistente con
+    que `opt_design`, ya en contexto completo (no en la síntesis fuera de contexto de cada IP), haya
+    eliminado los DSP48 que multiplicaban por esos coeficientes cero sin cambiar el resultado. No se
+    extrajo un diff celda a celda que lo confirme de forma directa; lo que sí está confirmado es que
+    la reducción es completa (0 DSP48 restantes en `u_halfband`, ninguna caída parcial ni en ningún
+    otro módulo) y que no movió el WNS/WHS ya cerrados ni afecta al resultado bit-exacto de xsim (que
+    verifica el RTL antes de síntesis, ajeno a esta optimización de `opt_design`).
+
+    **Conclusión práctica:** la cifra a usar para presupuesto de recursos es **111/220 (50,45 %)**,
+    la de post-rutamiento real. El 153/220 nunca fue una medición de post-rutamiento — era la cifra
+    de síntesis, en las dos fechas. `CLAUDE.md` y [Mapa de registros AXI-Lite](registros.md#verificacion)
+    quedan actualizados con esto; deja de figurar como pendiente en "Lo primero que hay que hacer".
+
 ## Z2 — Motor de timing, triggers y PRF (semanas 9–13) { #z2 }
 
 Trabajo:
