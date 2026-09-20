@@ -332,10 +332,58 @@ original, menos JESD y menos DMA.
     Confirma que el puerto `clear` nuevo no movió el dato I/Q ni el framing de rayos ya verificado.
 
     **Con esto, las dos reverificaciones L1 que este cambio necesitaba quedan cerradas**: matriz de
-    D-12 (16/16) y range-gate tri (6/6). Lo único que sigue pendiente de Z1 por este lado es volver a
-    cerrar P&R (`-step impl`, WNS a 62,5 MHz) con el AXI-Lite y los puertos `overflow`/`clear` ya
-    integrados en `drx_top` — el P&R del 19-sep fue sobre el `drx_top` de antes del mapa de
-    registros.
+    D-12 (16/16) y range-gate tri (6/6).
+
+!!! success "20-sep-2026 (más tarde): P&R re-cerrado con el AXI-Lite integrado — hallazgo real de integración física, no del datapath"
+    `vivado -mode batch -source tcl/build.tcl -tclargs -platform zedboard -step impl`, ahora con
+    `drx_axil_regs` instanciado dentro de `drx_top`.
+
+    **Primer intento — falla en `place_design`, no por temporización:**
+    `ERROR: [Place 30-58] IO placement is infeasible. Number of unplaced IO Ports (62) is greater
+    than number of available sites (50)`. Causa: exponer el bus AXI-Lite completo (`wdata`/`rdata`
+    de 32 bits cada uno, más el resto de señales) como puertos de `drx_top` pide del orden de 94
+    pines físicos — mismo tipo de límite que ya encontraron las salidas de range-gate el 19-sep (105
+    contra 50), esta vez sobre un bus de control, no sobre datos de canal. Causa raíz real: **nada
+    en este repo instancia todavía un PS7 ni un interconnect AXI** que pudiera ser el maestro de
+    este slave dentro del chip — sin eso, el único destino físicamente posible para esas señales son
+    pines del paquete, y un bus de control de 32 bits no está pensado para salir del chip así.
+
+    **Corrección:** los puertos AXI-Lite de `drx_axil_regs` dejan de exponerse como puertos de
+    `drx_top`; se atan a valores inertes dentro del propio `drx_top` (ningún maestro emite
+    transacciones nunca en esta build) — ver la cabecera de `rtl/drx_top.sv`. Esto reproduce
+    exactamente la misma situación que ya tenía `mode_coarse` como `localparam` fijo antes de que
+    existiera el mapa de registros: **no es una regresión frente al WNS del 19-sep, es la misma
+    medición**. Deja explícito un prerrequisito nuevo y real, no diseñado aquí a propósito: el mapa
+    de registros no es alcanzable desde firmware de verdad hasta que exista un puente PS7↔AXI (AXI
+    GP del PS7, o un puente JTAG-a-AXI) en este repo — ver
+    [Mapa de registros AXI-Lite](registros.md).
+
+    **Resultado, segundo intento:** `place_design`/`route_design` cierran limpio —
+    **WNS = 2,528 ns, WHS = 0,017 ns** ("All user specified timing constraints are met", setup y
+    hold). Utilización post-route: LUT 7,61 % (4049/53200), registros 8,33 % (8865/106400), BRAM
+    Tile 21,07 % (29,5/140), DSP48 **111/220 (50,45 %)**.
+
+    **Hallazgo abierto, sin explicar, marcado como pregunta y no como hecho:** la cifra de DSP48
+    (111) difiere notablemente de la medida el 19-sep (153/220, 69,6 %) para lo que debería ser
+    prácticamente el mismo datapath (mismo `N_CH=3`, misma cadena DDC+range-gate; el bloque de
+    registros nuevo no usa DSP48). Una inspección rápida del desglose jerárquico de post-síntesis
+    (`post_synth_utilization_hier.rpt`) confirma que la rama de modo grueso (`fir_compiler_halfband`,
+    `u_round_coarse_gain`) SÍ está presente en el netlist con recursos reales en los 3 canales × 2
+    ramas I/Q — no parece eliminación de código muerto por `mode_coarse` atado a constante. No se
+    investigó más a fondo por tiempo; queda pendiente antes de confiar en la cifra de DSP48 para
+    presupuesto de recursos.
+
+    **Aviso sobre el propio gate de `tcl/build.tcl`:** solo comprueba WNS de *setup*
+    (`get_timing_paths -delay_type max`), no *hold*. En esta corrida el WHS pasó brevemente a
+    negativo (−0,192 ns) en un reporte intermedio de rutado antes de resolverse a +0,017 ns en el
+    resultado final — no bloqueó nada esta vez, pero el script no lo habría detectado si no se
+    hubiera resuelto solo.
+
+    **Con esto, Z1 no tiene más pendientes de verificación contra herramientas reales** por el lado
+    del mapa de registros v2: L0, L1 (matriz de 16 y range-gate tri) y P&R están todos corridos y en
+    verde. Lo que queda de la lista de Z1 (conmutación en caliente fino/grueso, `report_utilization`
+    de Config A específica, runner de CI con Vivado, y ahora el puente PS7↔AXI para alcanzar el mapa
+    de registros desde firmware de verdad) sigue exactamente donde estaba, sin resolver.
 
 ## Z2 — Motor de timing, triggers y PRF (semanas 9–13) { #z2 }
 

@@ -14,7 +14,7 @@ con el RCP ni con ORPG.
   16 bits, 250 MSPS, JESD204B). **Aún no comprada.**
 - **Plataforma de desarrollo actual:** Digilent ZedBoard, XC7Z020-CLG484-1.
 
-## Estado, a 19 de septiembre de 2026
+## Estado, a 20 de septiembre de 2026
 
 **Z0 — substrato: cerrada.** `make check` sigue en verde (79 tests hoy, Verilator + gcc + NumPy +
 lint). Detalle en el tutorial de `docs/tutorial/` e inventario en `docs/implementacion/substrato.md`.
@@ -64,12 +64,19 @@ fases.md#z1` es la fuente viva:
   real**: la matriz completa de D-12 (16 combinaciones, `tb_l1_ddc.sv`) se reconfirmó tras añadir
   el puerto `overflow` — **16/16 PASS** — y `tb_l1_ddc_range_tri.sv` (fine/coarse, 3 canales cada
   uno) tras el puerto `clear` de `drx_range_gate` — **6/6 PASS**, TLAST bit a bit incluido (ver
-  `docs/implementacion/fases.md#z1`, entrada del 20-sep). **Sigue pendiente:** volver a cerrar P&R
-  con el AXI-Lite ya integrado en `drx_top`.
-- **`report_utilization`/timing reales:** publicados para el datapath de 3 canales de verdad
-  (post-route: LUT 7,6 %, BRAM ~21 %, DSP48 153/220 — 69,6 %, coincide con la cifra ya medida fuera
-  de contexto en P-12). Corresponde a Config B genérica (`N_CH=3` no distingue A de B); falta medir
-  Config A específicamente si llega a importar la diferencia.
+  `docs/implementacion/fases.md#z1`, entrada del 20-sep). **P&R ya re-cerrado también** (ver el
+  punto siguiente) — sus puertos AXI-Lite NO llegan a pines físicos de `drx_top` (94 pines contra
+  50 sitios, el mismo límite del hallazgo de range-gate del 19-sep): se atan a valores inertes, y
+  **falta un puente PS7↔AXI real, no diseñado todavía, para que firmware pueda alcanzar el mapa
+  desde hardware de verdad** — ver la cabecera de `rtl/drx_top.sv`.
+- **P&R re-cerrado con el AXI-Lite integrado, 20-sep-2026:** `-step impl` — **WNS = 2,528 ns,
+  WHS = 0,017 ns** ("All user specified timing constraints are met"). Post-route: LUT 7,61 %
+  (4049/53200), registros 8,33 % (8865/106400), BRAM Tile 21,07 % (29,5/140), **DSP48 111/220
+  (50,45 %)** — cifra que **no cuadra** con la medida el 19-sep (153/220, 69,6 %) para
+  prácticamente el mismo datapath; una inspección rápida no encontró eliminación de código muerto
+  de la rama gruesa, pero la discrepancia sigue sin explicar — ver `fases.md#z1`, entrada del
+  20-sep más tarde. El propio gate de `tcl/build.tcl` solo comprueba WNS de setup, no de hold (el
+  hold pasó brevemente a negativo en un reporte intermedio antes de resolverse solo).
 - **Conmutación en caliente fino/grueso:** diferida explícitamente, sin empezar (`rtl/drx_ddc_top.sv`,
   `rtl/drx_range_gate.sv`).
 - Nuevo hallazgo abierto, no bloqueante: [P-14](docs/alcance/pendientes.md#p-14) — falta evaluar la
@@ -103,17 +110,23 @@ de ZedBoard y el project plan original de 34 semanas para la ZU9.
 
 Para cerrar Z1 de verdad, en orden:
 
-1. **Volver a cerrar P&R** (`-step impl`, WNS a 62,5 MHz) con el AXI-Lite ya integrado en `drx_top`
-   y los puertos `overflow`/`clear` nuevos — el P&R del 19-sep fue sobre el `drx_top` de antes del
-   mapa de registros. Vivado/xsim están en PATH en esta máquina
-   (`/home/orlando/tools/Xilinx/Vivado/2022.2`), confirmado corriendo el flujo real, no solo el
-   binario.
-2. **Conmutación en caliente fino/grueso** (continuidad de fase en `drx_ddc_top`/`drx_range_gate`) —
+1. **Puente PS7↔AXI para el mapa de registros** — hallazgo del 20-sep-2026: los puertos AXI-Lite de
+   `drx_axil_regs` están atados a valores inertes dentro de `drx_top` (no llegan a pines físicos,
+   ver más abajo), así que el mapa de registros existe y está verificado pero **no es alcanzable
+   desde firmware de verdad todavía**. Hace falta un PS7 (o un puente JTAG-a-AXI) instanciado en
+   este repo — no existe ni se ha diseñado. Nuevo, no estaba en esta lista antes del P&R del 20-sep.
+2. **Explicar la discrepancia de DSP48** entre el P&R del 19-sep (153/220) y el del 20-sep con el
+   AXI-Lite integrado (111/220) para prácticamente el mismo datapath — ver `fases.md#z1`, entrada
+   del 20-sep. No se investigó a fondo; no confiar en ninguna de las dos cifras para presupuesto de
+   recursos hasta resolverlo.
+3. **Conmutación en caliente fino/grueso** (continuidad de fase en `drx_ddc_top`/`drx_range_gate`) —
    diferida desde el diseño original, sin empezar.
-3. Medir `report_utilization`/timing real de Config A específicamente (Tx+H+V) — la corrida del
-   19-sep midió Config B genérica (`N_CH=3` no distingue cuál).
-4. Montar el runner de CI `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` — sigue
-   pendiente desde Z0, el job `gateware` de `.github/workflows/ci.yml` ya está escrito.
+4. Medir `report_utilization`/timing real de Config A específicamente (Tx+H+V) — las corridas hasta
+   ahora midieron Config B genérica (`N_CH=3` no distingue cuál).
+5. Montar el runner de CI `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` — sigue
+   pendiente desde Z0, el job `gateware` de `.github/workflows/ci.yml` ya está escrito. Vivado/xsim
+   están en PATH en esta máquina (`/home/orlando/tools/Xilinx/Vivado/2022.2`), confirmado corriendo
+   el flujo real (síntesis + P&R + xsim), no solo el binario.
 
 `sim/tb_sv/drx_l1_checker.sv` ya tiene tolerancia (`TOLERANCE_LSB`, D-12) y la matriz de 16 corrió
 16/16 «PASS» contra xsim real, confirmado — ese punto ya está cerrado, no solo decidido. La misma

@@ -2,8 +2,9 @@
 
 Hasta el 19-sep-2026 este entregable de Z1 no existía en absoluto — ni RTL ni documento. Esta
 página describe el mapa **v2**, congelado por partes en dos sesiones seguidas del mismo día
-(19/20-sep-2026): lo que expone hoy `drx_top` por AXI-Lite, y lo que deliberadamente queda fuera
-todavía.
+(19/20-sep-2026): lo que `drx_top` controla y observa hoy vía `drx_axil_regs`, y lo que
+deliberadamente queda fuera todavía. La sección de más abajo explica por qué "vía AXI-Lite" no
+significa todavía "alcanzable desde firmware real".
 
 Fuente única de verdad: `config/registers.toml`. `tools/gen_registers.py` genera
 `rtl/generated/drx_regs_pkg.sv` (RTL) y `fw/include/drx_regs.h` (firmware) desde ese fichero —
@@ -24,6 +25,27 @@ puertos de `drx_ddc_top.sv`/`drx_ddc_quad_top.sv`, ya verificados bit-exacto con
 dorado (matriz L1 de 16 corridas, D-12), y el costo de rehacer esa matriz no se justificaba para un
 primer corte. **v2** (20-sep, misma noche) añade OVERFLOW ya con esos puertos añadidos y la matriz
 reconfirmada — ver [Verificación](#verificacion) más abajo.
+
+## Cómo se llega a este mapa desde firmware — o cómo no, todavía
+
+**Hallazgo del 20-sep-2026, al cerrar P&R con este mapa integrado por primera vez:** los puertos
+AXI-Lite de `drx_axil_regs` NO llegan a puertos de `drx_top`. Exponerlos tal cual (un bus de 32 bits
+de datos, más el resto de señales) pide del orden de 94 pines físicos — muy por encima de los 50
+sitios del paquete de la ZedBoard, el mismo tipo de límite que ya encontraron las salidas de
+range-gate el 19-sep (`ERROR: [Place 30-58] IO placement is infeasible`). La causa raíz no es un
+detalle de XDC: **nada en este repo instancia todavía un PS7 ni un interconnect AXI** que pudiera
+ser el maestro de este slave dentro del chip. Sin eso, el único destino físicamente posible para
+esas señales son pines del paquete, y un bus de control de 32 bits no está pensado para salir del
+chip así — en un diseño Zynq real, el maestro vive dentro del PS (AXI GP) y la conexión es interna
+al SoC, no pines de usuario.
+
+Para el build actual de ZedBoard, los puertos de `drx_axil_regs` se atan a valores inertes dentro
+de `drx_top` (ningún maestro emite transacciones nunca) — ver la cabecera de `rtl/drx_top.sv`. Esto
+deja el mapa de registros completo y verificado a nivel de RTL (L0 y L1, ver
+[Verificación](#verificacion)), pero **no alcanzable desde firmware de verdad todavía**: hace falta
+un puente PS7↔AXI (PS7 vía AXI GP, o un puente JTAG-a-AXI para depuración) que no existe en este
+repo y no se diseña aquí a propósito (AGENTS.md: no se diseña por adelantado). Es un prerrequisito
+nuevo y real para Z4 (o antes, si hace falta acceso de depuración más pronto).
 
 ## El mapa
 
@@ -91,6 +113,10 @@ sitios distintos:
     gating), tras añadir el puerto `clear` a `drx_range_gate.sv`/`drx_range_gate_quad_top.sv`: fine
     y coarse, 3 canales cada uno — **6/6 PASS**, dentro de tolerancia D-12 **y TLAST bit a bit** con
     el modelo dorado. Confirma que `clear` no movió ni el dato ni el framing ya verificados.
-- **P&R** — pendiente de volver a cerrar (`-step impl`, WNS a 62,5 MHz) con el AXI-Lite ya
-  integrado en `drx_top` y los puertos `overflow`/`clear` nuevos. El P&R del 19-sep fue sobre el
-  `drx_top` de antes de este mapa de registros.
+- **P&R — re-cerrado, 20-sep-2026** (`-step impl`, con `drx_axil_regs` integrado y sus puertos
+  atados a valores inertes — ver la sección de arriba): **WNS = 2,528 ns, WHS = 0,017 ns** ("All
+  user specified timing constraints are met", setup y hold). Utilización post-route: LUT 7,61 %,
+  registros 8,33 %, BRAM Tile 21,07 %, DSP48 111/220 (50,45 %) — esta última cifra no cuadra con la
+  medida el 19-sep (153/220) para prácticamente el mismo datapath y queda como pregunta abierta sin
+  explicar, ver [`fases.md#z1`](fases.md#z1), entrada del 20-sep. El primer intento de este P&R
+  falló en `place_design` por el problema de pines descrito arriba, antes de la corrección.
