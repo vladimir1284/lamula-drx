@@ -46,16 +46,13 @@ jobs:
         run: .venv/bin/python tools/check_hardcoded_clock.py
 
       # --- Lint -------------------------------------------------------------
+      # El lint de HDL vive en el job `gateware` (ver más abajo): desde que
+      # drx_ddc_top.sv instancia IP real de Xilinx, Verilator solo puede
+      # resolver esos módulos con los productos que genera tcl/ip.tcl, y eso
+      # necesita Vivado -- no existe en ubuntu-latest.
 
       - name: Lint de Python
         run: .venv/bin/ruff check .
-
-      - name: Lint de HDL
-        run: |
-          verilator --lint-only -Wall --timing \
-            sim/verilator_waivers.vlt \
-            $(grep -v '^\s*#' rtl/filelist.f | grep -v '^\s*$') \
-            --top-module drx_top
 
       # --- Regresión --------------------------------------------------------
       # Cubre el modelo dorado, la suite L0 sobre Verilator, los tests de
@@ -68,9 +65,9 @@ jobs:
   gateware:
     name: Síntesis y BOOT.BIN
     # Vivado no corre en un runner alojado por GitHub: hace falta uno propio con
-    # la licencia y la instalación. Mientras no exista, este job no se ejecuta y
-    # el flujo de tcl/ queda ESCRITO PERO NO EJECUTADO — está declarado en
-    # docs/alcance/pendientes.md, no escondido.
+    # la licencia y la instalación. Si HAS_VIVADO_RUNNER no está en 'true' este
+    # job no se ejecuta y el flujo de tcl/ queda ESCRITO PERO NO EJECUTADO —
+    # está declarado en docs/alcance/pendientes.md, no escondido.
     if: ${{ vars.HAS_VIVADO_RUNNER == 'true' }}
     runs-on: [self-hosted, vivado]
     needs: substrato
@@ -79,6 +76,21 @@ jobs:
         platform: [zedboard, zu9]
     steps:
       - uses: actions/checkout@v4
+
+      # Solo hace falta una vez: el lint no depende del part de la plataforma,
+      # y regenerar la IP es lo que le da a Verilator los módulos reales que
+      # drx_ddc_top.sv instancia (ver el comentario en el job `substrato`).
+      - name: Regenerar IP de Xilinx
+        if: matrix.platform == 'zedboard'
+        run: vivado -mode batch -source tcl/ip.tcl -tclargs -platform zedboard
+
+      - name: Lint de HDL
+        if: matrix.platform == 'zedboard'
+        run: |
+          verilator --lint-only -Wall --timing \
+            sim/verilator_waivers.vlt \
+            $(grep -v '^\s*#' rtl/filelist.f | grep -v '^\s*$') \
+            --top-module drx_top
 
       # El cierre de temporización se corre TAMBIÉN con el FS_HZ real de la ZU9
       # aunque no haya placa: es la única forma de que la deuda de la entrada D2
