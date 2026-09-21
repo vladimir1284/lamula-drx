@@ -10,6 +10,8 @@ site/
 *.log
 *.str
 .Xil/
+.srcs/
+.gen/
 vivado*.backup.jou
 vivado*.backup.log
 build/

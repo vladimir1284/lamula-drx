@@ -15,22 +15,24 @@
 //     fijo que tenía este fichero antes. El overflow se añadió después que
 //     mode_coarse/overrun (v2 del mapa, misma fase Z1) — ver la cabecera de
 //     `config/registers.toml` para el porqué de esa secuencia.
-//   - **`drx_axil_regs` se instancia aquí pero sus puertos AXI-Lite NO llegan
-//     a puertos de `drx_top`** (hallazgo real, 20-sep-2026, corriendo P&R por
-//     primera vez con el mapa de registros integrado): el bus de 32 bits de
-//     datos pide del orden de 94 pines físicos, muy por encima de los 50
-//     sitios del paquete de la ZedBoard — `place_design` falló con "IO
-//     placement is infeasible", el mismo límite físico que ya encontraron las
-//     salidas de range-gate el 19-sep. Se atan a valores inertes (ningún
-//     maestro emite transacciones nunca en esta build): exactamente la misma
-//     situación que `mode_coarse` ya tenía como `localparam` fijo antes de
-//     que existiera este mapa, así que el WNS medido con esto no es una
-//     regresión frente al del 19-sep, es la misma medición. Lo que sí queda
-//     expuesto, real: nada todavía en este repo instancia un PS7 ni un
-//     interconnect AXI que pudiera ser ese maestro — hace falta uno (PS7 vía
-//     AXI GP, o un puente JTAG-a-AXI) antes de que el mapa de registros sea
-//     alcanzable desde firmware de verdad. Prerrequisito nuevo, no diseñado
-//     aquí a propósito (AGENTS.md: no se diseña por adelantado).
+//   - **`drx_axil_regs` se instancia aquí y sus puertos AXI-Lite SÍ son
+//     puertos reales de `drx_top`, desde el 20-sep-2026 (más tarde).**
+//     Hallazgo previo, ya resuelto: exponerlos pedía del orden de 94 pines
+//     físicos, muy por encima de los 50 sitios del paquete de la ZedBoard —
+//     `place_design` falló con "IO placement is infeasible" atándolos
+//     directamente a pines de `drx_top`. La causa raíz no era el ancho del
+//     bus: era que nada en este repo instanciaba un PS7 ni un interconnect
+//     AXI que pudiera ser el maestro de este slave *dentro* del chip. Con eso
+//     resuelto (ver `rtl/drx_zynq_top.sv`, nuevo), `drx_top` vuelve a ser lo
+//     que siempre debió ser — un slave AXI-Lite pass-through, sin opinión
+//     sobre quién lo maneja — y es `drx_zynq_top` quien decide el maestro:
+//     el wrapper del block design con `processing_system7` (`M_AXI_GP0` vía
+//     un `axi_interconnect` 1×1), generado por `tcl/gen_zynq_bd.tcl`.
+//     `drx_top` standalone (sin `drx_zynq_top`, el `-top drx_top` de
+//     `tcl/build.tcl` de siempre) sigue sintetizable exactamente igual que
+//     antes con sus puertos AXI-Lite atados a valores inertes por quien lo
+//     instancie — ese flujo no cambia, sigue existiendo para medir solo el
+//     datapath.
 //   - `m_ready` de range-gate va siempre a alto: no hay consumidor real (el
 //     AXI DMA es Z4).
 //   - Las salidas de I/Q de range-gate no tienen consumidor real todavía (ni
@@ -70,7 +72,32 @@ module drx_top
     input  logic clk,
     input  logic rst_n,
     output logic led_heartbeat,
-    output logic debug_probe
+    output logic debug_probe,
+
+    // Slave AXI4-Lite de `drx_axil_regs`, pass-through puro hacia/desde quien
+    // instancie `drx_top` (ver la cabecera: hoy `drx_zynq_top`, o valores
+    // inertes si se sintetiza `drx_top` solo).
+    input  logic [REGS_ADDR_WIDTH-1:0] s_axi_awaddr,
+    input  logic                       s_axi_awvalid,
+    output logic                       s_axi_awready,
+
+    input  logic [31:0] s_axi_wdata,
+    input  logic [ 3:0] s_axi_wstrb,
+    input  logic        s_axi_wvalid,
+    output logic        s_axi_wready,
+
+    output logic [1:0] s_axi_bresp,
+    output logic       s_axi_bvalid,
+    input  logic       s_axi_bready,
+
+    input  logic [REGS_ADDR_WIDTH-1:0] s_axi_araddr,
+    input  logic                       s_axi_arvalid,
+    output logic                       s_axi_arready,
+
+    output logic [31:0] s_axi_rdata,
+    output logic [ 1:0] s_axi_rresp,
+    output logic        s_axi_rvalid,
+    input  logic        s_axi_rready
 );
 
   logic                      gate_valid  [N_CH];
@@ -116,59 +143,29 @@ module drx_top
     for (int c = 0; c < N_CH; c++) ddc_overflow_packed[c] = ddc_overflow[c];
   end
 
-  // Sin PS7/interconnect AXI todavía en este repo (ver la cabecera de más
-  // arriba): nada dentro del chip puede manejar el maestro de este slave en
-  // esta build de ZedBoard, así que sus puertos AXI-Lite NO se exponen como
-  // puertos de `drx_top` — un bus de 32 bits de datos pide del orden de 94
-  // pines físicos, muy por encima de los 50 sitios del paquete de la
-  // ZedBoard (mismo tipo de límite que ya documentó el hallazgo de
-  // range-gate del 19-sep, "IO placement is infeasible"). Atado aquí a
-  // valores inertes: ningún maestro emite transacciones nunca en esta build,
-  // exactamente la misma situación que ya tenía `mode_coarse` como
-  // `localparam` fijo antes de que existiera este mapa de registros — no es
-  // una regresión frente al WNS del 19-sep, es la misma medición. Un maestro
-  // real (PS7 vía AXI GP, o un puente JTAG-a-AXI) es un prerrequisito nuevo,
-  // real, para que el mapa de registros sea alcanzable desde firmware — no
-  // diseñado aquí, ver `docs/implementacion/registros.md`.
-  logic [REGS_ADDR_WIDTH-1:0] axi_tie_addr;
-  logic [                31:0] axi_tie_wdata;
-  logic axi_tie_awready, axi_tie_wready, axi_tie_arready;
-  logic [1:0] axi_tie_bresp, axi_tie_rresp;
-  logic axi_tie_bvalid, axi_tie_rvalid;
-  logic [31:0] axi_tie_rdata;
-
-  assign axi_tie_addr  = '0;
-  assign axi_tie_wdata = '0;
-
-  // Nada lee estas salidas (ver la nota de arriba: sin maestro real todavía).
-  logic unused_axi_tie;
-  assign unused_axi_tie = &{1'b0, axi_tie_awready, axi_tie_wready, axi_tie_arready,
-                            axi_tie_bresp, axi_tie_rresp, axi_tie_bvalid, axi_tie_rvalid,
-                            axi_tie_rdata};
-
   drx_axil_regs #(
       .N_CH(N_CH)
   ) u_regs (
       .clk  (clk),
       .rst_n(rst_n),
 
-      .s_axi_awaddr (axi_tie_addr),
-      .s_axi_awvalid(1'b0),
-      .s_axi_awready(axi_tie_awready),
-      .s_axi_wdata  (axi_tie_wdata),
-      .s_axi_wstrb  (4'h0),
-      .s_axi_wvalid (1'b0),
-      .s_axi_wready (axi_tie_wready),
-      .s_axi_bresp  (axi_tie_bresp),
-      .s_axi_bvalid (axi_tie_bvalid),
-      .s_axi_bready (1'b1),
-      .s_axi_araddr (axi_tie_addr),
-      .s_axi_arvalid(1'b0),
-      .s_axi_arready(axi_tie_arready),
-      .s_axi_rdata  (axi_tie_rdata),
-      .s_axi_rresp  (axi_tie_rresp),
-      .s_axi_rvalid (axi_tie_rvalid),
-      .s_axi_rready (1'b1),
+      .s_axi_awaddr (s_axi_awaddr),
+      .s_axi_awvalid(s_axi_awvalid),
+      .s_axi_awready(s_axi_awready),
+      .s_axi_wdata  (s_axi_wdata),
+      .s_axi_wstrb  (s_axi_wstrb),
+      .s_axi_wvalid (s_axi_wvalid),
+      .s_axi_wready (s_axi_wready),
+      .s_axi_bresp  (s_axi_bresp),
+      .s_axi_bvalid (s_axi_bvalid),
+      .s_axi_bready (s_axi_bready),
+      .s_axi_araddr (s_axi_araddr),
+      .s_axi_arvalid(s_axi_arvalid),
+      .s_axi_arready(s_axi_arready),
+      .s_axi_rdata  (s_axi_rdata),
+      .s_axi_rresp  (s_axi_rresp),
+      .s_axi_rvalid (s_axi_rvalid),
+      .s_axi_rready (s_axi_rready),
 
       .mode_coarse(mode_coarse),
 

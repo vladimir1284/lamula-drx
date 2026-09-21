@@ -452,6 +452,83 @@ original, menos JESD y menos DMA.
     pendiente), o si la ZU9 introduce una diferencia real de ancho/generics entre configs, esta
     equivalencia hay que volver a revisarla — no es una garantía permanente, es el estado de hoy.
 
+!!! success "20-sep-2026 (más tarde): puente PS7↔AXI real — primer PS7 de este repo, P&R cierra a WNS = 1,712 ns"
+    Hallazgo del P&R anterior: `drx_axil_regs` existía y estaba verificado, pero nada en el repo
+    instanciaba un PS7 ni un interconnect AXI que pudiera alcanzarlo desde firmware. `AGENTS.md`
+    prohíbe diseñar por adelantado, y esto quedó deliberadamente fuera — hasta que **el usuario
+    decidió explícitamente adelantarlo esta misma noche**, tras que se le mostrara el alcance real
+    del cambio (no una extensión del mapa de registros: la primera vez que este repo tiene un PS de
+    Zynq de verdad, con todo lo que eso implica de herramientas y de árbol de reloj).
+
+    **Bloqueante previo, resuelto primero:** Vitis (el IDE de firmware embebido, necesario para
+    generar BSP/FSBL desde un XSA) no estaba instalado — solo su instalador sin extraer
+    (`Xilinx_Unified_2022.2_1014_8888`, 91 GB). Instalado a mano, recortado a Zynq-7000 + Zynq
+    UltraScale+ MPSoC (las dos familias que este proyecto usa), en `/home/orlando/tools/Xilinx_Vitis/`
+    — 45 minutos. El primer intento de `ConfigGen` quedó corriendo desatendido en modo interactivo
+    (sin flags que evitaran el prompt) y escribió un log de **31 GiB** hasta llenar la partición raíz
+    del sistema (`/`, 51 G, a 0 disponibles) — causa real de que un intento posterior de P&R muriera
+    sin error de TCL. Encontrado con `lsof` (el proceso seguía vivo con el log borrado-pero-abierto),
+    matado por PID, disco liberado al instante. Aparte, `/home/orlando/Documents/
+    Xilinx_Unified_2022.2_1014_8888/` (el instalador ya usado) seguía ocupando 91 G sin necesidad —
+    borrado.
+
+    **Board file:** no hay ninguno de ZedBoard registrado en Vivado por defecto (es de Digilent, no
+    de Xilinx). Instalado a mano desde el repo público `github.com/Digilent/vivado-boards`
+    (`new/board_files/zedboard/`) a `$XILINX_VIVADO/data/boards/board_files/zedboard/` — Vivado lo
+    detecta como `digilentinc.com:zedboard:part0:1.1` (no coincide con el nombre de carpeta del repo,
+    `1.3`; la versión real la fija un campo interno del `board.xml`, no la carpeta — confirmado, no
+    asumido).
+
+    **Diseño, con dos hallazgos reales de esta misma sesión que cambiaron el plan original:**
+
+    1. `create_bd_cell -type module -reference drx_top` **no admite un top SystemVerilog** en
+       Vivado 2022.2 ("This type is not allowed as the top file in the reference") — el plan
+       original metía `drx_top` dentro del block design como celda de módulo; no se puede. En su
+       lugar, el BD (`tcl/gen_zynq_bd.tcl`) contiene solo IP (`processing_system7`,
+       `axi_interconnect`, `proc_sys_reset`, `axi_protocol_converter`), y `rtl/drx_zynq_top.sv`
+       (nuevo) instancia su wrapper generado junto con `drx_top` por fuera, conectados en
+       SystemVerilog normal.
+    2. `axi_interconnect:2.1` **no tiene ninguna propiedad de protocolo por puerto maestro**
+       (confirmado listando su `CONFIG.*` completo) — su `M00_AXI` es siempre AXI4 completo
+       (ID/burst/len/lock/cache/qos/region/size/last), mientras que `drx_axil_regs`/`drx_top` son
+       AXI4-Lite puro. `axi_protocol_converter:2.1` traduce entre los dos (por defecto ya viene
+       `SI_PROTOCOL=AXI4`/`MI_PROTOCOL=AXI4LITE`, no hizo falta configurarlo). El puerto externo del
+       BD también necesitó `CONFIG.PROTOCOL AXI4LITE` puesto a mano — sin eso heredaba el AXI4
+       completo del VLNV genérico aunque estuviera conectado al lado ya-Lite del conversor.
+
+    Además, cableado a mano en vez de con automation (cuya sintaxis de `-config` no estaba verificada
+    contra esta versión): `axi_interconnect` expone un `ACLK` global y uno por interfaz
+    (`S00_ACLK`/`M00_ACLK`, los tres necesitan reloj); `pl_clk0` tuvo que crearse con `-type clk` (no
+    genérico) para poder fijarle `CONFIG.FREQ_HZ`/`ASSOCIATED_BUSIF` — sin eso, `validate_bd_design`
+    fallaba con "Bus Interface property FREQ_HZ does not match" (100 MHz por defecto contra los 62,5
+    MHz reales de `FCLK_CLK0`). Todo esto se verificó corriendo Vivado de verdad en cada paso, no se
+    escribió una vez y se asumió correcto.
+
+    **`rtl/drx_top.sv` vuelve a ser un slave AXI-Lite pass-through puro** (sus puertos AXI-Lite ya no
+    se atan a nada dentro del propio fichero). Para que el flujo de siempre (`-top drx_top`, sin PS7,
+    el que mide solo el datapath) siguiera funcionando igual que antes de este cambio,
+    `rtl/drx_top_tieoff.sv` (nuevo) hace exactamente lo que `drx_top.sv` hacía internamente antes: lo
+    instancia y ata su AXI-Lite a valores inertes. `tcl/build.tcl` gana `-top {drx_top|zynq}` (por
+    defecto `drx_top`, que ahora sintetiza `drx_top_tieoff` por debajo) y un paso `-step xsa`
+    (`write_hw_platform -fixed -include_bit`, solo con `-top zynq`).
+
+    **P&R real de `drx_zynq_top`:** primer intento falla en síntesis por errores de compile-order
+    ("Module references are not supported in manual compile order mode" — resuelto con
+    `set_property source_mgmt_mode All`, aunque el enfoque de módulo-referencia se abandonó después
+    por el hallazgo 1 de arriba). Con el BD ya corregido: **síntesis limpia, 0 errores**, y
+    **`-step impl` cierra: WNS = 1,712 ns, WHS = 0,033 ns** ("All user specified timing constraints
+    are met"), reloj `clk_fpga_0` a 62,5 MHz derivado automáticamente del modelo de temporización del
+    propio PS7 (sin `create_clock` manual, a diferencia del flujo sin PS7). Utilización post-route:
+    LUT 10,83 %, registros 12,23 %, BRAM Tile 21,07 %, DSP48 159/220 (72,27 %) — aquí el DSP48 **no**
+    cayó entre síntesis y rutamiento (159 en las dos etapas), a diferencia de la build sin PS7 del
+    punto anterior; la eliminación de DSP48 de coeficiente cero en `fir_compiler_halfband` no fue
+    determinista entre las dos builds. Dato observado, no investigado más a fondo — no bloquea nada.
+
+    **Con esto, el mapa de registros es alcanzable desde el PS7 de verdad** (`M_AXI_GP0` → el mapa,
+    dirección asignada automáticamente por Vivado dentro del espacio de GP0). Lo que sigue faltando,
+    explícito y no fingido: BSP/FSBL vía Vitis desde el XSA exportado (Z4 real, `fw/Makefile` ya lo
+    dice), y el puente equivalente para la ZU9 (`zynq_ultra_ps_e`, IP distinta, sin diseñar).
+
 ## Z2 — Motor de timing, triggers y PRF (semanas 9–13) { #z2 }
 
 Trabajo:

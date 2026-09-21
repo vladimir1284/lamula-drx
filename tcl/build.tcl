@@ -8,18 +8,23 @@
 #   vivado -mode batch -source tcl/build.tcl -tclargs \
 #          -platform zedboard -step bitstream -outdir build/gw/zedboard
 #
-# Pasos: synth | impl | bitstream. Cada uno incluye los anteriores.
+# Pasos: synth | impl | bitstream | xsa. Cada uno incluye los anteriores.
+# `xsa` solo tiene sentido con `-top zynq` (exporta la plataforma de hardware
+# para Vitis; sin PS7 no hay nada que exportar).
 #
-# NOTA DE FASE Z0: en este repositorio no hay Vivado instalado, así que este
-# flujo está ESCRITO Y REVISADO PERO NO EJECUTADO. La primera ejecución real es
-# el cierre del hito ZM0 y hay que hacerla en una máquina con Vivado antes de dar
-# Z0 por terminada.
+# `-top`: `drx_top` (por defecto, sin PS7, AXI-Lite del mapa de registros
+# atado a valores inertes vía `drx_top_tieoff`) o `zynq` (PS7 real vía
+# `tcl/gen_zynq_bd.tcl`, solo zedboard hoy — ver docs/implementacion/registros.md).
 
 set repo_root [file normalize [file join [file dirname [info script]] ..]]
 source [file join $repo_root tcl generated drx_params.tcl]
 
 # --- argumentos -------------------------------------------------------------
-array set opt {platform zedboard step bitstream outdir {} jobs 4 seed 1}
+# `-top drx_top` (por defecto): datapath solo, AXI-Lite del mapa de registros
+# atado a valores inertes vía `drx_top_tieoff` -- el flujo de siempre, sin PS7.
+# `-top zynq`: `tcl/gen_zynq_bd.tcl` construye un PS7 de verdad (AXI GP0 -> el
+# mapa de registros); ver `docs/implementacion/registros.md`.
+array set opt {platform zedboard step bitstream outdir {} jobs 4 seed 1 top drx_top}
 for {set i 0} {$i < [llength $argv]} {incr i} {
   set flag [string trimleft [lindex $argv $i] -]
   if {[info exists opt($flag)]} {
@@ -33,13 +38,29 @@ if {[lsearch -exact $::drx::PLATFORMS $opt(platform)] < 0} {
   error "plataforma desconocida: $opt(platform); hay $::drx::PLATFORMS"
 }
 if {$opt(outdir) eq {}} {
-  set opt(outdir) [file join $repo_root build gw $opt(platform)]
+  if {$opt(top) eq "zynq"} {
+    # Directorio propio: no pisar los artefactos de `-top drx_top` (mismo
+    # `outdir` por defecto para las dos si no se namespacea aquí).
+    set opt(outdir) [file join $repo_root build gw ${opt(platform)}_zynq]
+  } else {
+    set opt(outdir) [file join $repo_root build gw $opt(platform)]
+  }
 }
 file mkdir $opt(outdir)
 
 set part        [::drx::get PART       $opt(platform)]
 set period_ns   [::drx::get CLK_PERIOD_NS $opt(platform)]
-set top         drx_top
+if {$opt(top) eq "drx_top"} {
+  set top drx_top_tieoff
+} elseif {$opt(top) eq "zynq"} {
+  if {$opt(platform) ne "zedboard"} {
+    error "-top zynq solo tiene sentido en zedboard hoy (PS7 = processing_system7;\
+           la ZU9 usa zynq_ultra_ps_e, puente distinto, sin diseñar todavía)"
+  }
+  set top drx_zynq_top
+} else {
+  error "-top desconocido: $opt(top) (valores válidos: drx_top, zynq)"
+}
 
 puts "== LAMULA DRx =="
 puts "   plataforma : $opt(platform)"
@@ -68,6 +89,13 @@ set_property target_language Verilog [current_project]
 # algo que el otro no ve.
 read_verilog -sv [read_filelist [file join $repo_root rtl filelist.f] $repo_root]
 
+# `drx_zynq_top.sv` NO entra en `rtl/filelist.f` (instancia el wrapper del BD
+# de `tcl/gen_zynq_bd.tcl`, que no existe todavía en este punto del script, y
+# de todas formas Verilator no puede elaborar `processing_system7`).
+if {$opt(top) eq "zynq"} {
+  read_verilog -sv [file join $repo_root rtl drx_zynq_top.sv]
+}
+
 # IP versionada como XCI. En Z0 no hay ninguna; el bucle queda listo para Z1.
 # `create_ip -dir` crea un subdirectorio por core (`ip/<module_name>/*.xci`),
 # no `ip/*.xci` directamente — confirmado generando IP de verdad con
@@ -79,20 +107,39 @@ if {[llength $xci_files]} {
   synth_ip [get_ips]
 }
 
-set xdc [file join $repo_root tcl xdc $opt(platform).xdc]
-if {[file exists $xdc]} {
-  read_xdc $xdc
+if {$opt(top) eq "zynq"} {
+  # `drx_zynq_bd_wrapper` no tiene puertos `clk`/`rst_n` de nivel superior (el
+  # reloj/reset son internos al BD, FCLK0/peripheral_aresetn del PS7) — el
+  # `create_clock` sintético de más abajo no aplica, y `zedboard.xdc`
+  # constriñe justo esos dos puertos que ya no existen en este top. XDC propio,
+  # solo con lo que de verdad sigue siendo un pin de usuario en este top
+  # (`led_heartbeat`; `debug_probe` ya se deja sin restringir hoy también en
+  # el flujo sin PS7). El reloj de fabric lo cierra Vivado solo, a partir del
+  # modelo de temporización del propio PS7 con el board preset aplicado — no
+  # hace falta (ni tiene sentido) escribir un `create_clock` a mano aquí.
+  set xdc [file join $repo_root tcl xdc zedboard_zynq.xdc]
+  if {[file exists $xdc]} {
+    read_xdc $xdc
+  } else {
+    puts "AVISO: no hay XDC para el top zynq; se sintetiza sin restricciones físicas"
+  }
+  source [file join $repo_root tcl gen_zynq_bd.tcl]
 } else {
-  puts "AVISO: no hay XDC para $opt(platform); se sintetiza sin restricciones físicas"
-}
+  set xdc [file join $repo_root tcl xdc $opt(platform).xdc]
+  if {[file exists $xdc]} {
+    read_xdc $xdc
+  } else {
+    puts "AVISO: no hay XDC para $opt(platform); se sintetiza sin restricciones físicas"
+  }
 
-# El periodo NO se escribe en el XDC: sale del paquete de parámetros.
-set clk_xdc [file join $opt(outdir) clock_generated.xdc]
-set handle [open $clk_xdc w]
-puts $handle "# Generado por tcl/build.tcl desde tcl/generated/drx_params.tcl."
-puts $handle "create_clock -period $period_ns -name clk \[get_ports clk\]"
-close $handle
-read_xdc $clk_xdc
+  # El periodo NO se escribe en el XDC: sale del paquete de parámetros.
+  set clk_xdc [file join $opt(outdir) clock_generated.xdc]
+  set handle [open $clk_xdc w]
+  puts $handle "# Generado por tcl/build.tcl desde tcl/generated/drx_params.tcl."
+  puts $handle "create_clock -period $period_ns -name clk \[get_ports clk\]"
+  close $handle
+  read_xdc $clk_xdc
+}
 
 # --- síntesis ---------------------------------------------------------------
 set synth_args [list -top $top -part $part]
@@ -133,5 +180,20 @@ if {$opt(step) eq "impl"} {
 # --- bitstream --------------------------------------------------------------
 # `-bin_file` produce además el .bin crudo, sin la cabecera del .bit que lleva
 # marca de tiempo: es el que se usa para el BOOT.BIN reproducible byte a byte.
-write_bitstream -force -bin_file [file join $opt(outdir) drx_top.bit]
+set bit_file [file join $opt(outdir) ${top}.bit]
+write_bitstream -force -bin_file $bit_file
 puts "bitstream escrito en $opt(outdir)"
+
+if {$opt(step) eq "bitstream"} {
+  exit 0
+}
+
+# --- xsa (solo -top zynq) ----------------------------------------------------
+# Entregable de este paso: el XSA para que Vitis genere BSP/FSBL (Z4, no aquí
+# -- ver docs/implementacion/registros.md). No tiene sentido para `-top
+# drx_top`: sin PS7 no hay plataforma de hardware que exportar.
+if {$opt(top) eq "zynq"} {
+  set xsa_file [file join $opt(outdir) ${top}.xsa]
+  write_hw_platform -fixed -include_bit -force $xsa_file
+  puts "XSA escrito en $xsa_file"
+}

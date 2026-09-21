@@ -22,3 +22,9 @@ rtl/drx_axil_regs.sv
 # listarse después de sus cuatro dependencias, no antes (D-02: una sola lista,
 # orden de compilación real).
 rtl/drx_top.sv
+# `drx_top_tieoff.sv` es el `-top` por defecto de `tcl/build.tcl` (sin PS7):
+# ata el AXI-Lite de `drx_top` a valores inertes, mismo comportamiento medido
+# que antes del puente PS7 (`rtl/drx_zynq_top.sv`, que NO entra en esta lista
+# porque instancia `processing_system7`, IP que Verilator no puede elaborar —
+# ese fichero solo lo lee `tcl/gen_zynq_bd.tcl`).
+rtl/drx_top_tieoff.sv

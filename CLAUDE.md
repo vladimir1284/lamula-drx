@@ -65,10 +65,15 @@ fases.md#z1` es la fuente viva:
   el puerto `overflow` — **16/16 PASS** — y `tb_l1_ddc_range_tri.sv` (fine/coarse, 3 canales cada
   uno) tras el puerto `clear` de `drx_range_gate` — **6/6 PASS**, TLAST bit a bit incluido (ver
   `docs/implementacion/fases.md#z1`, entrada del 20-sep). **P&R ya re-cerrado también** (ver el
-  punto siguiente) — sus puertos AXI-Lite NO llegan a pines físicos de `drx_top` (94 pines contra
-  50 sitios, el mismo límite del hallazgo de range-gate del 19-sep): se atan a valores inertes, y
-  **falta un puente PS7↔AXI real, no diseñado todavía, para que firmware pueda alcanzar el mapa
-  desde hardware de verdad** — ver la cabecera de `rtl/drx_top.sv`.
+  punto siguiente).
+- **Puente PS7↔AXI, 20-sep-2026 (más tarde):** el mapa de registros ya es alcanzable desde un PS7
+  de verdad — `tcl/gen_zynq_bd.tcl` (block design: `processing_system7` con preset de MIO/DDR del
+  board file de Digilent, `axi_interconnect` + `axi_protocol_converter` AXI4→AXI4-Lite) +
+  `rtl/drx_zynq_top.sv` (nuevo). `rtl/drx_top.sv` volvió a ser un slave AXI-Lite pass-through puro;
+  el flujo sin PS7 sigue igual vía `rtl/drx_top_tieoff.sv` (nuevo). P&R de `-top zynq` cierra: **WNS
+  = 1,712 ns, WHS = 0,033 ns**, primer PS7 real de este repo. Detalle completo, incluidos los
+  hallazgos de esta sesión (module-reference no admite SystemVerilog, `axi_interconnect` no
+  downgradea protocolo por puerto), en `docs/implementacion/registros.md` y `fases.md#z1`.
 - **P&R re-cerrado con el AXI-Lite integrado, 20-sep-2026:** `-step impl` — **WNS = 2,528 ns,
   WHS = 0,017 ns** ("All user specified timing constraints are met"). Post-route: LUT 7,61 %
   (4049/53200), registros 8,33 % (8865/106400), BRAM Tile 21,07 % (29,5/140), **DSP48 111/220
@@ -112,17 +117,27 @@ de ZedBoard y el project plan original de 34 semanas para la ZU9.
 
 Para cerrar Z1 de verdad, en orden:
 
-1. **Puente PS7↔AXI para el mapa de registros** — hallazgo del 20-sep-2026: los puertos AXI-Lite de
-   `drx_axil_regs` están atados a valores inertes dentro de `drx_top` (no llegan a pines físicos,
-   ver más abajo), así que el mapa de registros existe y está verificado pero **no es alcanzable
-   desde firmware de verdad todavía**. Hace falta un PS7 (o un puente JTAG-a-AXI) instanciado en
-   este repo — no existe ni se ha diseñado. Nuevo, no estaba en esta lista antes del P&R del 20-sep.
-2. **Conmutación en caliente fino/grueso** (continuidad de fase en `drx_ddc_top`/`drx_range_gate`) —
+1. **Conmutación en caliente fino/grueso** (continuidad de fase en `drx_ddc_top`/`drx_range_gate`) —
    diferida desde el diseño original, sin empezar.
-3. Montar el runner de CI `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` — sigue
+2. Montar el runner de CI `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` — sigue
    pendiente desde Z0, el job `gateware` de `.github/workflows/ci.yml` ya está escrito. Vivado/xsim
    están en PATH en esta máquina (`/home/orlando/tools/Xilinx/Vivado/2022.2`), confirmado corriendo
-   el flujo real (síntesis + P&R + xsim), no solo el binario.
+   el flujo real (síntesis + P&R + xsim), no solo el binario. Bloqueado por ahora: `gh auth login`
+   sin token válido en esta máquina.
+3. BSP/FSBL vía Vitis desde el XSA que ya exporta `-top zynq -step xsa` (ver el punto 4) — Z4 real,
+   `fw/Makefile` ya lo dice explícitamente. `tools/make_boot.sh` sigue fallando igual que hoy hasta
+   que exista `fsbl.elf`.
+4. Puente equivalente para la ZU9 (`zynq_ultra_ps_e`, IP distinta de `processing_system7`) — sin
+   diseñar, se hace cuando haga falta.
+
+**Puente PS7↔AXI para el mapa de registros** ya **no** está en esta lista: cerrado el 20-sep-2026
+(más tarde), override explícito del usuario de "no diseñar por adelantado" tras ver el alcance real
+del cambio. `tcl/gen_zynq_bd.tcl` (PS7 + interconnect + `axi_protocol_converter` hacia AXI4-Lite) +
+`rtl/drx_zynq_top.sv` (nuevo, PS7 no puede vivir dentro del BD como referencia de módulo SystemVerilog
+en Vivado 2022.2, confirmado) + `tcl/build.tcl -top zynq -step xsa`. P&R real cierra: **WNS = 1,712
+ns, WHS = 0,033 ns**. El flujo de siempre sin PS7 sigue igual (`-top drx_top`, ahora vía
+`rtl/drx_top_tieoff.sv`). Vitis instalado esta noche específicamente para esto
+(`/home/orlando/tools/Xilinx_Vitis/`). Detalle completo en `fases.md#z1` y `registros.md`.
 
 «Medir `report_utilization`/timing real de Config A específicamente» ya **no** está en esta lista:
 cerrado el 20-sep-2026 sin correr ninguna síntesis nueva — Config A (Tx+H+V) y Config B (Tx+nominal+

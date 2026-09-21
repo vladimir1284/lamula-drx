@@ -26,26 +26,39 @@ dorado (matriz L1 de 16 corridas, D-12), y el costo de rehacer esa matriz no se 
 primer corte. **v2** (20-sep, misma noche) añade OVERFLOW ya con esos puertos añadidos y la matriz
 reconfirmada — ver [Verificación](#verificacion) más abajo.
 
-## Cómo se llega a este mapa desde firmware — o cómo no, todavía
+## Cómo se llega a este mapa desde firmware
 
 **Hallazgo del 20-sep-2026, al cerrar P&R con este mapa integrado por primera vez:** los puertos
-AXI-Lite de `drx_axil_regs` NO llegan a puertos de `drx_top`. Exponerlos tal cual (un bus de 32 bits
-de datos, más el resto de señales) pide del orden de 94 pines físicos — muy por encima de los 50
-sitios del paquete de la ZedBoard, el mismo tipo de límite que ya encontraron las salidas de
-range-gate el 19-sep (`ERROR: [Place 30-58] IO placement is infeasible`). La causa raíz no es un
-detalle de XDC: **nada en este repo instancia todavía un PS7 ni un interconnect AXI** que pudiera
-ser el maestro de este slave dentro del chip. Sin eso, el único destino físicamente posible para
-esas señales son pines del paquete, y un bus de control de 32 bits no está pensado para salir del
-chip así — en un diseño Zynq real, el maestro vive dentro del PS (AXI GP) y la conexión es interna
-al SoC, no pines de usuario.
+AXI-Lite de `drx_axil_regs` no llegaban a puertos de `drx_top`. Exponerlos tal cual (un bus de 32
+bits de datos, más el resto de señales) pedía del orden de 94 pines físicos — muy por encima de los
+50 sitios del paquete de la ZedBoard, el mismo tipo de límite que ya encontraron las salidas de
+range-gate el 19-sep (`ERROR: [Place 30-58] IO placement is infeasible`). La causa raíz no era un
+detalle de XDC: nada en el repo instanciaba todavía un PS7 ni un interconnect AXI que pudiera ser el
+maestro de este slave dentro del chip.
 
-Para el build actual de ZedBoard, los puertos de `drx_axil_regs` se atan a valores inertes dentro
-de `drx_top` (ningún maestro emite transacciones nunca) — ver la cabecera de `rtl/drx_top.sv`. Esto
-deja el mapa de registros completo y verificado a nivel de RTL (L0 y L1, ver
-[Verificación](#verificacion)), pero **no alcanzable desde firmware de verdad todavía**: hace falta
-un puente PS7↔AXI (PS7 vía AXI GP, o un puente JTAG-a-AXI para depuración) que no existe en este
-repo y no se diseña aquí a propósito (AGENTS.md: no se diseña por adelantado). Es un prerrequisito
-nuevo y real para Z4 (o antes, si hace falta acceso de depuración más pronto).
+**Resuelto la misma noche (20-sep-2026, más tarde): puente PS7↔AXI real, override explícito de
+"no se diseña por adelantado" decidido por el usuario tras ver el alcance completo del cambio.**
+`tcl/gen_zynq_bd.tcl` construye un block design con `processing_system7` (preset de MIO/DDR del
+board file oficial de Digilent — `github.com/Digilent/vivado-boards`, instalado a mano en esta
+máquina, no viene con Vivado — `digilentinc.com:zedboard:part0:1.1` según lo detecta esta
+instalación), `FCLK_CLK0` a la misma frecuencia de fabric del proyecto (62,5 MHz, D-02 — no un
+reloj nuevo), `M_AXI_GP0` habilitado, y un `axi_interconnect` + `axi_protocol_converter` (AXI4 →
+AXI4-Lite; `axi_interconnect:2.1` no tiene downgrade de protocolo por puerto, confirmado) hacia el
+mapa de registros. `rtl/drx_top.sv` volvió a ser un slave AXI-Lite pass-through puro (sus puertos ya
+no se atan a nada dentro del propio fichero); `rtl/drx_zynq_top.sv` (nuevo) instancia el wrapper de
+ese BD junto con `drx_top` y los conecta — `drx_top` no puede vivir *dentro* del BD como referencia
+de módulo (`create_bd_cell -type module -reference` no admite un top SystemVerilog en Vivado 2022.2,
+confirmado corriendo esto).
+
+`tcl/build.tcl -top zynq` (en vez del `-top drx_top` de siempre, que sigue existiendo sin cambios
+para medir solo el datapath — `rtl/drx_top_tieoff.sv`, nuevo, es su wrapper de valores inertes)
+cierra P&R real: **WNS = 1,712 ns, WHS = 0,033 ns**, reloj de 62,5 MHz derivado automáticamente del
+propio modelo de temporización del PS7 con el preset aplicado — sin `create_clock` manual, a
+diferencia del flujo sin PS7. `-step xsa` exporta la plataforma de hardware
+(`write_hw_platform -fixed -include_bit`) para que Vitis (instalado en esta máquina el 20-sep-2026,
+`/home/orlando/tools/Xilinx_Vitis/`, específicamente para esto) genere BSP/FSBL — **eso sigue siendo
+Z4 real**, `fw/Makefile` ya lo dice explícitamente y `tools/make_boot.sh` sigue fallando igual que
+hoy hasta que exista `fsbl.elf`. El puente deja de ser el hueco; el firmware de verdad no.
 
 ## El mapa
 
@@ -123,3 +136,11 @@ sitios distintos:
   caída dentro de las seis instancias de `fir_compiler_halfband`. Detalle completo en
   [`fases.md#z1`](fases.md#z1), entrada del 20-sep (más tarde). El primer intento de este P&R falló
   en `place_design` por el problema de pines descrito arriba, antes de la corrección.
+- **P&R del puente PS7↔AXI, 20-sep-2026 (más tarde)** (`-top zynq`, `drx_zynq_top` con PS7 real):
+  **WNS = 1,712 ns, WHS = 0,033 ns** ("All user specified timing constraints are met"), reloj
+  `clk_fpga_0` a 62,5 MHz derivado del propio PS7, sin `create_clock` manual. Utilización post-route:
+  LUT 10,83 %, registros 12,23 %, BRAM Tile 21,07 %, DSP48 159/220 (72,27 %) — a diferencia de la
+  build sin PS7, aquí el DSP48 **no cayó** entre síntesis y rutamiento (159 en las dos etapas); la
+  optimización de `opt_design` que eliminó los DSP48 de coeficiente cero de `fir_compiler_halfband`
+  en la otra build no se repitió aquí de forma determinista — dato observado, sin explicar más a
+  fondo (no bloquea nada, ver [`fases.md#z1`](fases.md#z1)).
