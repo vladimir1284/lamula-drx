@@ -81,7 +81,11 @@ jobs:
     needs: substrato
     strategy:
       matrix:
-        platform: [zedboard, zu9]
+        # `zu9` fuera por ahora: este Vivado 2022.2 no tiene el device pack de
+        # Zynq UltraScale+ instalado (0 parts que matcheen `xczu9eg*`), y nunca
+        # se había corrido -- ni aquí ni a mano -- para descubrirlo antes. Ver
+        # docs/alcance/pendientes.md.
+        platform: [zedboard]
     steps:
       - uses: actions/checkout@v4
 
