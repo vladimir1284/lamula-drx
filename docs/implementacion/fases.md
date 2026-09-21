@@ -529,6 +529,32 @@ original, menos JESD y menos DMA.
     explícito y no fingido: BSP/FSBL vía Vitis desde el XSA exportado (Z4 real, `fw/Makefile` ya lo
     dice), y el puente equivalente para la ZU9 (`zynq_ultra_ps_e`, IP distinta, sin diseñar).
 
+!!! success "21-sep-2026: «conmutación en caliente fino/grueso» — cerrado como no-requisito, no como trabajo diferido"
+    Este ítem venía listado desde el 19-sep-2026 (más arriba) como el hueco más grande de Z1 tras el
+    mapa de registros: continuidad de fase en `drx_ddc_top`/`drx_range_gate` al cambiar `mode_coarse`
+    a mitad de rayo. Antes de diseñarlo se preguntó para qué serviría el caso de uso — ningún
+    documento del repo lo explicaba, solo que estaba diferido.
+
+    **Confirmado por vladimir:** no tiene sentido. La resolución de celda (`mode_coarse`, fino =
+    125 m / grueso = 250 m) **solo se cambia entre rayos distintos**, nunca a mitad de un mismo
+    rayo. No hay caso de uso — ni resolución dependiente del rango dentro de un rayo, ni
+    recuperación de overrun/overflow a mitad de rayo, ni nada del encuadre por modo de barrido de
+    Z4 (Split Cut / Batch Cut / Doppler Cut, que cambian de resolución entre rayos, no dentro de
+    ellos) — que necesite continuidad de fase intra-rayo.
+
+    Con esto, el mux estático que ya existe en `drx_ddc_top.sv`/`drx_range_gate.sv` (`mode_coarse`
+    fijo durante una corrida, ya escribible en tiempo de ejecución desde el mapa de registros v1)
+    **ya cubre el caso de uso real**: cambiar de celda entre un rayo y el siguiente no necesita
+    continuidad de fase, porque cada rayo arranca de registros en cero. **No queda trabajo
+    pendiente por este motivo** — no es que se difiera más, es que deja de existir como entregable
+    de Z1. Cabeceras de `rtl/drx_ddc_top.sv` y `rtl/drx_range_gate.sv` y
+    [Mapa de registros AXI-Lite](registros.md#deliberadamente-fuera-de-v2) actualizados.
+
+    **Lo que queda de la lista de Z1 tras esto:** `report_utilization`/timing de Config A específica
+    (ya cerrado el 20-sep, ver más arriba — no queda nada ahí), el runner de CI con Vivado
+    (bloqueado por `gh auth login`), y BSP/FSBL vía Vitis (Z4 real). Z1 no tiene, hoy, ningún
+    entregable de ingeniería propio sin empezar y sin bloqueante externo.
+
 ## Z2 — Motor de timing, triggers y PRF (semanas 9–13) { #z2 }
 
 Trabajo:

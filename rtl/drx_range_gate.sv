@@ -38,8 +38,10 @@
 //
 // `mode_coarse` se trata igual que en `drx_ddc_top`: entrada de tiempo de
 // ejecución pero estática durante una corrida. Cambiarla a mitad de rayo no
-// está cubierto aquí, igual que la conmutación fina/gruesa en caliente es del
-// plan de pruebas de Z1, no de este primer corte.
+// es un caso de uso real de este proyecto — confirmado, 21-sep-2026: la
+// resolución de celda solo cambia entre rayos distintos, nunca dentro de
+// uno, así que no hace falta continuidad de fase aquí. No queda trabajo
+// pendiente por este motivo.
 //
 // El puerto de lectura es REGISTRADO (`m_i`/`m_q`/`m_valid`/`m_last` salen de
 // un registro que se carga con la lectura de `mem0`/`mem1`, no de un `assign`

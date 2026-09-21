@@ -101,10 +101,12 @@ sitios distintos:
 
 - **Cualquier registro de Z2** (triggers, PRF programable). El hueco de direcciones (`0x10` en
   adelante) queda reservado sin diseñarlo por adelantado.
-- **Conmutación en caliente fino/grueso**: `mode_coarse` sigue siendo estático durante una corrida
-  a nivel de RTL (`drx_ddc_top`/`drx_range_gate`), aunque ahora se pueda escribir en tiempo de
-  ejecución — cambiarlo a mitad de rayo no tiene continuidad de fase garantizada. Ese trabajo sigue
-  diferido, ver la cabecera de esos dos ficheros.
+- **Conmutación en caliente fino/grueso** — cerrado como no-requisito, 21-sep-2026, no diferido:
+  `mode_coarse` sigue siendo estático durante una corrida a nivel de RTL (`drx_ddc_top`/
+  `drx_range_gate`), aunque ahora se pueda escribir en tiempo de ejecución. Confirmado por
+  vladimir que esto no hace falta — la resolución de celda solo cambia entre rayos distintos, nunca
+  a mitad de uno, así que el mux estático que ya existe cubre el caso de uso real sin necesitar
+  continuidad de fase. Detalle en `fases.md#z1`, entrada del 21-sep.
 
 ## Verificación
 

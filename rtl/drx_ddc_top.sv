@@ -34,9 +34,11 @@
 // trata como estática durante una corrida (igual que `tb_l1_ddc.sv`, que la
 // fija una vez por simulación vía `+mode`): la rama fina (droop) y la gruesa
 // (droop + semibanda ÷2) corren las dos siempre, y un mux combinacional
-// selecciona cuál sale por `m_i`/`m_q`. La conmutación limpia en caliente
-// entre modos (continuidad de fase, sin artefactos en el rayo de transición)
-// es del plan de pruebas de Z1 y no se ataca aquí.
+// selecciona cuál sale por `m_i`/`m_q`. La conmutación en caliente entre
+// modos a mitad de rayo (continuidad de fase) NO es un requisito de este
+// proyecto — confirmado, 21-sep-2026: `mode_coarse` solo cambia entre rayos
+// distintos, nunca dentro de uno, así que el mux estático de arriba ya cubre
+// el caso de uso real. No queda trabajo pendiente aquí por este motivo.
 //
 // `s_last` no se conecta a nada todavía: el framing de rayos (TLAST de salida,
 // range gating) es trabajo de Z1 posterior a este núcleo, y ningún puerto de

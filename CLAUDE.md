@@ -14,7 +14,7 @@ con el RCP ni con ORPG.
   16 bits, 250 MSPS, JESD204B). **Aún no comprada.**
 - **Plataforma de desarrollo actual:** Digilent ZedBoard, XC7Z020-CLG484-1.
 
-## Estado, a 20 de septiembre de 2026
+## Estado, a 21 de septiembre de 2026
 
 **Z0 — substrato: cerrada.** `make check` sigue en verde (79 tests hoy, Verilator + gcc + NumPy +
 lint). Detalle en el tutorial de `docs/tutorial/` e inventario en `docs/implementacion/substrato.md`.
@@ -84,8 +84,11 @@ fases.md#z1` es la fuente viva:
   `fir_compiler_halfband` — ver `fases.md#z1`, entrada del 20-sep más tarde. El propio gate de
   `tcl/build.tcl` solo comprueba WNS de setup, no de hold (el hold pasó brevemente a negativo en un
   reporte intermedio antes de resolverse solo).
-- **Conmutación en caliente fino/grueso:** diferida explícitamente, sin empezar (`rtl/drx_ddc_top.sv`,
-  `rtl/drx_range_gate.sv`).
+- **Conmutación en caliente fino/grueso:** cerrada como no-requisito, 21-sep-2026 — no como trabajo
+  diferido. Confirmado por vladimir: la resolución de celda solo cambia entre rayos distintos,
+  nunca a mitad de uno, así que no hace falta continuidad de fase. El mux estático que ya existe en
+  `rtl/drx_ddc_top.sv`/`rtl/drx_range_gate.sv` cubre el caso de uso real. Detalle en
+  `fases.md#z1`, entrada del 21-sep.
 - Nuevo hallazgo abierto, no bloqueante: [P-14](docs/alcance/pendientes.md#p-14) — falta evaluar la
   varianza de los estimadores de momento bajo el residuo aceptado por D-12, contra Doviak & Zrnic
   cap. 6. Deuda de validación sobre una decisión ya tomada, no una condición de cierre de Z1.
@@ -117,18 +120,25 @@ de ZedBoard y el project plan original de 34 semanas para la ZU9.
 
 Para cerrar Z1 de verdad, en orden:
 
-1. **Conmutación en caliente fino/grueso** (continuidad de fase en `drx_ddc_top`/`drx_range_gate`) —
-   diferida desde el diseño original, sin empezar.
-2. Montar el runner de CI `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` — sigue
+1. Montar el runner de CI `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` — sigue
    pendiente desde Z0, el job `gateware` de `.github/workflows/ci.yml` ya está escrito. Vivado/xsim
    están en PATH en esta máquina (`/home/orlando/tools/Xilinx/Vivado/2022.2`), confirmado corriendo
    el flujo real (síntesis + P&R + xsim), no solo el binario. Bloqueado por ahora: `gh auth login`
    sin token válido en esta máquina.
-3. BSP/FSBL vía Vitis desde el XSA que ya exporta `-top zynq -step xsa` (ver el punto 4) — Z4 real,
+2. BSP/FSBL vía Vitis desde el XSA que ya exporta `-top zynq -step xsa` (ver el punto 3) — Z4 real,
    `fw/Makefile` ya lo dice explícitamente. `tools/make_boot.sh` sigue fallando igual que hoy hasta
    que exista `fsbl.elf`.
-4. Puente equivalente para la ZU9 (`zynq_ultra_ps_e`, IP distinta de `processing_system7`) — sin
+3. Puente equivalente para la ZU9 (`zynq_ultra_ps_e`, IP distinta de `processing_system7`) — sin
    diseñar, se hace cuando haga falta.
+
+**Conmutación en caliente fino/grueso** ya **no** está en esta lista: cerrada como no-requisito el
+21-sep-2026, no diferida. Se preguntó para qué serviría cambiar de celda a mitad de rayo antes de
+diseñar el modelo de referencia que hacía falta para verificarlo — ningún documento del repo
+explicaba el motivo, solo que estaba diferido. Confirmado por vladimir: no tiene sentido, la
+resolución de celda solo cambia entre rayos distintos, nunca dentro de uno. El mux estático que ya
+existe en `rtl/drx_ddc_top.sv`/`rtl/drx_range_gate.sv` (`mode_coarse` fijo durante una corrida, ya
+escribible en tiempo de ejecución) cubre el caso de uso real sin necesitar continuidad de fase.
+Detalle en `fases.md#z1`, entrada del 21-sep.
 
 **Puente PS7↔AXI para el mapa de registros** ya **no** está en esta lista: cerrado el 20-sep-2026
 (más tarde), override explícito del usuario de "no diseñar por adelantado" tras ver el alcance real
