@@ -46,13 +46,21 @@ jobs:
         run: .venv/bin/python tools/check_hardcoded_clock.py
 
       # --- Lint -------------------------------------------------------------
-      # El lint de HDL vive en el job `gateware` (ver más abajo): desde que
-      # drx_ddc_top.sv instancia IP real de Xilinx, Verilator solo puede
-      # resolver esos módulos con los productos que genera tcl/ip.tcl, y eso
-      # necesita Vivado -- no existe en ubuntu-latest.
 
       - name: Lint de Python
         run: .venv/bin/ruff check .
+
+      # Réplica exacta de `make lint-hdl`: el stub de sim/tb_sv/ le da a
+      # Verilator los cuatro módulos de IP de Xilinx que drx_ddc_top.sv
+      # instancia (blackboxes solo para el lint, nunca los lee tcl/build.tcl),
+      # así que este gate no depende de Vivado.
+      - name: Lint de HDL
+        run: |
+          verilator --lint-only -Wall --timing \
+            sim/verilator_waivers.vlt \
+            $(grep -v '^\s*#' rtl/filelist.f | grep -v '^\s*$') \
+            sim/tb_sv/xilinx_ip_verilator_stubs.sv \
+            --top-module drx_top
 
       # --- Regresión --------------------------------------------------------
       # Cubre el modelo dorado, la suite L0 sobre Verilator, los tests de
@@ -76,21 +84,6 @@ jobs:
         platform: [zedboard, zu9]
     steps:
       - uses: actions/checkout@v4
-
-      # Solo hace falta una vez: el lint no depende del part de la plataforma,
-      # y regenerar la IP es lo que le da a Verilator los módulos reales que
-      # drx_ddc_top.sv instancia (ver el comentario en el job `substrato`).
-      - name: Regenerar IP de Xilinx
-        if: matrix.platform == 'zedboard'
-        run: vivado -mode batch -source tcl/ip.tcl -tclargs -platform zedboard
-
-      - name: Lint de HDL
-        if: matrix.platform == 'zedboard'
-        run: |
-          verilator --lint-only -Wall --timing \
-            sim/verilator_waivers.vlt \
-            $(grep -v '^\s*#' rtl/filelist.f | grep -v '^\s*$') \
-            --top-module drx_top
 
       # El cierre de temporización se corre TAMBIÉN con el FS_HZ real de la ZU9
       # aunque no haya placa: es la única forma de que la deuda de la entrada D2
