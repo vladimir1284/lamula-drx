@@ -178,6 +178,16 @@ if {$opt(step) eq "impl"} {
 }
 
 # --- bitstream --------------------------------------------------------------
+# `debug_probe` se deja sin restringir a propósito (ver tcl/xdc/zedboard.xdc y
+# zedboard_zynq.xdc): es el único puerto de top-level sin IOSTANDARD/LOC, y el
+# DRC de write_bitstream lo trata como error (NSTD-1/UCIO-1) por defecto. Bajar
+# estas dos reglas a Warning es lo que el propio mensaje de Vivado sugiere para
+# este caso. ADVERTENCIA: esto no se puede acotar por puerto -- si en el futuro
+# se agrega un puerto de top-level nuevo sin XDC, este mismo cambio deja que el
+# bitstream se genere igual, sin avisar.
+set_property SEVERITY {Warning} [get_drc_checks NSTD-1]
+set_property SEVERITY {Warning} [get_drc_checks UCIO-1]
+
 # `-bin_file` produce además el .bin crudo, sin la cabecera del .bit que lleva
 # marca de tiempo: es el que se usa para el BOOT.BIN reproducible byte a byte.
 set bit_file [file join $opt(outdir) ${top}.bit]
