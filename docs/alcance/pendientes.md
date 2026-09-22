@@ -145,7 +145,9 @@ fecha.
 
 ### P-04 · Sectorización azimutal de PRF y ancho de pulso («pie-slice») { #p-04 }
 
-**Estado:** abierto · **Dueño:** checklist DSP↔RCP · **Alcance:** no comprometido.
+**Estado:** cerrado, 21-sep-2026 — confirmado, pero con una forma más fina que la enunciada
+originalmente · **Dueño:** vladimir · **Cerraba:** el alcance de
+[Z2](../implementacion/fases.md#z2) — ver [D-13](decisiones.md#d-13).
 
 El plan original nombra un único par PRF/ancho de pulso global por barrido. El estudio de la
 interfaz de anfitrión de un procesador de señal maduro sugiere una capacidad más granular: una tabla
@@ -155,6 +157,18 @@ Si el checklist DSP↔RCP confirma que las estrategias de barrido del radar Gema
 necesitan, es un requisito del motor de timing en PL — las tablas de trigger necesitarían entradas
 por sector — y un campo correspondiente en la dirección de configuración del contrato DRx↔DSP. **No
 se asume necesario sin esa confirmación.**
+
+!!! success "21-sep-2026: confirmado — no es sectorización por azimut, es Batch mode de NEXRAD, 2 lotes por radial"
+    La confirmación no vino del checklist DSP↔RCP sino de una decisión de producto directa
+    (vladimir): el VCP objetivo usa **Batch mode** de NEXRAD, no *pie-slice*. La granularidad real es
+    más fina que "por sector de varios grados": Batch mode alterna PRF **dentro del *dwell time* de
+    cada radial** (~10-15 ms) — un lote corto de PRF baja (vigilancia, pocos pulsos) seguido de un
+    lote de PRF alta (Doppler, muchos pulsos), en bucle continuo durante los 360° del barrido a esa
+    elevación. El enunciado original de este pendiente (tabla de N entradas por sector azimutal) no
+    es el mecanismo correcto; el mecanismo correcto es una tabla de **exactamente 2 lotes por
+    radial** — fijado en [D-13](decisiones.md#d-13). Detalle de diseño y consecuencias para el motor
+    de timing y para el validador PRF×rango de [D-09](decisiones.md#d-09), en D-13 y en
+    [Fases, Z2](../implementacion/fases.md#z2).
 
 ## Pendientes de procedencia y de fuentes
 

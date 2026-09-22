@@ -237,3 +237,41 @@ parámetro de tolerancia en LSB (por defecto 0, para no tocar ningún testbench 
 bit a bit) y volver a correr la matriz de 16 combinaciones contra xsim real para confirmar que con
 esa tolerancia las 16 dan «pass». **No se ha hecho todavía** — es el trabajo pendiente concreto que
 deja esta decisión.
+
+## D-13 · Motor de timing de Z2: 2 lotes de PRF/ancho de pulso por radial (Batch mode de NEXRAD) { #d-13 }
+
+**Decisión, 21-sep-2026 (vladimir, en sesión):** el motor de timing de [Z2](../implementacion/fases.md#z2)
+se diseña para soportar **exactamente 2 lotes de PRF/ancho de pulso por radial**, no un único par
+global (como decía el "Trabajo" original de Z2) ni una tabla genérica de N entradas por sector
+azimutal (como especulaba [P-04](pendientes.md#p-04)).
+
+Esto cierra [P-04](pendientes.md#p-04): el VCP objetivo usa **Batch mode** de NEXRAD, que alterna PRF
+**dentro del *dwell time* de cada radial** (~10-15 ms) — un lote corto de PRF baja (vigilancia, pocos
+pulsos, ej. 4-6, para reflectividad a rango largo sin ambigüedad) seguido de un lote de PRF alta
+(Doppler, muchos pulsos, ej. 30-40, para velocidad/ancho espectral con buen Nyquist pero rango
+ambiguo menor) — en bucle continuo durante los 360° de esa elevación. Es más fino que "por sector":
+ocurre a la cadencia de un radial, no de varios grados de azimut.
+
+Consecuencias para el diseño de Z2:
+
+- El generador de triggers necesita 2 perfiles de PRF/ancho de pulso configurables por registro, con
+  conteo de pulsos por lote, secuenciados de forma **autónoma en fabric** — el RCP no puede comandar
+  esto en vivo por 1GbE a la cadencia de un radial (10-15 ms de *dwell*, órdenes de magnitud más
+  rápido que la latencia de red razonable).
+- El validador PRF×rango de [D-09](#d-09) se aplica **a cada lote por separado**: el rango
+  no-ambiguo del lote de PRF baja y el del lote de PRF alta son distintos por diseño — ese es el
+  punto de Batch mode — así que un único par PRF/rango por configuración no basta para validar la
+  combinación completa.
+- El metadato por rayo ya contempla PRF y modo de pulso ([Z4](../implementacion/fases.md#z4)), pero
+  si el conteo de bins de range-gate necesita diferir entre lotes dentro del mismo radial, eso es
+  alcance nuevo de Z2 a resolver cuando se diseñe esa pieza — no lo resuelve esta decisión.
+
+**Lo que esta decisión NO resuelve:**
+
+- Las PRF exactas y el número de pulsos por lote de cada VCP de Gematronik: son valores de
+  configuración en tiempo de ejecución (registro), no constantes de `config/params.toml`.
+- Si el range-gate necesita dos configuraciones de bins simultáneas (una por lote) dentro de un
+  mismo radial, o si un solo conjunto de bins alcanza para los dos — pendiente de diseño.
+- Sincronización entre el cambio de lote del motor de timing y la lectura de azimut/elevación de
+  [Z3](../implementacion/fases.md#z3) — cada lote dentro del mismo radial comparte az/el, pero el
+  diseño concreto del tagging todavía no existe.

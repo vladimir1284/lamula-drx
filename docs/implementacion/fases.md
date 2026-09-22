@@ -607,20 +607,36 @@ original, menos JESD y menos DMA.
 Trabajo:
 
 - Generador de 4 triggers configurables con retardo y ancho independientes.
-- PRF programable en todo el rango, con valores de registro idénticos a la ZU9.
-- Selección de ancho de pulso 0,8 / 1,66 / 3,3 µs (200 / 415 / 825 ciclos a 250 MHz).
+- **Secuenciador de 2 lotes de PRF/ancho de pulso por radial** (Batch mode de NEXRAD, D-13, cierra
+  P-04): lote de PRF baja (vigilancia) + lote de PRF alta (Doppler), conteo de pulsos por lote
+  configurable por registro, alternados de forma autónoma en fabric y en bucle continuo durante el
+  barrido — no un único par PRF/ancho global. Valores de registro idénticos a la ZU9.
+- Selección de ancho de pulso 0,8 / 1,66 / 3,3 µs (200 / 415 / 825 ciclos a 250 MHz), por lote.
 - Manejo de modos de pulso y encuadre por PRI.
 - **Validador de configuración PRF × rango**
-  ([D-09](../alcance/decisiones.md#d-09)) con
-  código de error hacia el contrato.
-- Sincronización determinista entre el trigger y el inicio del gating.
+  ([D-09](../alcance/decisiones.md#d-09)), aplicado **a cada uno de los 2 lotes por separado**
+  (D-13: sus rangos no ambiguos son distintos por diseño), con código de error hacia el contrato.
+- Sincronización determinista entre el trigger y el inicio del gating, incluida la transición
+  lote-bajo → lote-alto dentro de un mismo radial.
 - Instrumentación en fabric: contador libre en un dominio de reloj distinto, para auto-medir jitter
   y periodo.
 - Salida de los 4 triggers a Pmod para medida con osciloscopio.
 
 **Hito ZM2 (fin S13):** matriz completa PRF × ancho de pulso × modo × 4 triggers en verde, en
-simulación y en placa; jitter medido y caracterizado; combinaciones ilegales rechazadas con el
-código correcto.
+simulación y en placa, incluida la secuencia de 2 lotes por radial de Batch mode; jitter medido y
+caracterizado; combinaciones ilegales rechazadas con el código correcto.
+
+!!! success "21-sep-2026: alcance de Z2 revisado antes de escribir código — Batch mode de NEXRAD exige 2 lotes de PRF por radial, no un único par global"
+    Al arrancar Z2 se detectó que el "Trabajo" de arriba (un único par PRF/ancho de pulso global)
+    no cubre el VCP objetivo: usa **Batch mode** de NEXRAD, que alterna PRF dentro del *dwell time*
+    de cada radial (~10-15 ms), no por barrido completo ni por sector azimutal de varios grados como
+    especulaba [P-04](../alcance/pendientes.md#p-04). Decisión de producto (vladimir, misma sesión):
+    el motor de timing soporta **exactamente 2 lotes por radial** — ver
+    [D-13](../alcance/decisiones.md#d-13), que cierra P-04. Consecuencia directa sobre el validador
+    de [D-09](../alcance/decisiones.md#d-09): se aplica por lote, no una vez por configuración,
+    porque el rango no ambiguo del lote de PRF baja y el del lote de PRF alta son distintos por
+    diseño. Ningún RTL ni modelo de Z2 existía todavía en este punto, así que el cambio de alcance no
+    tocó código — solo evita diseñar contra el par global equivocado.
 
 ## Z3 — Lectores SSI + tagging az/el (semanas 14–18) { #z3 }
 
