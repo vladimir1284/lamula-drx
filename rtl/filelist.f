@@ -26,6 +26,10 @@ rtl/drx_prf_batch_seq.sv
 # drx_top todavía, pendiente el mapa de registros de Z2 (P-15).
 rtl/drx_trigger_one_shot.sv
 rtl/drx_trigger_gen.sv
+# La composición de las dos piezas de arriba en un solo bloque -- ver su propia
+# cabecera. Mismo estado sin integrar: pendiente el mapa de registros de Z2
+# (P-15).
+rtl/drx_timing_engine.sv
 rtl/drx_axil_regs.sv
 # drx_top.sv va al final a propósito: desde esta integración instancia
 # vector_source + drx_ddc_quad_top + drx_range_gate_quad_top, así que tiene que

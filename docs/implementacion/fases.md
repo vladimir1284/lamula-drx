@@ -704,6 +704,18 @@ caracterizado; combinaciones ilegales rechazadas con el código correcto.
     que hace falta para cablear a un Pmod. `make check` en verde (98 tests). Mismo estado que el
     secuenciador de lotes: sin integrar en `drx_top`, pendiente el mapa de registros de Z2 (P-15).
 
+!!! success "21-sep-2026 (más tarde): drx_timing_engine — las dos piezas de Z2, cableadas juntas"
+    `rtl/drx_timing_engine.sv`: instancia `drx_prf_batch_seq` + `drx_trigger_gen` en un solo
+    bloque, sin lógica propia — cablea `pulse_trig` del secuenciador como `arm` del generador de
+    triggers, así que los 4 triggers se rearman con cada pulso de PRF (de cualquiera de los 2
+    lotes). Es el bloque que se integrará en `drx_top` el día que exista el mapa de registros de
+    Z2 (P-15); hasta entonces, unidad suelta con su propio L0.
+
+    Verificación (`sim/tb/tb_drx_timing_engine.py`): no repite la corrección interna de cada pieza
+    (eso ya lo prueban sus propios L0) — solo confirma el cableado, contra
+    `radial_trigger_times_cycles` + `one_shot_active_cycles` del modelo dorado aplicados en
+    cadena. 1/1 test en verde. `make check` en verde (99 tests).
+
 ## Z3 — Lectores SSI + tagging az/el (semanas 14–18) { #z3 }
 
 Estrategia de tres capas, porque una sola no da confianza:
