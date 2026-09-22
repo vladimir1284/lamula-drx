@@ -135,3 +135,15 @@ def test_el_barrido_completo_no_deja_hueco_entre_radiales():
 def test_sweep_rechaza_cero_radiales():
     with pytest.raises(ValueError):
         timing.sweep_trigger_times_cycles(_radial_ejemplo(), n_radiales=0)
+
+
+def test_one_shot_arranca_un_ciclo_despues_del_arme_mas_el_retardo():
+    assert list(timing.one_shot_active_cycles(arm_cycle=100, delay=0, width=3)) == [101, 102, 103]
+    assert list(timing.one_shot_active_cycles(arm_cycle=100, delay=5, width=3)) == [106, 107, 108]
+
+
+def test_one_shot_rechaza_retardo_negativo_o_ancho_no_positivo():
+    with pytest.raises(ValueError):
+        timing.one_shot_active_cycles(arm_cycle=0, delay=-1, width=1)
+    with pytest.raises(ValueError):
+        timing.one_shot_active_cycles(arm_cycle=0, delay=0, width=0)

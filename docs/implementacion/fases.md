@@ -606,7 +606,10 @@ original, menos JESD y menos DMA.
 
 Trabajo:
 
-- Generador de 4 triggers configurables con retardo y ancho independientes.
+- Generador de 4 triggers configurables con retardo y ancho independientes. **RTL escrito y
+  verificado bit a bit contra el modelo dorado** (`rtl/drx_trigger_gen.sv` +
+  `rtl/drx_trigger_one_shot.sv`, 21-sep-2026 más tarde); falta integrarlo en `drx_top` — depende
+  del mapa de registros de Z2 (P-15), igual que el secuenciador de lotes.
 - **Secuenciador de 2 lotes de PRF/ancho de pulso por radial** (Batch mode de NEXRAD, D-13, cierra
   P-04): lote de PRF baja (vigilancia) + lote de PRF alta (Doppler), conteo de pulsos por lote
   configurable por registro, alternados de forma autónoma en fabric y en bucle continuo durante el
@@ -676,6 +679,30 @@ caracterizado; combinaciones ilegales rechazadas con el código correcto.
     valor válido existe un ciclo de reloj ENTERO antes del primer `RisingEdge` que se espera tras
     armar el secuenciador — `await ReadOnly()` antes de cada lectura (en vez de solo leer después de
     cada flanco) es lo que hace ese primer ciclo observable sin tratarlo como caso especial.
+
+!!! success "21-sep-2026 (más tarde): generador de 4 triggers (retardo+ancho), segundo RTL de Z2"
+    `rtl/drx_trigger_one_shot.sv` (un canal: `delay`+`width` de registro sobre un evento `arm`) +
+    `rtl/drx_trigger_gen.sv` (`generate` de `N_TRIGGERS` instancias, mismo patrón que
+    `drx_range_gate_quad_top.sv`). Los 4 comparten el mismo `arm` — en la integración real,
+    `pulse_trig` de `drx_prf_batch_seq.sv`, así que cada pulso de PRF (de cualquiera de los 2
+    lotes) vuelve a armar los 4 canales — y cada uno aplica su propio retardo/ancho sobre ese mismo
+    instante, tal como ya modela el contrato DRx↔DSP (`trigger_delay_0..3`/`trigger_width_0..3`,
+    congelado desde Z0/D-08). **Nota de interpretación, no una decisión cerrada:** que el `arm`
+    sea por pulso (no una vez por radial) es la lectura más razonable dado el propósito de medida
+    con osciloscopio del hito ZM2, pero ningún documento de `docs/alcance/` lo fija explícitamente
+    — si resulta ser el criterio equivocado, cambia solo el cableado de `arm` en la integración,
+    no este RTL.
+
+    Añadido al modelo dorado: `model/drx_model/timing.py::one_shot_active_cycles` (D-03), con sus
+    propios tests en `model/tests/test_timing.py` (16 en total ahora). Verificación RTL
+    (`sim/tb/tb_drx_trigger_gen.py`, cocotb): cada uno de los 4 canales contra ese oráculo con
+    retardo/ancho independientes, y que un `arm` nuevo reinicia el canal (last-arm-wins) aunque
+    llegue a mitad del retardo o del pulso anterior. 3/3 tests en verde. Un detalle real de
+    Verilator/cocotb que costó una vuelta: un array de salidas de 1 bit
+    (`output logic trig_out[NTriggers]`) no es indexable vía VPI con `--public-flat-rw` — la
+    solución fue empaquetarlo en un solo vector (`[NTriggers-1:0]`), que además es exactamente lo
+    que hace falta para cablear a un Pmod. `make check` en verde (98 tests). Mismo estado que el
+    secuenciador de lotes: sin integrar en `drx_top`, pendiente el mapa de registros de Z2 (P-15).
 
 ## Z3 — Lectores SSI + tagging az/el (semanas 14–18) { #z3 }
 

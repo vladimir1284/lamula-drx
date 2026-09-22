@@ -164,3 +164,23 @@ def sweep_trigger_times_cycles(
         low_all.append(low)
         high_all.append(high)
     return np.concatenate(low_all), np.concatenate(high_all)
+
+
+def one_shot_active_cycles(arm_cycle: int, delay: int, width: int) -> range:
+    """Ciclos en los que UN trigger genérico (Z2: "generador de 4 triggers configurables
+    con retardo y ancho independientes") está activo, contados en ciclos de `fs`.
+
+    Un evento de arme en `arm_cycle` (p. ej. `pulse_trig` del secuenciador de lotes: cada
+    pulso vuelve a armar los 4) produce un pulso que arranca `delay` ciclos después y dura
+    `width` ciclos: activo en ``[arm_cycle + delay + 1, arm_cycle + delay + width]``. El +1
+    es la latencia de un registro entre el arme y la salida -- igual que `tx_gate` en
+    `drx_prf_batch_seq.sv` -- no una demora de más que el hardware real no tenga: es la
+    latencia mínima de cualquier salida registrada de un `arm` que también llega por
+    registro.
+    """
+    if delay < 0:
+        raise ValueError("delay tiene que ser >= 0")
+    if width < 1:
+        raise ValueError("width tiene que ser >= 1")
+    start = arm_cycle + delay + 1
+    return range(start, start + width)
