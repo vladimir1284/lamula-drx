@@ -610,7 +610,9 @@ Trabajo:
 - **Secuenciador de 2 lotes de PRF/ancho de pulso por radial** (Batch mode de NEXRAD, D-13, cierra
   P-04): lote de PRF baja (vigilancia) + lote de PRF alta (Doppler), conteo de pulsos por lote
   configurable por registro, alternados de forma autónoma en fabric y en bucle continuo durante el
-  barrido — no un único par PRF/ancho global. Valores de registro idénticos a la ZU9.
+  barrido — no un único par PRF/ancho global. Valores de registro idénticos a la ZU9. **RTL escrito
+  y verificado bit a bit contra el modelo dorado** (`rtl/drx_prf_batch_seq.sv`, 21-sep-2026 más
+  tarde); falta integrarlo en `drx_top` — depende del mapa de registros de Z2 (P-15).
 - Selección de ancho de pulso 0,8 / 1,66 / 3,3 µs (200 / 415 / 825 ciclos a 250 MHz), por lote.
 - Manejo de modos de pulso y encuadre por PRI.
 - **Validador de configuración PRF × rango**
@@ -652,6 +654,28 @@ caracterizado; combinaciones ilegales rechazadas con el código correcto.
     tests). Al escribirlo salió un hallazgo real, no bloqueante hoy: el mensaje `config` del
     contrato DRx↔DSP todavía tiene un solo `prf_div`/`pulse_width_idx`, no dos — ver
     [P-15](../alcance/pendientes.md#p-15).
+
+!!! success "21-sep-2026 (más tarde): primer RTL de Z2 — `drx_prf_batch_seq`, verificado bit a bit contra el modelo dorado"
+    `rtl/drx_prf_batch_seq.sv`: el secuenciador de 2 lotes de D-13 en fabric. Un contador de PRI
+    (`pri_cnt`) y un índice de pulso (`pulse_idx`) por lote, con `batch_sel` conmutando en el mismo
+    flanco en que `pri_cnt` vuelve a 0 — así el PRI del primer pulso del lote nuevo ya usa su propio
+    divisor sin necesitar ningún hueco ni guarda de sincronización entre lotes. `pulse_trig` es
+    combinacional sobre `pri_cnt` a propósito: el primer pulso tiene que caer en el ciclo 0 tras
+    armar, igual que `start_cycle=0` en el modelo, sin un ciclo de latencia que el modelo no tiene.
+    `tx_gate` (nivel, ancho de pulso por lote) y `radial_done` (marca el arranque de cada radial
+    nuevo, nunca el primero) sí son registrados. Todavía no lo instancia `drx_top` — depende del
+    mapa de registros de Z2, que no existe (P-15) — así que por ahora es una unidad suelta en
+    `rtl/filelist.f`, con su propio L0.
+
+    Verificación (`sim/tb/tb_drx_prf_batch_seq.py`, cocotb sobre Verilator): los tiempos de disparo
+    y `batch_sel`, ciclo a ciclo, contra `model.drx_model.timing.sweep_trigger_times_cycles` — nada
+    de aritmética de PRI reimplementada a mano en el testbench (D-03). 4/4 tests en verde en el
+    primer intento tras corregir un solo detalle de anchos de bus (un cast de resize sobrante
+    disparaba `WIDTH` en Verilator, ver el propio commit). `make check` en verde (95 tests). Un
+    detalle de testbench que vale la pena dejar escrito: `pulse_trig` es combinacional y su primer
+    valor válido existe un ciclo de reloj ENTERO antes del primer `RisingEdge` que se espera tras
+    armar el secuenciador — `await ReadOnly()` antes de cada lectura (en vez de solo leer después de
+    cada flanco) es lo que hace ese primer ciclo observable sin tratarlo como caso especial.
 
 ## Z3 — Lectores SSI + tagging az/el (semanas 14–18) { #z3 }
 

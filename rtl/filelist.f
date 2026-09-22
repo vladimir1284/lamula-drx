@@ -16,6 +16,11 @@ rtl/drx_ddc_top.sv
 rtl/drx_ddc_quad_top.sv
 rtl/drx_range_gate.sv
 rtl/drx_range_gate_quad_top.sv
+# Z2 (D-13): secuenciador de 2 lotes de PRF/ancho de pulso por radial. Todavía
+# no lo instancia drx_top -- el mapa de registros de Z2 que lo alimentaría no
+# existe (P-15) -- así que solo se prueba como unidad suelta (L0, ver
+# sim/tb/tb_drx_prf_batch_seq.py), igual que drx_range_gate.sv antes del quad_top.
+rtl/drx_prf_batch_seq.sv
 rtl/drx_axil_regs.sv
 # drx_top.sv va al final a propósito: desde esta integración instancia
 # vector_source + drx_ddc_quad_top + drx_range_gate_quad_top, así que tiene que
