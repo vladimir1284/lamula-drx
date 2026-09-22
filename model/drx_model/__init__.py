@@ -5,7 +5,7 @@ modelo discrepan, hay un bug en uno de los dos — no se ajusta el modelo para q
 el test pase.
 """
 
-from drx_model import chain, cic, fir, fixed, gating, nco, params, vectors
+from drx_model import chain, cic, fir, fixed, gating, nco, params, timing, vectors
 from drx_model.params import Params, load, load_all
 
 __all__ = [
@@ -19,5 +19,6 @@ __all__ = [
     "load_all",
     "nco",
     "params",
+    "timing",
     "vectors",
 ]

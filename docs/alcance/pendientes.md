@@ -1861,3 +1861,34 @@ finito), P-14 cierra sin tocar nada más. Si no lo es, reabre la pregunta de
 [D-12](decisiones.md#d-12) y de si Taylor —o dithering, la vía que [P-11](#p-11) dejó sin explorar
 del todo (falta el modelo de integración de M pulsos sobre el ruido de fase, ver esa entrada,
 9-sep-2026)— sigue siendo la elección correcta.
+
+### P-15 · El mensaje `config` del contrato solo tiene 1 PRF/ancho de pulso, no 2 lotes { #p-15 }
+
+**Estado:** abierto, identificado 21-sep-2026 · **Dueño:** quien diseñe el registro de Z2 y la
+siguiente revisión del contrato · **Bloquea:** nada hoy — [Z2](../implementacion/fases.md#z2)
+todavía no tiene RTL ni registros propios; bloquea cerrar Z2 y Z4 de verdad.
+
+[D-13](decisiones.md#d-13) fija que el motor de timing de Z2 secuencia **2 lotes** de PRF/ancho de
+pulso por radial (Batch mode de NEXRAD). El modelo dorado (`model/drx_model/timing.py`) ya modela
+eso: `Batch` + `RadialBatches(low, high)`, con el validador de [D-09](decisiones.md#d-09) aplicado a
+cada lote por separado.
+
+Pero `contract/schema/drx_dsp_v0_1.toml` (congelado en Z0 por [D-08](decisiones.md#d-08)) sigue
+declarando un único par en el mensaje `config`: un solo `prf_div` (`u32`) y un solo
+`pulse_width_idx` (`u8`). Eso modela el par global que el "Trabajo" original de Z2 daba por hecho
+— exactamente el supuesto que D-13 acaba de descartar. Con el esquema de hoy no hay dónde meter el
+segundo lote: ni el DSP puede pedir una configuración de 2 lotes, ni el DRx puede reportar cuál de
+los dos produjo un rayo dado.
+
+No se toca ahora porque es alcance de Z4 (el contrato es la única interfaz externa, y D-08 dice que
+cambiarlo sube `version_minor` y exige actualizar los tests) y porque el mapa de registros AXI-Lite
+de Z2 (`config/registers.toml`) tampoco existe todavía — el propio comentario del fichero dice
+explícitamente que deja fuera "cualquier registro de Z2 (triggers, PRF)". Diseñar el campo del
+contrato antes que el registro real que lo alimenta sería adelantarse sin la forma concreta en
+mano.
+
+**Condición de cierre:** cuando se diseñe el mapa de registros de Z2, `config` gana los campos para
+2 lotes (como mínimo: `prf_div`/`pulse_width_idx`/`n_pulses` por lote, y el metadato por rayo de
+[Z4](../implementacion/fases.md#z4) gana qué lote produjo ese rayo) y sube `version_minor`. Hasta
+entonces, cualquier prueba de aceptación de D-09/D-13 contra el contrato real (no contra el modelo
+dorado) queda bloqueada por este hueco.

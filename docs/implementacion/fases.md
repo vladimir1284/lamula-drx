@@ -638,6 +638,21 @@ caracterizado; combinaciones ilegales rechazadas con el código correcto.
     diseño. Ningún RTL ni modelo de Z2 existía todavía en este punto, así que el cambio de alcance no
     tocó código — solo evita diseñar contra el par global equivocado.
 
+!!! success "21-sep-2026 (más tarde): modelo dorado del motor de timing, primer código de Z2"
+    `model/drx_model/timing.py`: `Batch` (valores de registro: `prf_div`, `pulse_width_cycles`,
+    `n_pulses`) y `RadialBatches(low, high)` — el tipo mismo fija "2 lotes" de D-13, no una lista de
+    N. Valida que el ancho de pulso quepa en su propio PRI y que sea uno de los tres de
+    `config/params.toml`. `validate_batch`/`validate_radial` implementan D-09 por lote, con
+    `PrfRangeIllegal`/`PulseWidthInvalid` mapeados a los códigos ya existentes en
+    `contract/schema/drx_dsp_v0_1.toml` (`prf_range_illegal`, `pulse_width_invalid`).
+    `trigger_times_cycles`/`radial_trigger_times_cycles`/`sweep_trigger_times_cycles` generan los
+    instantes de disparo en ciclos de `fs`, con el lote alto empezando exactamente donde termina el
+    bajo y sin hueco entre radiales — la base para comparar contra el RTL del generador de triggers
+    cuando exista. 14 tests nuevos en `model/tests/test_timing.py`, `make check` en verde (94
+    tests). Al escribirlo salió un hallazgo real, no bloqueante hoy: el mensaje `config` del
+    contrato DRx↔DSP todavía tiene un solo `prf_div`/`pulse_width_idx`, no dos — ver
+    [P-15](../alcance/pendientes.md#p-15).
+
 ## Z3 — Lectores SSI + tagging az/el (semanas 14–18) { #z3 }
 
 Estrategia de tres capas, porque una sola no da confianza:

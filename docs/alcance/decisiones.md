@@ -270,6 +270,9 @@ Consecuencias para el diseño de Z2:
 
 - Las PRF exactas y el número de pulsos por lote de cada VCP de Gematronik: son valores de
   configuración en tiempo de ejecución (registro), no constantes de `config/params.toml`.
+- El mensaje `config` del contrato DRx↔DSP (congelado en Z0, [D-08](#d-08)) sigue teniendo un solo
+  `prf_div`/`pulse_width_idx`, no dos — ver [P-15](pendientes.md#p-15). Se resuelve con el mapa de
+  registros de Z2, no aquí.
 - Si el range-gate necesita dos configuraciones de bins simultáneas (una por lote) dentro de un
   mismo radial, o si un solo conjunto de bins alcanza para los dos — pendiente de diseño.
 - Sincronización entre el cambio de lote del motor de timing y la lectura de azimut/elevación de
