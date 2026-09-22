@@ -12,15 +12,24 @@
 // como decisión. Si resulta ser el criterio equivocado, cambia esta única
 // línea de cableado, no los módulos que envuelve.
 //
-// D-09 (checks autocontenidos): `enable` real del secuenciador de lotes es
-// `enable && config_valid_low && config_valid_high` -- si cualquiera de los 2
-// lotes tiene un `pulse_width` fuera de tabla o que no cabe en su propio PRI,
-// el secuenciador simplemente no corre (mismo efecto que `enable` en bajo,
-// `drx_prf_batch_seq.sv` ya lo deja todo congelado y `tx_gate` a 0 en ese
-// caso). `config_invalid_low`/`config_invalid_high` exponen el motivo hacia
-// arriba para que `drx_axil_regs` los latchee en TIMING_STATUS. Esto NO
-// implementa D-09 completo -- ver la cabecera de `drx_timing_config_valid.sv`
-// para lo que falta (PRF x rango).
+// D-09 completo: `enable` real del secuenciador de lotes es `enable &&
+// config_valid_low && config_valid_high` -- si cualquiera de los 2 lotes
+// tiene un `pulse_width` fuera de tabla, que no cabe en su propio PRI, o un
+// `prf_div` que viola el piso de rango no ambiguo de su lote, el secuenciador
+// simplemente no corre (mismo efecto que `enable` en bajo, `drx_prf_batch_seq.
+// sv` ya lo deja todo congelado y `tx_gate` a 0 en ese caso).
+// `config_invalid_low`/`config_invalid_high` exponen el motivo hacia arriba
+// para que `drx_axil_regs` los latchee en TIMING_STATUS.
+//
+// Cada instancia de `drx_timing_config_valid` toma su propio piso de rango
+// (`PrfDivMinRangeLow`/`PrfDivMinRangeHigh`, por defecto PRF_DIV_MIN_LOW/
+// PRF_DIV_MIN_HIGH del paquete de parámetros -- 460 km / 115 km WSR-88D-
+// NEXRAD, ver config/params.toml): el lote bajo y el alto no tienen el mismo
+// requisito de rango por diseño (D-13). El piso del lote alto queda hoy por
+// debajo de PRF_DIV_MIN (el techo de PRF ya congelado en 1200 Hz) -- ningún
+// `prf_div` válido en el rango existente puede violarlo, así que ese check
+// no rechaza nada en la práctica todavía; se deja cableado igual por si
+// PRF_DIV_MIN cambia. Ver docs/implementacion/fases.md#z2.
 
 `ifndef DRX_TIMING_ENGINE_SV
 `define DRX_TIMING_ENGINE_SV
@@ -33,7 +42,11 @@ module drx_timing_engine
     parameter int NPulsesBits    = 16,
     parameter int NTriggers      = N_TRIGGERS,
     parameter int TrigDelayBits  = 32,
-    parameter int TrigWidthBits  = 32
+    parameter int TrigWidthBits  = 32,
+    // D-09: piso de rango no ambiguo por lote, en unidades de `prf_div` --
+    // ver la cabecera de este fichero y la de `drx_timing_config_valid.sv`.
+    parameter int PrfDivMinRangeLow  = PRF_DIV_MIN_LOW,
+    parameter int PrfDivMinRangeHigh = PRF_DIV_MIN_HIGH
 ) (
     input logic clk,
     input logic rst_n,
@@ -71,7 +84,8 @@ module drx_timing_engine
 
   drx_timing_config_valid #(
       .PrfDivBits(PrfDivBits),
-      .PulseWidthBits(PulseWidthBits)
+      .PulseWidthBits(PulseWidthBits),
+      .PrfDivMinRange(PrfDivMinRangeLow)
   ) u_config_valid_low (
       .prf_div(prf_div_low),
       .pulse_width(pulse_width_low),
@@ -80,7 +94,8 @@ module drx_timing_engine
 
   drx_timing_config_valid #(
       .PrfDivBits(PrfDivBits),
-      .PulseWidthBits(PulseWidthBits)
+      .PulseWidthBits(PulseWidthBits),
+      .PrfDivMinRange(PrfDivMinRangeHigh)
   ) u_config_valid_high (
       .prf_div(prf_div_high),
       .pulse_width(pulse_width_high),

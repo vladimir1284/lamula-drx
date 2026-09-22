@@ -87,7 +87,9 @@
 // muerto entre el fin de un rayo real y el siguiente `ray_start` se descarta
 // en silencio, sin ningún contador de diagnóstico -- no hay hoy ningún BITE
 // que distinga "PRI bien calibrado" de "un `ray_start` llegó tarde y truncó
-// un rayo en curso" (D-09 no se aplica en RTL, ver `drx_prf_batch_seq.sv`).
+// un rayo en curso". Esto es independiente de D-09 (PRF x rango), que desde
+// el 22-sep-2026 (más tarde) sí se aplica completo en RTL -- ver la cabecera
+// de `drx_timing_engine.sv`.
 
 `ifndef DRX_TOP_SV
 `define DRX_TOP_SV

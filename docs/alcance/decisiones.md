@@ -152,6 +152,17 @@ el plan original: el manejador de configuración **debe validar y rechazar** las
 ilegales, reportarlo por el plano de status/BITE y devolver un código de error definido en el
 contrato DRx↔DSP. Es un caso de prueba de aceptación y se implementa entero en ZedBoard.
 
+**Cerrado en RTL, 22-sep-2026 (más tarde, tercera sesión):** `r_max_required_m` se fijó en 460 km
+(lote de vigilancia/reflectividad) y 115 km (lote Doppler) — valores estándar WSR-88D/NEXRAD, el
+primero ya coincidía con la fila "326 Hz → 460 km" de la tabla de arriba. `rtl/
+drx_timing_config_valid.sv` rechaza en fabric las tres condiciones (pulse_width fuera de tabla, no
+cabe en su PRI, `prf_div` bajo el piso de rango de su lote), gateando `enable` de
+`drx_prf_batch_seq.sv` — ver `docs/implementacion/fases.md#z2`. **Con matiz:** el piso del lote
+alto (115 km → `prf_div_min_high=191800`) queda por debajo del techo de PRF ya congelado
+(`prf_div_min=208333`, 1200 Hz), así que no rechaza nada con los límites de PRF de hoy — se deja
+implementado igual, por si ese techo cambia. Lo que sigue sin decidirse: el código de error del
+contrato hacia el DSP (alcance de Z4).
+
 ## D-10 · La campaña de throughput es un ensayo aparte { #d-10 }
 
 A 100 MHz la salida de fabric es `100e6/208 × 4 B × 4 ch = 7,69 MB/s = 61,5 Mbps`, muy por debajo

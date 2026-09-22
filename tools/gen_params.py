@@ -160,6 +160,12 @@ package drx_params_pkg;
 
   localparam int PRF_DIV_MIN = {inv['prf_div_min']};
   localparam int PRF_DIV_MAX = {inv['prf_div_max']};
+
+  // D-09: piso de PRF_DIV por lote para el rango no ambiguo mínimo exigido
+  // (460 km / 115 km WSR-88D-NEXRAD, ver el comentario de config/params.toml).
+  localparam int PRF_DIV_MIN_LOW = {inv['prf_div_min_low']};
+  localparam int PRF_DIV_MIN_HIGH = {inv['prf_div_min_high']};
+
   localparam int PULSE_WIDTH_CYCLES [0:{len(inv['pulse_width_cycles']) - 1}] = '{{{pw}}};
 
   // -------------------------------------------------------------------------
@@ -257,6 +263,12 @@ def render_h(platforms: dict[str, Params], sel: Params, derived: dict) -> str:
 
 #define DRX_PRF_DIV_MIN {inv['prf_div_min']}
 #define DRX_PRF_DIV_MAX {inv['prf_div_max']}
+
+/* D-09: piso de PRF_DIV por lote para el rango no ambiguo minimo exigido
+ * (460 km / 115 km WSR-88D-NEXRAD, ver el comentario de config/params.toml). */
+#define DRX_PRF_DIV_MIN_LOW {inv['prf_div_min_low']}
+#define DRX_PRF_DIV_MIN_HIGH {inv['prf_div_min_high']}
+
 #define DRX_N_PULSE_WIDTHS {len(inv['pulse_width_cycles'])}
 #define DRX_PULSE_WIDTH_CYCLES {{ {pw} }}
 

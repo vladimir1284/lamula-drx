@@ -157,6 +157,15 @@ Decisiones de esta sesión:
   `config/params.toml` — añadirlo es subir el mapa otra vez (registro nuevo + decidir de dónde sale
   el valor), no un descuido de esta sesión. Sigue listado en
   [Deliberadamente fuera de v3](#deliberadamente-fuera-de-v3), sin cerrar.
+
+  **Actualización 22-sep-2026 (más tarde, tercera sesión): cerrado, y SIN registro nuevo.** La
+  premisa de arriba ("hace falta un registro nuevo") resultó sobreestimada: `r_max_required_m` es un
+  requisito FIJO de producto (460 km / 115 km, valores estándar WSR-88D/NEXRAD), no un parámetro que
+  el DSP configura en runtime — vive como invariante en `config/params.toml`
+  (`prf_div_min_low`/`prf_div_min_high`), igual que `PULSE_WIDTH_CYCLES`, y como PARÁMETRO (no
+  puerto) en `drx_timing_config_valid.sv`/`drx_timing_engine.sv`. El mapa de registros no cambia; no
+  hay v5. Detalle completo, incluida la aritmética y el hallazgo de que el piso del lote alto es
+  no-vinculante hoy, en `fases.md#z2`, entrada del 22-sep (más tarde, tercera sesión).
 - **`schema_version` sube a 4** aunque ningún offset se movió: v3 documentaba los bits 1/2 de
   TIMING_STATUS como "reservados, leen 0" — redefinirlos es un cambio de semántica del mapa que un
   firmware futuro necesita poder detectar, mismo criterio que ya se aplicó en v1→v2/v2→v3.
@@ -196,16 +205,16 @@ sitios distintos:
 
 ## Deliberadamente fuera de v3
 
-- **Validación de D-09/D-13 al nivel del registro — mitad resuelta en v4, 22-sep-2026 (más
-  tarde).** Ver [Z2 en v4](#z2-en-v4). Lo que v4 cierra: `PULSE_WIDTH` fuera de la tabla de
-  `config/params.toml` o que no quepa en el PRI de su propio `PRF_DIV_*` ya se rechaza en RTL
-  (`drx_timing_engine` no corre el secuenciador de lotes mientras eso sea cierto, y lo reporta en
-  TIMING_STATUS bits 1/2). Lo que sigue sin cerrar: escribir un `PRF_DIV_LOW`/`PRF_DIV_HIGH` que dé
-  un rango no ambiguo ilegal (el corazón real de D-09) sigue sin rechazarse en ningún sitio de RTL
-  — ese check necesita un umbral externo (`r_max_required_m`) que hoy no existe como registro. El
-  modelo dorado (`model/drx_model/timing.py`, `validate_batch`/`validate_radial`) sigue siendo el
-  único sitio que lo comprueba completo. Tampoco se decidió ni se tocó qué código de error del
-  contrato reportar hacia el DSP — eso sigue siendo alcance de Z4 (firmware, ver P-15).
+- **Validación de D-09/D-13 al nivel del registro — completa desde el 22-sep-2026 (más tarde,
+  tercera sesión), sin subir el mapa.** Ver [Z2 en v4](#z2-en-v4) y la actualización de ahí mismo.
+  `PULSE_WIDTH` fuera de tabla, que no quepa en su PRI, y ahora también un `PRF_DIV_LOW`/
+  `PRF_DIV_HIGH` que dé un rango no ambiguo ilegal (el corazón real de D-09) — los tres se rechazan
+  en RTL (`drx_timing_engine` no corre el secuenciador de lotes mientras cualquiera sea cierto, y lo
+  reporta en TIMING_STATUS bits 1/2). El piso de rango es un PARÁMETRO de `drx_timing_config_valid.
+  sv`/`drx_timing_engine.sv` (460 km / 115 km, invariante de `config/params.toml`), no un registro
+  AXI-Lite: es un requisito fijo de producto, no algo que el DSP negocie en runtime — por eso el
+  mapa de registros no sube a v5. Lo único que sigue sin decidirse: qué código de error del contrato
+  reportar hacia el DSP — eso sigue siendo alcance de Z4 (firmware, ver P-15).
 - **Sincronización entre `drx_timing_engine` y `drx_range_gate`/`vector_source`.** Ver
   [Z2 en v3](#z2-en-v3): ninguna decisión documentada fija cómo debe hacerse, y tocaría RTL de Z1 ya
   cerrado.

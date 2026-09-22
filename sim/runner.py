@@ -73,6 +73,11 @@ class SimJob:
     #: Plusargs para la ejecución. El arnés de L1 se configura así, con el mismo
     #: formato en Verilator y en xsim.
     plusargs: list[str] = field(default_factory=list)
+    #: Restringe la ejecución a estos tests de `test_module` (cocotb `testcase`).
+    #: `None` corre todos -- lo de siempre. Hace falta cuando el mismo módulo
+    #: de test tiene casos que necesitan parámetros de elaboración distintos
+    #: e incompatibles entre sí (ver test_l0_timing_engine.py).
+    testcases: list[str] | None = None
 
     @property
     def build_dir(self) -> Path:
@@ -109,6 +114,7 @@ class SimJob:
         return runner.test(
             hdl_toplevel=self.hdl_toplevel,
             test_module=self.test_module,
+            testcase=self.testcases,
             parameters=self.parameters,
             build_dir=self.build_dir,
             # Los artefactos de cocotb caen en el directorio de build, no en

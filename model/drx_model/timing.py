@@ -83,21 +83,29 @@ def unambiguous_range_m(params: Params, prf_div: int) -> float:
     return C_M_S / (2.0 * params.prf_hz(prf_div))
 
 
-def batch_config_valid(params: Params, prf_div: int, pulse_width_cycles: int) -> bool:
-    """Oráculo del check AUTOCONTENIDO de D-09 que sí corre en fabric hoy
+def batch_config_valid(
+    params: Params, prf_div: int, pulse_width_cycles: int, prf_div_min_range: int
+) -> bool:
+    """Oráculo de D-09 completo que corre en fabric hoy
     (`rtl/drx_timing_config_valid.sv`): que `pulse_width_cycles` esté en la tabla de
-    `config/params.toml` y que quepa en su propio PRI. No decide nada -- a diferencia
-    de `Batch`/`validate_batch`, no levanta excepción, para que RTL y modelo se
+    `config/params.toml`, que quepa en su propio PRI, y que `prf_div` no viole el
+    piso de rango no ambiguo del lote (`prf_div_min_range` -- en producción
+    `params.prf_div_min_low`/`prf_div_min_high`; un entero pequeño arbitrario en
+    los L0 que no prueban D-09 en sí). No decide nada -- a diferencia de
+    `Batch`/`validate_batch`, no levanta excepción, para que RTL y modelo se
     comparen bit a bit sobre el mismo booleano.
 
-    Lo que esto NO comprueba, a propósito: PRF x rango no ambiguo
-    (`validate_batch`), el corazón real de D-09 -- ese check necesita un umbral
-    externo (`r_max_required_m`) que hoy no existe como registro, ver
-    docs/implementacion/registros.md#deliberadamente-fuera-de-v3.
+    `prf_div_min_range` se pasa en unidades de REGISTRO (ciclos de `prf_div`),
+    no en metros: ni RTL ni este oráculo dividen en punto flotante -- la
+    conversión metros -> `prf_div` ya se hizo una vez al generar
+    `config/params.toml` (ver el comentario de `prf_div_min_low`/
+    `prf_div_min_high` ahí).
     """
     if pulse_width_cycles not in pulse_width_table(params):
         return False
     if pulse_width_cycles >= prf_div:
+        return False
+    if prf_div < prf_div_min_range:
         return False
     return True
 

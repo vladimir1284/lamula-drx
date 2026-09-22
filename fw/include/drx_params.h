@@ -9,7 +9,7 @@
 #define DRX_PARAMS_H
 
 #define DRX_SCHEMA_VERSION 1
-#define DRX_PARAMS_SHA256 "87a45203b7be6d20563172607bbb9464e8aef1f2b20411c665117d12841944e1"
+#define DRX_PARAMS_SHA256 "b73326945d41cd84cf5ee1c90ea5c49c8cea59f1736d7852a4a62c2759d9b582"
 
 #define DRX_FS_HZ_ZEDBOARD 62500000LL
 #define DRX_IF_HZ_ZEDBOARD 15000000LL
@@ -48,6 +48,12 @@
 
 #define DRX_PRF_DIV_MIN 208333
 #define DRX_PRF_DIV_MAX 1250000
+
+/* D-09: piso de PRF_DIV por lote para el rango no ambiguo minimo exigido
+ * (460 km / 115 km WSR-88D-NEXRAD, ver el comentario de config/params.toml). */
+#define DRX_PRF_DIV_MIN_LOW 767198
+#define DRX_PRF_DIV_MIN_HIGH 191800
+
 #define DRX_N_PULSE_WIDTHS 3
 #define DRX_PULSE_WIDTH_CYCLES { 200, 415, 825 }
 

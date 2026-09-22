@@ -1,13 +1,25 @@
 """L0 — `drx_timing_engine`: la composición de `drx_prf_batch_seq` +
-`drx_trigger_gen` (Z2). No revuelve la corrección interna de ninguno de los
-dos -- eso ya lo prueban sus propios L0 -- solo el cableado: que los
-NTriggers se arman con CADA `pulse_trig` del secuenciador de lotes, ninguno
-menos y ninguno de más.
+`drx_trigger_gen` + `drx_timing_config_valid` x2 (Z2). No revuelve la
+corrección interna de ninguno -- eso ya lo prueban sus propios L0 -- solo el
+cableado.
 
-Oráculo, igual que en los dos L0 que compone: `model/drx_model/timing.py`.
-Los ciclos de disparo salen de `radial_trigger_times_cycles`; los ciclos
-activos de cada trigger, de `one_shot_active_cycles` aplicado a CADA uno de
-esos disparos (D-03).
+Dos builds distintos, ver `sim/tests/test_l0_timing_engine.py`:
+
+- `PrfDivMinRangeLow/High` overrideados a 1 (sin piso): los dos primeros
+  tests, que confirman que los NTriggers se arman con CADA `pulse_trig` del
+  secuenciador de lotes (ninguno menos y ninguno de más) y que un lote
+  inválido por D-09 autocontenido congela el motor. Usan `prf_div_low/high`
+  pequeños a propósito -- con el piso real activo, esos valores ya serían
+  inválidos por D-09 completo y no probarían el cableado que dicen probar.
+- Sin override (los reales de producción, PRF_DIV_MIN_LOW/HIGH):
+  `test_pisos_reales_de_produccion_gatean_enable`, solo checks
+  combinacionales alrededor de la frontera -- un dwell completo a esa escala
+  sería impracticable en L0.
+
+Oráculo, igual que en los L0 que compone: `model/drx_model/timing.py`. Los
+ciclos de disparo salen de `radial_trigger_times_cycles`; los ciclos activos
+de cada trigger, de `one_shot_active_cycles` aplicado a CADA uno de esos
+disparos (D-03).
 """
 
 from __future__ import annotations
@@ -131,3 +143,42 @@ async def test_lote_invalido_deja_el_secuenciador_sin_correr(dut):
         await ReadOnly()
         assert not bool(dut.pulse_trig.value), "el motor disparó con un lote inválido"
         assert int(dut.trig_out.value) == 0, "los triggers se armaron con un lote inválido"
+
+
+@cocotb.test()
+async def test_pisos_reales_de_produccion_gatean_enable(dut):
+    """Sin override de parámetros (ver `test_l0_timing_engine_pisos_reales_de_
+    produccion_verilator`): `PrfDivMinRangeLow`/`PrfDivMinRangeHigh` toman su
+    valor por defecto, PRF_DIV_MIN_LOW/HIGH del paquete de parámetros -- los
+    mismos que usa `drx_top.sv` en producción (460 km / 115 km WSR-88D-NEXRAD,
+    D-09). Solo checks combinacionales alrededor de la frontera: un dwell
+    completo con `prf_div` de ~767198 ciclos/lote sería impracticable en L0 y
+    ya no probaría nada que `tb_drx_timing_config_valid.py` no pruebe bit a
+    bit a ese nivel -- esto solo confirma que `drx_timing_engine` propaga el
+    piso real hasta el gateo de `enable`."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    below_floor = PARAMS.prf_div_min_low - 1
+    at_floor = PARAMS.prf_div_min_low
+
+    dut.pulse_width_low.value = 200
+    dut.n_pulses_low.value = 1
+    dut.prf_div_high.value = PARAMS.prf_div_min_high  # muy por encima del piso alto, legal
+    dut.pulse_width_high.value = 200
+    dut.n_pulses_high.value = 1
+    dut.enable.value = 1
+
+    dut.prf_div_low.value = below_floor
+    await ReadOnly()
+    assert bool(dut.config_invalid_low.value), (
+        f"prf_div_low={below_floor}, justo bajo el piso real de 460 km, debería ser inválido"
+    )
+    assert not bool(dut.config_invalid_high.value)
+
+    await RisingEdge(dut.clk)
+    dut.prf_div_low.value = at_floor
+    await ReadOnly()
+    assert not bool(dut.config_invalid_low.value), (
+        f"prf_div_low={at_floor}, el piso real de 460 km exacto, debería ser válido"
+    )

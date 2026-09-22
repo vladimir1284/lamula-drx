@@ -66,6 +66,28 @@ nco_out_bits = 16
 prf_div_min = 208333    # 1200 Hz a 250 MHz
 prf_div_max = 1250000   #  200 Hz a 250 MHz
 
+# D-09 (corazón real, no los checks autocontenidos): piso de PRF_DIV por lote
+# para el rango no ambiguo mínimo exigido, r_unambiguous = c/(2·PRF) >=
+# r_max_required_m. Valores estándar WSR-88D/NEXRAD -- 460 km para el lote de
+# vigilancia/reflectividad (PRF ~326 Hz), 115 km para el lote Doppler (PRF
+# ~1300 Hz); training.weather.gov/nwstc/NEXRAD/RADAR/Section1-2.html. Fijo por
+# diseño, no un umbral configurable en runtime: por eso vive aquí como
+# invariante y no como registro AXI-Lite (docs/alcance/pendientes.md#p-15
+# especulaba con que haría falta un registro nuevo; no hace falta).
+#
+# prf_div_min = ceil(r_max_required_m * 2 * fs / C_M_S), calculado contra el
+# fs de la ZU9 (250 MHz) y NO el de ZedBoard: prf_div es un valor de REGISTRO
+# invariante entre plataformas (D-02), igual que prf_div_min/max de arriba --
+# no se dilata.
+#
+# prf_div_min_high (191800) queda POR DEBAJO de prf_div_min (208333, el techo
+# real de PRF a 1200 Hz): con los límites de PRF ya congelados, ningún
+# prf_div válido puede violar este piso -- no-vinculante hoy. Se deja
+# implementado igual (docs/implementacion/fases.md#z2), por si prf_div_min
+# baja (PRF sube) en el futuro.
+prf_div_min_low = 767198   # 460 km
+prf_div_min_high = 191800  # 115 km
+
 # Ancho de pulso en CICLOS de fs: idéntico en las dos plataformas (0,8 / 1,66 /
 # 3,3 µs a 250 MHz; 2,0 / 4,15 / 8,25 µs a 100 MHz).
 pulse_width_cycles = [200, 415, 825]

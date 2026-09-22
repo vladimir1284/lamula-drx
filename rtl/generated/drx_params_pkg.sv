@@ -11,7 +11,7 @@
 package drx_params_pkg;
 
   localparam int SCHEMA_VERSION = 1;
-  localparam string PARAMS_SHA256 = "87a45203b7be6d20563172607bbb9464e8aef1f2b20411c665117d12841944e1";
+  localparam string PARAMS_SHA256 = "b73326945d41cd84cf5ee1c90ea5c49c8cea59f1736d7852a4a62c2759d9b582";
 
   // -------------------------------------------------------------------------
   // Plataforma seleccionada. Se sobreescribe en la línea de comandos de síntesis
@@ -61,6 +61,12 @@ package drx_params_pkg;
 
   localparam int PRF_DIV_MIN = 208333;
   localparam int PRF_DIV_MAX = 1250000;
+
+  // D-09: piso de PRF_DIV por lote para el rango no ambiguo mínimo exigido
+  // (460 km / 115 km WSR-88D-NEXRAD, ver el comentario de config/params.toml).
+  localparam int PRF_DIV_MIN_LOW = 767198;
+  localparam int PRF_DIV_MIN_HIGH = 191800;
+
   localparam int PULSE_WIDTH_CYCLES [0:2] = '{200, 415, 825};
 
   // -------------------------------------------------------------------------

@@ -93,6 +93,18 @@ class Params:
         return int(self.invariant["r2"])
 
     @property
+    def prf_div_min_low(self) -> int:
+        """D-09: piso de `prf_div` para el rango no ambiguo mínimo del lote
+        bajo (460 km, WSR-88D/NEXRAD). Invariante entre plataformas."""
+        return int(self.invariant["prf_div_min_low"])
+
+    @property
+    def prf_div_min_high(self) -> int:
+        """D-09: piso de `prf_div` para el rango no ambiguo mínimo del lote
+        alto (115 km, WSR-88D/NEXRAD). No-vinculante hoy, ver params.toml."""
+        return int(self.invariant["prf_div_min_high"])
+
+    @property
     def n_rx_ch(self) -> int:
         return int(self.invariant["n_rx_ch"])
 

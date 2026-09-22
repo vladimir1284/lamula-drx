@@ -626,11 +626,11 @@ Trabajo:
   El modelo dorado ya lo implementa (`validate_batch`/`validate_radial`). **Mitad resuelta en RTL,
   22-sep-2026 (más tarde):** los dos checks AUTOCONTENIDOS (pulse_width en tabla + cabe en su
   propio PRI) ya se rechazan en fabric (`rtl/drx_timing_config_valid.sv`), ver la entrada de más
-  abajo y [`registros.md#z2-en-v4`](registros.md#z2-en-v4). **Sigue sin resolver:** PRF × rango no
-  ambiguo, el corazón real de D-09 — necesita un umbral externo (`r_max_required_m`) que hoy no
-  existe como registro, así que escribir un `PRF_DIV_LOW`/`PRF_DIV_HIGH` que dé un rango ilegal
-  sigue sin rechazarse en ningún sitio de RTL. Tampoco se decidió qué código de error del contrato
-  reportar hacia el DSP — sigue siendo alcance de Z4 (firmware).
+  abajo y [`registros.md#z2-en-v4`](registros.md#z2-en-v4). **Cerrado del todo, 22-sep-2026 (más
+  tarde, tercera sesión):** PRF × rango no ambiguo, el corazón real de D-09, ya se rechaza también en
+  fabric — ver la entrada correspondiente más abajo. No hizo falta ningún registro nuevo (el umbral
+  resultó ser un requisito fijo de producto, no runtime); lo único que queda de este punto es el
+  código de error del contrato hacia el DSP, alcance de Z4.
 - Sincronización determinista entre el trigger y el inicio del gating. **Resuelto, 22-sep-2026**
   ([D-14](../alcance/decisiones.md#d-14)): `drx_range_gate` gana un puerto `ray_start`, cableado a
   `pulse_trig`, que resincroniza el corte de rayo con cada pulso de PRF (de cualquiera de los 2
@@ -847,6 +847,61 @@ caracterizado; combinaciones ilegales rechazadas con el código correcto.
     detectaría por sí solo si no se leyera el log completo. Ningún error, ninguna advertencia
     crítica en síntesis en ninguno de los dos. No se corrió `-step bitstream -top zynq` ni `-step
     xsa` en esta pasada.
+
+!!! success "22-sep-2026 (más tarde, tercera sesión): D-09 completo — PRF × rango no ambiguo ya se rechaza en fabric"
+    El hallazgo que dejaba abierta la entrada anterior ("PRF × rango no ambiguo... necesita un
+    umbral externo que hoy no existe como registro") resultó ser una sobreestimación del alcance:
+    `r_max_required_m` es un requisito FIJO de producto (460 km / 115 km, no algo que el DSP negocia
+    en runtime), así que no hacía falta ningún registro AXI-Lite nuevo ni subir el mapa a v5 — vive
+    como invariante en `config/params.toml`, exactamente igual que `PULSE_WIDTH_CYCLES`.
+
+    Valores investigados y fijados en sesión (vladimir, contra la literatura estándar de WSR-88D/
+    NEXRAD — training.weather.gov/nwstc/NEXRAD/RADAR/Section1-2.html): **460 km** para el lote de
+    vigilancia/reflectividad (PRF ≈ 326 Hz) y **115 km** para el lote Doppler (PRF ≈ 1300 Hz). El
+    primero coincide, cifra a cifra, con la fila "326 Hz → 460 km" que la tabla de
+    [D-09](../alcance/decisiones.md#d-09) ya traía desde antes de esta sesión — no era un ejemplo
+    arbitrario, ya usaba el número real. Convertidos a `prf_div_min_low = 767198` /
+    `prf_div_min_high = 191800` (ciclos de registro, invariantes entre plataformas — calculados
+    contra el fs de la ZU9, 250 MHz, no el de ZedBoard, D-02, igual que `prf_div_min`/`prf_div_max`
+    ya existentes).
+
+    `rtl/drx_timing_config_valid.sv` gana un tercer check (`prf_div >= PrfDivMinRange`), como
+    PARÁMETRO (no puerto): es un requisito fijo, no una entrada de runtime. Valor por defecto
+    `PrfDivMinRange = 1` (sin piso, inocuo para elaboración/lint fuera de contexto).
+    `rtl/drx_timing_engine.sv` gana `PrfDivMinRangeLow`/`PrfDivMinRangeHigh`, por defecto
+    `PRF_DIV_MIN_LOW`/`PRF_DIV_MIN_HIGH` del paquete de parámetros, uno por instancia de
+    `drx_timing_config_valid` — `enable_gated` sigue siendo la única puerta hacia
+    `drx_prf_batch_seq.sv`, que no cambió. `drx_top.sv` no overridea nada: hereda los valores reales
+    de producción por defecto.
+
+    **Hallazgo real de esta sesión, no un error:** `prf_div_min_high` (191 800) queda por debajo de
+    `PRF_DIV_MIN` (208 333, el techo de PRF ya congelado en 1200 Hz desde antes de Z2). Con los
+    límites de PRF de hoy, ningún `prf_div` válido puede violar el piso del lote alto — ese tercer
+    check no rechaza nada en la práctica todavía. Se deja implementado igual (mismo costo, y cubre
+    si `PRF_DIV_MIN` cambia en el futuro), documentado como no-vinculante en vez de omitido en
+    silencio.
+
+    Verificación: `model/drx_model/timing.py::batch_config_valid` gana el tercer parámetro
+    (`prf_div_min_range`, en unidades de REGISTRO — ni RTL ni el oráculo dividen en punto flotante;
+    la conversión metros → `prf_div` ya se hizo una vez al generar `config/params.toml`). Tests
+    nuevos en `model/tests/test_timing.py`, incluido uno contra los pisos reales de producción (caso
+    1200 Hz, el mismo que D-09 ya documentaba como físicamente imposible para 460 km).
+    `sim/tb/tb_drx_timing_config_valid.py` barre también alrededor de un piso de prueba pequeño
+    (500, no el real) para no forzar un sweep de cientos de miles de `prf_div`.
+    `sim/tb/tb_drx_timing_engine.py` gana un caso nuevo sin override (pisos reales de producción),
+    solo checks combinacionales en la frontera — un dwell completo a ~767 198 ciclos/lote sería
+    impracticable en L0; el caso de cableado existente pasa a overridear `PrfDivMinRangeLow/High` a 1
+    explícitamente, porque sus `prf_div_low/high` pequeños ya no serían legales bajo el piso real.
+    `sim/runner.py::SimJob` gana `testcases` (filtro de `cocotb.testcase`) para correr el mismo
+    `test_module` bajo dos elaboraciones con parámetros incompatibles entre sí — hacía falta porque
+    `build_dir` depende solo de `hdl_toplevel`, no de los parámetros. `make check` en verde
+    (107 tests).
+
+    Lo que esto NO resuelve, a propósito: el código de error del contrato hacia el DSP sigue sin
+    decidirse (alcance de Z4, sin relación con que el check ya rechace en fabric). Tampoco se
+    corrió P&R con este cambio — es lógica combinacional adicional dentro de un módulo ya cerrado y
+    de bajo costo (una comparación de 32 bits más por instancia); la última cifra medida sigue
+    siendo la de v4 (entrada anterior).
 
 ## Z3 — Lectores SSI + tagging az/el (semanas 14–18) { #z3 }
 
