@@ -626,9 +626,12 @@ Trabajo:
   El modelo dorado ya lo implementa (`validate_batch`/`validate_radial`); **falta la comprobación
   en RTL/registro** — escribir un `PRF_DIV_*`/`PULSE_WIDTH` ilegal hoy no se rechaza, ver
   [`registros.md#z2-en-v3`](registros.md#z2-en-v3).
-- Sincronización determinista entre el trigger y el inicio del gating, incluida la transición
-  lote-bajo → lote-alto dentro de un mismo radial. Sigue sin ninguna decisión documentada de cómo
-  hacerlo; tocaría `drx_range_gate.sv`, ya cerrado y verificado bajo D-12 en Z1.
+- Sincronización determinista entre el trigger y el inicio del gating. **Resuelto, 22-sep-2026**
+  ([D-14](../alcance/decisiones.md#d-14)): `drx_range_gate` gana un puerto `ray_start`, cableado a
+  `pulse_trig`, que resincroniza el corte de rayo con cada pulso de PRF (de cualquiera de los 2
+  lotes) — ver la entrada de más abajo. Lo que sigue sin resolver: si el conteo de bins necesita
+  diferir entre el lote bajo y el alto (ya lo deja abierto D-13, sin relación con esta
+  sincronización) y cualquier diagnóstico de tiempo muerto descartado (sin BITE propio todavía).
 - Instrumentación en fabric: contador libre en un dominio de reloj distinto, para auto-medir jitter
   y periodo. Bloqueado en la práctica: `config/params.toml` no define ningún segundo dominio de
   reloj.
@@ -753,6 +756,38 @@ caracterizado; combinaciones ilegales rechazadas con el código correcto.
     Lo que esto NO hace, deliberadamente: correr un P&R real con los 4 pines nuevos de `trig_out`
     (última cifra de P&R medida sigue siendo la de v2, sin este cambio) ni tocar el contrato
     DRx↔DSP. Ambos quedan como próximos pasos reales, no como trabajo diferido sin más.
+
+!!! success "22-sep-2026 (más tarde): D-14 — `ray_start` sincroniza el corte de rayo de range-gate con cada pulso de PRF"
+    Tres opciones consideradas en sesión para cerrar el hueco de sincronización que dejaba abierto
+    el `drx_top.sv` de v3 (resync por hardware en cada pulso; alineación solo por configuración,
+    confiando en que `PRF_DIV` sea múltiplo exacto de `bins`; o un wrapper que solo adjunta
+    metadatos sin tocar `drx_range_gate`) — se eligió la primera, la única que fija sin ambigüedad
+    qué significa "bin 0". Ver [D-14](../alcance/decisiones.md#d-14) para el razonamiento completo.
+
+    `rtl/drx_range_gate.sv` gana un puerto `ray_start`: un pulso de un ciclo que fuerza el puntero
+    de escritura a 0 sin marcar el banco en curso como pendiente — un recorte forzado (tiempo
+    muerto entre pulsos, o un PRI mal configurado) se descarta en silencio en vez de salir como un
+    rayo corto o corrupto. `rtl/drx_range_gate_quad_top.sv` lo expone como puerto único compartido
+    entre los N_CH canales (mismo patrón que `mode_coarse`), y `rtl/drx_top.sv` lo cablea a
+    `pulse_trig` de `drx_timing_engine` — con esto, `pulse_trig` deja de ser una señal sin
+    consumidor y sale de `debug_probe_xor`.
+
+    Es un cambio aditivo sobre RTL ya cerrado bajo [D-12](../alcance/decisiones.md#d-12): con
+    `ray_start` en bajo (el estado de toda la matriz L1 ya corrida) el comportamiento es bit a bit
+    idéntico al de antes del puerto, así que no hizo falta modelo dorado ni vectores nuevos.
+    Verificación: 3 tests L0 nuevos en `sim/tb/tb_drx_range_gate.py` (alineación con el wrap natural
+    es un no-op bit a bit; un `ray_start` a mitad de banco descarta ese banco entero sin emitirlo;
+    muestras de tiempo muerto tras un rayo completo se descartan sin colarse en el siguiente) —
+    8/8 tests del módulo en verde, `make check` en verde (99 tests, mismo número: son sub-tests de
+    cocotb). **Reconfirmado contra xsim real** (`tb_l1_ddc_range_tri.sv`, el único testbench L1 que
+    instancia `drx_range_gate`, con el puerto nuevo atado a 0): fine, 288/288 muestras en tolerancia
+    D-12 y TLAST bit a bit en los 3 canales; coarse, 144/144 — ambos modos limpios, confirmando que
+    el puerto añadido no cambió ni un bit del comportamiento ya cerrado.
+
+    Lo que esto NO resuelve, a propósito: si el conteo de bins necesita diferir entre lote bajo y
+    alto (ya abierto por D-13); si `pulse_trig` debe disparar también algo del lado Tx (no existe
+    todavía); y no hay ningún contador ni bit de BITE que distinga un tiempo muerto normal de un
+    `ray_start` que llegó tarde y truncó un rayo en curso — D-09 sigue sin aplicarse en RTL.
 
 ## Z3 — Lectores SSI + tagging az/el (semanas 14–18) { #z3 }
 

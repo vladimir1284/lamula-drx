@@ -63,18 +63,31 @@
 // lotes de PRF/ancho de pulso + N_TRIGGERS de retardo/ancho) ya se instancia
 // aquí, configurado desde AXI-Lite (TIMING_CTRL/TIMING_STATUS/PRF_DIV_*/
 // PULSE_WIDTH/N_PULSES/TRIG_DELAY_*/TRIG_WIDTH_*, ver
-// docs/implementacion/registros.md). Deliberadamente SIN conectar todavía a
-// `drx_range_gate`/`vector_source`: no hay hoy ninguna decisión documentada
-// de cómo el motor de timing debe sincronizarse con el gating (ese es uno de
-// los puntos abiertos de fases.md#z2, tocaría `drx_range_gate.sv`, ya
-// cerrado y verificado bajo D-12 en Z1) ni de si `pulse_trig` debe disparar
-// `vector_source`/algo del lado Tx (no existe ese lado todavía). `trig_out`
-// sí es un puerto físico real de este top -- su único consumo hoy es
-// medirlo con osciloscopio (el propósito de ZM2) -- pero NO tiene todavía
-// pines XDC asignados: `tcl/xdc/zedboard.xdc` no tiene mapeado ningún Pmod
-// de la ZedBoard, y no hay una referencia de pinout física verificada en
-// este repo para inventar una asignación. Sintetiza y lintea limpio; el P&R
-// real con estos 4 pines nuevos no se ha vuelto a correr en esta sesión.
+// docs/implementacion/registros.md). `trig_out` sí es un puerto físico real
+// de este top -- su único consumo hoy es medirlo con osciloscopio (el
+// propósito de ZM2) -- pero NO tiene todavía pines XDC asignados:
+// `tcl/xdc/zedboard.xdc` no tiene mapeado ningún Pmod de la ZedBoard, y no
+// hay una referencia de pinout física verificada en este repo para inventar
+// una asignación. Sintetiza y lintea limpio; el P&R real con estos 4 pines
+// nuevos no se ha vuelto a correr en esta sesión.
+//
+// Z2 (más tarde, mismo día, D-14): `timing_pulse_trig` ya sincroniza el
+// corte de rayo de `drx_range_gate_quad_top` -- cada pulso de PRF (de
+// cualquiera de los 2 lotes) resetea el puntero de escritura vía el puerto
+// `ray_start` nuevo (ver la cabecera de `drx_range_gate.sv`). Esto SÍ toca
+// RTL de Z1 ya cerrado y verificado bajo D-12, pero de forma aditiva y hacia
+// atrás compatible: con `ray_start` en bajo (como en toda la matriz L1 ya
+// corrida) el comportamiento es bit a bit idéntico al de antes, así que no
+// hizo falta generar vectores nuevos del modelo dorado, solo reconfirmar
+// (xsim real) que `tb_l1_ddc_range_tri.sv` sigue en verde con el puerto
+// añadido. Lo que esto NO resuelve, a propósito: si `drx_range_gate` necesita
+// un conteo de bins distinto por lote (ya lo deja abierto D-13, sin relación
+// con esta sincronización); si `pulse_trig` debe disparar también
+// `vector_source`/algo del lado Tx (no existe ese lado todavía); y el tiempo
+// muerto entre el fin de un rayo real y el siguiente `ray_start` se descarta
+// en silencio, sin ningún contador de diagnóstico -- no hay hoy ningún BITE
+// que distinga "PRI bien calibrado" de "un `ray_start` llegó tarde y truncó
+// un rayo en curso" (D-09 no se aplica en RTL, ver `drx_prf_batch_seq.sv`).
 
 `ifndef DRX_TOP_SV
 `define DRX_TOP_SV
@@ -234,12 +247,12 @@ module drx_top
       .radial_done_in(timing_radial_done)
   );
 
-  // `pulse_trig`/`batch_sel`/`pulse_width`/`tx_gate` no tienen consumidor
-  // real todavía (ver la cabecera del fichero: sin decisión de cómo
-  // sincronizar con range-gate); se pliegan en `debug_probe_xor` más abajo,
-  // mismo patrón que ya usa este árbol para que la síntesis no se lleve por
-  // delante una cadena sin puerto real aguas abajo (`unused_nco_ready` en
-  // drx_ddc_top.sv, y el propio debug_probe_xor de aquí para range-gate).
+  // `pulse_trig` SÍ tiene consumidor real ahora (D-14: `ray_start` de
+  // range-gate, más abajo). `batch_sel`/`pulse_width`/`tx_gate` siguen sin
+  // ninguno (ver la cabecera del fichero); se pliegan en `debug_probe_xor`
+  // más abajo, mismo patrón que ya usa este árbol para que la síntesis no se
+  // lleve por delante una cadena sin puerto real aguas abajo
+  // (`unused_nco_ready` en drx_ddc_top.sv).
   logic timing_pulse_trig, timing_batch_sel, timing_tx_gate;
   logic [15:0] timing_pulse_width;
 
@@ -342,7 +355,10 @@ module drx_top
       .m_last (gate_last),
 
       .clear  (gate_clear),
-      .overrun(gate_overrun)
+      .overrun(gate_overrun),
+
+      // D-14: cada pulso de PRF (lote bajo o alto) resetea el corte de rayo.
+      .ray_start(timing_pulse_trig)
   );
 
   // Un solo bit, registrado, que depende de toda la cadena — ver la cabecera
@@ -354,8 +370,7 @@ module drx_top
   // esas cuatro salidas de drx_timing_engine no llegan a ningún puerto real.
   logic debug_probe_xor;
   always_comb begin
-    debug_probe_xor = timing_pulse_trig ^ timing_batch_sel ^ timing_tx_gate
-        ^ (^timing_pulse_width);
+    debug_probe_xor = timing_batch_sel ^ timing_tx_gate ^ (^timing_pulse_width);
     for (int c = 0; c < N_CH; c++) begin
       debug_probe_xor ^= gate_valid[c] ^ gate_last[c] ^ gate_overrun[c]
           ^ (^gate_i[c]) ^ (^gate_q[c]);

@@ -24,9 +24,11 @@ rtl/drx_trigger_one_shot.sv
 rtl/drx_trigger_gen.sv
 # La composición de las dos piezas de arriba en un solo bloque -- ver su propia
 # cabecera. Desde v3 del mapa de registros (22-sep-2026) ya lo instancia
-# drx_top (config vía AXI-Lite, ver docs/implementacion/registros.md), pero
-# deliberadamente SIN conectar a drx_range_gate/vector_source todavía -- ver
-# la cabecera de drx_top.sv.
+# drx_top (config vía AXI-Lite, ver docs/implementacion/registros.md).
+# `pulse_trig` ya sincroniza el corte de rayo de drx_range_gate (D-14, mismo
+# día, más tarde -- ver la cabecera de drx_range_gate.sv); sigue
+# deliberadamente SIN conectar a vector_source/el lado Tx -- ver la cabecera
+# de drx_top.sv.
 rtl/drx_timing_engine.sv
 rtl/drx_axil_regs.sv
 # drx_top.sv va al final a propósito: desde esta integración instancia

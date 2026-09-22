@@ -36,6 +36,7 @@ async def _reset(dut) -> None:
     dut.mode_coarse.value = 0
     dut.m_ready.value = 1
     dut.clear.value = 0
+    dut.ray_start.value = 0
     for _ in range(3):
         await RisingEdge(dut.clk)
     dut.rst_n.value = 1
@@ -277,3 +278,124 @@ async def test_clear_limpia_overrun_y_permite_un_segundo_disparo(dut):
     # `s_valid`/`clear` todavía se están soltando.
     await RisingEdge(dut.clk)
     assert int(dut.overrun.value) == 1, "el set debe ganar sobre un clear concurrente"
+
+
+async def _feed_ray_start_and_collect(dut, actions):
+    """Recorre `actions` ciclo a ciclo y recoge lo que sale por `m_*`.
+
+    Cada elemento es `("sample", n)` (mete una muestra `(n, n+2000)` con
+    `s_valid=1`), `("ray_start",)` (pulsa `ray_start` un ciclo, sin muestra de
+    datos ese mismo ciclo) o `("sample_and_start", n)` (los dos a la vez, el
+    caso de colisión que documenta la cabecera del RTL: `ray_start` llega el
+    mismo ciclo en que `wr_ptr` ya iba a llegar a `last_idx` por cuenta
+    propia). `m_ready` fijo a 1: el backpressure ya lo cubre
+    `test_backpressure_intermitente_no_pierde_muestras`, aquí no hace falta.
+    """
+    received = []
+
+    def _sample() -> None:
+        if int(dut.m_valid.value) and int(dut.m_ready.value):
+            i_val = int(dut.m_i.value.signed_integer)
+            q_val = int(dut.m_q.value.signed_integer)
+            received.append((i_val, q_val, bool(dut.m_last.value)))
+
+    for action in actions:
+        _sample()
+        kind = action[0]
+        if kind == "sample":
+            n = action[1]
+            dut.s_valid.value = 1
+            dut.s_i.value = n
+            dut.s_q.value = n + 2000
+            dut.ray_start.value = 0
+        elif kind == "sample_and_start":
+            n = action[1]
+            dut.s_valid.value = 1
+            dut.s_i.value = n
+            dut.s_q.value = n + 2000
+            dut.ray_start.value = 1
+        else:
+            dut.s_valid.value = 0
+            dut.ray_start.value = 1
+        await RisingEdge(dut.clk)
+
+    dut.s_valid.value = 0
+    dut.ray_start.value = 0
+    for _ in range(BINS_FINE + 16):
+        _sample()
+        await RisingEdge(dut.clk)
+    _sample()
+
+    return received
+
+
+@cocotb.test()
+async def test_ray_start_alineado_con_wrap_natural_es_no_op(dut):
+    """D-14: `ray_start` a la vez que el wrap natural (PRI bien calibrado) no cambia nada."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+    dut.mode_coarse.value = 0
+
+    n_rays = 3
+    actions = []
+    for r in range(n_rays):
+        for n in range(BINS_FINE):
+            idx = r * BINS_FINE + n
+            if n == BINS_FINE - 1:
+                actions.append(("sample_and_start", idx))
+            else:
+                actions.append(("sample", idx))
+
+    received = await _feed_ray_start_and_collect(dut, actions)
+
+    expected = [
+        (idx, idx + 2000, (idx % BINS_FINE) == (BINS_FINE - 1))
+        for idx in range(n_rays * BINS_FINE)
+    ]
+    assert received == expected, (
+        "ray_start alineado con el wrap natural tiene que ser bit a bit un no-op"
+    )
+
+
+@cocotb.test()
+async def test_ray_start_temprano_descarta_el_banco_en_curso(dut):
+    """D-14: `ray_start` a mitad de rayo descarta ese banco entero, no lo emite truncado."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+    dut.mode_coarse.value = 0
+
+    actions = (
+        [("sample", 100 + n) for n in range(3)]  # menos de BINS_FINE: rayo a medias
+        + [("ray_start",)]  # se descarta, no sale como rayo corto
+        + [("sample", 200 + n) for n in range(BINS_FINE)]  # rayo real, completo
+    )
+
+    received = await _feed_ray_start_and_collect(dut, actions)
+
+    expected = [(200 + n, 200 + n + 2000, n == BINS_FINE - 1) for n in range(BINS_FINE)]
+    assert received == expected, (
+        "las muestras descartadas por ray_start temprano no deben aparecer en la salida"
+    )
+
+
+@cocotb.test()
+async def test_ray_start_con_tiempo_muerto_descarta_muestras_extra(dut):
+    """D-14: muestras que llegan en el tiempo muerto tras un rayo completo se descartan."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+    dut.mode_coarse.value = 0
+
+    actions = (
+        [("sample", 300 + n) for n in range(BINS_FINE)]  # rayo 1, completo por wrap natural
+        + [("sample", 900 + n) for n in range(3)]  # tiempo muerto: empieza a llenar el otro banco
+        + [("ray_start",)]  # descarta ese resto antes de que complete un rayo
+        + [("sample", 400 + n) for n in range(BINS_FINE)]  # rayo 2, completo y real
+    )
+
+    received = await _feed_ray_start_and_collect(dut, actions)
+
+    expected = [(300 + n, 300 + n + 2000, n == BINS_FINE - 1) for n in range(BINS_FINE)]
+    expected += [(400 + n, 400 + n + 2000, n == BINS_FINE - 1) for n in range(BINS_FINE)]
+    assert received == expected, (
+        "las muestras de tiempo muerto (900...) no deben colarse en ningún rayo"
+    )

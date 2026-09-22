@@ -44,7 +44,12 @@ module drx_range_gate_quad_top
     // Write-1-to-clear por canal, desde el mapa de registros AXI-Lite — ver
     // la cabecera de `drx_range_gate.sv`.
     input  logic clear  [N_CH],
-    output logic overrun[N_CH]
+    output logic overrun[N_CH],
+
+    // `ray_start` (D-14) es COMPARTIDO entre los N_CH canales, igual que
+    // `mode_coarse`: un solo `pulse_trig` de `drx_timing_engine` marca el
+    // mismo instante de disparo para todos los canales de un mismo radial.
+    input logic ray_start
 );
 
   genvar gc;
@@ -70,7 +75,9 @@ module drx_range_gate_quad_top
           .m_last (m_last[gc]),
 
           .clear  (clear[gc]),
-          .overrun(overrun[gc])
+          .overrun(overrun[gc]),
+
+          .ray_start(ray_start)
       );
     end
   endgenerate

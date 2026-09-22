@@ -36,6 +36,29 @@
 // 3689/1844 reales. La instancia de producción no pasa nada y hereda los
 // valores de `drx_params_pkg` (D-02: single source of truth).
 //
+// `ray_start` (D-14, 22-sep-2026, mapa de registros v3/Z2): pulso de un ciclo
+// que fuerza `wr_ptr` a 0 -- lo conecta `drx_top` a `pulse_trig` de
+// `drx_timing_engine`, así que cada pulso de PRF (de cualquiera de los 2
+// lotes, D-13) arranca un rayo nuevo aquí, en vez de dejar que el contador de
+// bins libre por su cuenta decida dónde cortar. Sin esto, con la entrada
+// muestreando sin parar (el ADC/DDC no tiene forma de pausarse entre pulsos),
+// el free-run de este módulo trocearía el tiempo muerto entre el eco y el
+// siguiente disparo como si fuera parte de un rayo real.
+//
+// Deliberadamente NO marca el banco actual como pendiente al recortar: si
+// `ray_start` llega con `wr_ptr` != 0 (tiempo muerto acumulado, o un PRI mal
+// configurado más corto que `bins` -- D-09 no lo valida en RTL, ver la
+// cabecera de `drx_prf_batch_seq.sv`), lo que había escrito en ese banco se
+// descarta sin más: nunca se pone `bank_pending`, así que el lector nunca lo
+// ve. Solo el camino ya existente (`wr_ptr == last_idx` alcanzado por
+// muestras reales) produce un rayo válido; `ray_start` solo decide DÓNDE
+// empieza el próximo intento, nunca fuerza uno incompleto a salir. Cuando la
+// configuración es correcta (D-09: el PRI en muestras decimadas cabe
+// `bins` veces o más), los dos caminos coinciden en el mismo ciclo y
+// `ray_start` es un no-op redundante -- ver D-14 para por qué esto no
+// necesita vectores nuevos del modelo dorado (`ray_start` en bajo es
+// bit a bit idéntico al comportamiento ya verificado bajo D-12).
+//
 // `mode_coarse` se trata igual que en `drx_ddc_top`: entrada de tiempo de
 // ejecución pero estática durante una corrida. Cambiarla a mitad de rayo no
 // es un caso de uso real de este proyecto — confirmado, 21-sep-2026: la
@@ -85,7 +108,10 @@ module drx_range_gate
 
     // Write-1-to-clear desde el mapa de registros AXI-Lite (ver cabecera).
     input  logic clear,
-    output logic overrun
+    output logic overrun,
+
+    // Resync con el motor de timing de Z2 (D-14, ver cabecera).
+    input logic ray_start
 );
 
   localparam int Depth = (BINS_FINE > BINS_COARSE) ? BINS_FINE : BINS_COARSE;
@@ -185,6 +211,17 @@ module drx_range_gate
           wr_ptr <= wr_ptr + AddrW'(1);
         end
       end
+
+      // `ray_start` va DESPUÉS del bloque de arriba a propósito: si los dos
+      // coinciden el mismo ciclo (PRI mal configurado, más corto que `bins`),
+      // la asignación no bloqueante que manda es esta -- `ray_start` gana y
+      // fuerza `wr_ptr` a 0 pase lo que pase, descartando el intento en
+      // curso. Cuando la configuración es correcta y coinciden en el ciclo
+      // exacto en que `wr_ptr` ya llegó a `last_idx`, esto es un no-op (los
+      // dos escriben el mismo valor). No toca `bank_pending`/`bank_last_idx`:
+      // ver la cabecera del fichero sobre por qué un recorte forzado nunca
+      // marca un banco como listo para leer.
+      if (ray_start) wr_ptr <= '0;
 
       // Lectura: registrada. Solo intenta cargar el siguiente dato cuando el
       // registro de salida está libre (nunca tuvo nada válido, o lo que tenía

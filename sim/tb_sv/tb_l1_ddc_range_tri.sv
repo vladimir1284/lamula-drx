@@ -130,6 +130,15 @@ module tb_l1_ddc_range_tri;
     end
   endgenerate
 
+  // `ray_start` (D-14) nuevo en `drx_range_gate_quad_top`: el resync con
+  // `pulse_trig` ya lo cubre `sim/tb/tb_drx_range_gate.py` en L0 (motor de
+  // timing de Z2 no existe en esta cadena L1, solo DDC + gating); aquí se ata
+  // a 0 a propósito -- esto es justo lo que confirma que el puerto nuevo no
+  // cambia ni un bit del comportamiento ya verificado bajo D-12 (ver la
+  // cabecera de `drx_range_gate.sv`).
+  logic gate_ray_start;
+  assign gate_ray_start = 1'b0;
+
 `ifdef DRX_HAVE_DDC
   drx_ddc_quad_top #(
       .N_CH(N_CH)
@@ -170,7 +179,9 @@ module tb_l1_ddc_range_tri;
       .m_last (gate_last),
 
       .clear  (gate_clear),
-      .overrun(gate_overrun)
+      .overrun(gate_overrun),
+
+      .ray_start(gate_ray_start)
   );
 `else
   // Mismo razonamiento que tb_l1_ddc_tri.sv: sin DUT no hay nada que
@@ -196,7 +207,7 @@ module tb_l1_ddc_range_tri;
   endgenerate
 
   logic unused_no_dut;
-  assign unused_no_dut = &{1'b0, mode_coarse};
+  assign unused_no_dut = &{1'b0, mode_coarse, gate_ray_start};
 
   initial begin
     $fatal(1, "tb_l1_ddc_range_tri: falta drx_ddc_quad_top (trabajo de Z1). Elabora con +define+DRX_HAVE_DDC cuando exista.");

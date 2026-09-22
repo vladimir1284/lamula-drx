@@ -278,3 +278,46 @@ Consecuencias para el diseño de Z2:
 - Sincronización entre el cambio de lote del motor de timing y la lectura de azimut/elevación de
   [Z3](../implementacion/fases.md#z3) — cada lote dentro del mismo radial comparte az/el, pero el
   diseño concreto del tagging todavía no existe.
+
+## D-14 · El corte de rayo de range-gate se resincroniza con cada pulso de PRF { #d-14 }
+
+**Decisión, 22-sep-2026 (en sesión):** `drx_range_gate` gana un puerto `ray_start` (pulso de un
+ciclo) que fuerza su puntero de escritura a 0. `drx_top` lo conecta a `pulse_trig` de
+`drx_timing_engine` (D-13): cada pulso de PRF, de cualquiera de los 2 lotes, arranca un rayo nuevo
+en el range-gate, en vez de dejar que el contador libre de bins decida por su cuenta dónde cortar.
+
+Esto resuelve el hueco que dejaba abierto la integración del mapa de registros v3
+([P-15](pendientes.md#p-15), Z2): con la entrada del DDC muestreando sin parar y sin ningún
+concepto de "tiempo muerto" entre pulsos, `drx_range_gate` free-run trocearía ese hueco como si
+fuera parte de un rayo real. De las tres opciones consideradas en sesión (resync por hardware en
+cada pulso; alineación solo por configuración, confiando en que `PRF_DIV` sea múltiplo exacto de
+`bins`; o un wrapper a nivel `drx_top` que solo adjunta metadatos sin tocar `drx_range_gate`), se
+eligió la primera: es la única que fija sin ambigüedad qué significa "bin 0" (el instante del
+disparo), las otras dos dejan esa definición implícita o dependiente de un invariante que nada
+comprueba.
+
+Un `ray_start` que llega con el puntero de escritura ya a mitad de rayo (tiempo muerto acumulado, o
+un PRI configurado más corto que `bins` — D-09 no se valida en RTL, ver la cabecera de
+`drx_prf_batch_seq.sv`) **descarta** ese banco en curso sin marcarlo como pendiente: nunca sale
+como un rayo corto o corrupto, simplemente no sale. Solo el camino ya existente (alcanzar `bins`
+muestras reales) produce un rayo válido; `ray_start` decide únicamente dónde empieza el próximo
+intento.
+
+Es un cambio aditivo sobre RTL ya cerrado bajo [D-12](#d-12): con `ray_start` en bajo (el estado de
+toda la matriz L1 ya corrida) el comportamiento es bit a bit idéntico al de antes del puerto, así
+que no hizo falta modelo dorado nuevo ni vectores nuevos — solo reconfirmar contra xsim real que
+`tb_l1_ddc_range_tri.sv` (el único testbench L1 que instancia `drx_range_gate`) sigue en verde con
+el puerto añadido y atado a 0. El comportamiento nuevo (`ray_start` en alto) se verifica en L0
+(`sim/tb/tb_drx_range_gate.py`), sin equivalente en el modelo dorado: es una característica de
+interlock de hardware, no un bloque numérico con oráculo de valores.
+
+**Lo que esta decisión NO resuelve:**
+
+- Si `drx_range_gate` necesita un conteo de bins distinto por lote — ya lo deja abierto
+  [D-13](#d-13), sin relación con esta sincronización.
+- Si `pulse_trig` debe disparar también algo del lado Tx (`vector_source` u otra fuente) — ese lado
+  no existe todavía en este repo.
+- Diagnóstico del tiempo muerto descartado: hoy no hay ningún contador ni bit de BITE que distinga
+  "PRI bien calibrado, `ray_start` llegó justo cuando tocaba" de "`ray_start` llegó tarde y truncó
+  un rayo en curso". D-09 sigue sin aplicarse en RTL — la responsabilidad de no configurar un PRI
+  ilegal sigue siendo de quien escribe los registros.
