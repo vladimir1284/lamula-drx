@@ -11,8 +11,9 @@
 #   3. Semilla de implementación fija (`-seed`) y sin pasos dependientes del
 #      número de hilos.
 #
-# ESTADO: no ejecutado. Aquí no hay Vivado ni bootgen; el script está escrito y
-# revisado, y su primera ejecución cierra ZM0.
+# ESTADO: ejecutado por primera vez el 21-sep-2026 (CI, self-hosted). Llega
+# hasta donde puede llegar hoy: falta fsbl.elf/drx_app.elf (Z4), así que el
+# empaquetado real de BOOT.BIN -- y con él ZM0 -- sigue pendiente de eso.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,7 +27,7 @@ done
 
 mkdir -p "$outdir"
 cp "$repo_root/tcl/boot/boot.bif" "$outdir/boot.bif"
-cp "$gwdir/drx_top.bin" "$outdir/drx_top.bin"
+cp "$gwdir/drx_top_tieoff.bin" "$outdir/drx_top.bin"
 
 missing=0
 for artefact in fsbl.elf drx_app.elf; do
