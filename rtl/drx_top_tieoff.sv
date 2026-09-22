@@ -30,7 +30,8 @@ module drx_top_tieoff
     input  logic clk,
     input  logic rst_n,
     output logic led_heartbeat,
-    output logic debug_probe
+    output logic debug_probe,
+    output logic [N_TRIGGERS-1:0] trig_out
 );
 
   logic [REGS_ADDR_WIDTH-1:0] axi_tie_addr;
@@ -58,6 +59,7 @@ module drx_top_tieoff
       .rst_n         (rst_n),
       .led_heartbeat (led_heartbeat),
       .debug_probe   (debug_probe),
+      .trig_out      (trig_out),
       .s_axi_awaddr  (axi_tie_addr),
       .s_axi_awvalid (1'b0),
       .s_axi_awready (axi_tie_awready),

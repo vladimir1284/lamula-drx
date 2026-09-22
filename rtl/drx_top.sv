@@ -58,6 +58,23 @@
 //   - `s_last` de `vector_source` pulsa cada `DEPTH` muestras — marcador
 //     artificial de "fin de ventana" para ejercitar el framing de
 //     `drx_range_gate`, NO el PRF real (Z2 no existe todavía).
+//
+// Z2 (v3 del mapa de registros, 22-sep-2026): `drx_timing_engine` (D-13, 2
+// lotes de PRF/ancho de pulso + N_TRIGGERS de retardo/ancho) ya se instancia
+// aquí, configurado desde AXI-Lite (TIMING_CTRL/TIMING_STATUS/PRF_DIV_*/
+// PULSE_WIDTH/N_PULSES/TRIG_DELAY_*/TRIG_WIDTH_*, ver
+// docs/implementacion/registros.md). Deliberadamente SIN conectar todavía a
+// `drx_range_gate`/`vector_source`: no hay hoy ninguna decisión documentada
+// de cómo el motor de timing debe sincronizarse con el gating (ese es uno de
+// los puntos abiertos de fases.md#z2, tocaría `drx_range_gate.sv`, ya
+// cerrado y verificado bajo D-12 en Z1) ni de si `pulse_trig` debe disparar
+// `vector_source`/algo del lado Tx (no existe ese lado todavía). `trig_out`
+// sí es un puerto físico real de este top -- su único consumo hoy es
+// medirlo con osciloscopio (el propósito de ZM2) -- pero NO tiene todavía
+// pines XDC asignados: `tcl/xdc/zedboard.xdc` no tiene mapeado ningún Pmod
+// de la ZedBoard, y no hay una referencia de pinout física verificada en
+// este repo para inventar una asignación. Sintetiza y lintea limpio; el P&R
+// real con estos 4 pines nuevos no se ha vuelto a correr en esta sesión.
 
 `ifndef DRX_TOP_SV
 `define DRX_TOP_SV
@@ -73,6 +90,11 @@ module drx_top
     input  logic rst_n,
     output logic led_heartbeat,
     output logic debug_probe,
+
+    // Z2 (D-13): salida física de los N_TRIGGERS triggers de
+    // drx_timing_engine -- ver la cabecera de este fichero, sin pines XDC
+    // todavía.
+    output logic [N_TRIGGERS-1:0] trig_out,
 
     // Slave AXI4-Lite de `drx_axil_regs`, pass-through puro hacia/desde quien
     // instancie `drx_top` (ver la cabecera: hoy `drx_zynq_top`, o valores
@@ -143,6 +165,25 @@ module drx_top
     for (int c = 0; c < N_CH; c++) ddc_overflow_packed[c] = ddc_overflow[c];
   end
 
+  // Z2 (v3, D-13): registro -> planta hacia `drx_timing_engine`. `drx_axil_regs`
+  // expone los 4 canales de TRIG_DELAY/TRIG_WIDTH como puertos escalares con
+  // nombre (ver su cabecera: un array sin empaquetar de puertos de SALIDA no
+  // es indexable vía VPI); `drx_timing_engine` los toma como array sin
+  // empaquetar de entrada (eso sí funciona, ver la cabecera de
+  // drx_trigger_gen.sv). Este es el único sitio que empaqueta.
+  logic        timing_enable;
+  logic [31:0] prf_div_low, prf_div_high;
+  logic [15:0] pulse_width_low, pulse_width_high;
+  logic [15:0] n_pulses_low, n_pulses_high;
+  logic [31:0] trig_delay_0, trig_delay_1, trig_delay_2, trig_delay_3;
+  logic [31:0] trig_width_0, trig_width_1, trig_width_2, trig_width_3;
+  logic        timing_radial_done;
+
+  logic [31:0] trig_delay_arr[N_TRIGGERS];
+  logic [31:0] trig_width_arr[N_TRIGGERS];
+  assign trig_delay_arr = '{trig_delay_0, trig_delay_1, trig_delay_2, trig_delay_3};
+  assign trig_width_arr = '{trig_width_0, trig_width_1, trig_width_2, trig_width_3};
+
   drx_axil_regs #(
       .N_CH(N_CH)
   ) u_regs (
@@ -172,7 +213,58 @@ module drx_top
       .overrun_in   (gate_overrun_packed),
       .overrun_clear(gate_clear_packed),
 
-      .overflow_in(ddc_overflow_packed)
+      .overflow_in(ddc_overflow_packed),
+
+      .timing_enable   (timing_enable),
+      .prf_div_low     (prf_div_low),
+      .prf_div_high    (prf_div_high),
+      .pulse_width_low (pulse_width_low),
+      .pulse_width_high(pulse_width_high),
+      .n_pulses_low    (n_pulses_low),
+      .n_pulses_high   (n_pulses_high),
+      .trig_delay_0    (trig_delay_0),
+      .trig_delay_1    (trig_delay_1),
+      .trig_delay_2    (trig_delay_2),
+      .trig_delay_3    (trig_delay_3),
+      .trig_width_0    (trig_width_0),
+      .trig_width_1    (trig_width_1),
+      .trig_width_2    (trig_width_2),
+      .trig_width_3    (trig_width_3),
+
+      .radial_done_in(timing_radial_done)
+  );
+
+  // `pulse_trig`/`batch_sel`/`pulse_width`/`tx_gate` no tienen consumidor
+  // real todavía (ver la cabecera del fichero: sin decisión de cómo
+  // sincronizar con range-gate); se pliegan en `debug_probe_xor` más abajo,
+  // mismo patrón que ya usa este árbol para que la síntesis no se lleve por
+  // delante una cadena sin puerto real aguas abajo (`unused_nco_ready` en
+  // drx_ddc_top.sv, y el propio debug_probe_xor de aquí para range-gate).
+  logic timing_pulse_trig, timing_batch_sel, timing_tx_gate;
+  logic [15:0] timing_pulse_width;
+
+  drx_timing_engine u_timing_engine (
+      .clk   (clk),
+      .rst_n (rst_n),
+      .enable(timing_enable),
+
+      .prf_div_low     (prf_div_low),
+      .pulse_width_low (pulse_width_low),
+      .n_pulses_low    (n_pulses_low),
+      .prf_div_high    (prf_div_high),
+      .pulse_width_high(pulse_width_high),
+      .n_pulses_high   (n_pulses_high),
+
+      .trig_delay(trig_delay_arr),
+      .trig_width(trig_width_arr),
+
+      .pulse_trig (timing_pulse_trig),
+      .batch_sel  (timing_batch_sel),
+      .pulse_width(timing_pulse_width),
+      .tx_gate    (timing_tx_gate),
+      .radial_done(timing_radial_done),
+
+      .trig_out(trig_out)
   );
 
   // Mismo `` `ifdef DRX_PLATFORM_ZU9 `` que ya selecciona FS_HZ en
@@ -256,10 +348,14 @@ module drx_top
   // Un solo bit, registrado, que depende de toda la cadena — ver la cabecera
   // sobre por qué hace falta llegar a un puerto real. El valor en sí no
   // significa nada (no es un BITE ni un estado utilizable): existe solo para
-  // que la síntesis real no elimine la cadena que alimenta.
+  // que la síntesis real no elimine la cadena que alimenta. `timing_pulse_trig`/
+  // `timing_batch_sel`/`timing_pulse_width`/`timing_tx_gate` se suman aquí por
+  // el mismo motivo (ver el comentario junto a u_timing_engine): sin esto,
+  // esas cuatro salidas de drx_timing_engine no llegan a ningún puerto real.
   logic debug_probe_xor;
   always_comb begin
-    debug_probe_xor = 1'b0;
+    debug_probe_xor = timing_pulse_trig ^ timing_batch_sel ^ timing_tx_gate
+        ^ (^timing_pulse_width);
     for (int c = 0; c < N_CH; c++) begin
       debug_probe_xor ^= gate_valid[c] ^ gate_last[c] ^ gate_overrun[c]
           ^ (^gate_i[c]) ^ (^gate_q[c]);

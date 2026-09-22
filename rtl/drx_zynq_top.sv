@@ -27,6 +27,7 @@
 `define DRX_ZYNQ_TOP_SV
 
 module drx_zynq_top
+  import drx_params_pkg::*;
   import drx_regs_pkg::*;
 (
     inout wire [14:0] DDR_addr,
@@ -52,7 +53,8 @@ module drx_zynq_top
     inout wire        FIXED_IO_ps_srstb,
 
     output logic led_heartbeat,
-    output logic debug_probe
+    output logic debug_probe,
+    output logic [N_TRIGGERS-1:0] trig_out
 );
 
   logic        pl_clk0;
@@ -130,6 +132,7 @@ module drx_zynq_top
       .rst_n        (pl_resetn0[0]),
       .led_heartbeat(led_heartbeat),
       .debug_probe  (debug_probe),
+      .trig_out     (trig_out),
 
       .s_axi_awaddr (m_axi_regs_awaddr[REGS_ADDR_WIDTH-1:0]),
       .s_axi_awvalid(m_axi_regs_awvalid),

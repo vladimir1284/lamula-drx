@@ -16,19 +16,17 @@ rtl/drx_ddc_top.sv
 rtl/drx_ddc_quad_top.sv
 rtl/drx_range_gate.sv
 rtl/drx_range_gate_quad_top.sv
-# Z2 (D-13): secuenciador de 2 lotes de PRF/ancho de pulso por radial. Todavía
-# no lo instancia drx_top -- el mapa de registros de Z2 que lo alimentaría no
-# existe (P-15) -- así que solo se prueba como unidad suelta (L0, ver
-# sim/tb/tb_drx_prf_batch_seq.py), igual que drx_range_gate.sv antes del quad_top.
+# Z2 (D-13): secuenciador de 2 lotes de PRF/ancho de pulso por radial.
 rtl/drx_prf_batch_seq.sv
 # Z2: generador de N_TRIGGERS triggers independientes (retardo+ancho por
-# canal). Mismo estado que drx_prf_batch_seq.sv de arriba: sin integrar en
-# drx_top todavía, pendiente el mapa de registros de Z2 (P-15).
+# canal).
 rtl/drx_trigger_one_shot.sv
 rtl/drx_trigger_gen.sv
 # La composición de las dos piezas de arriba en un solo bloque -- ver su propia
-# cabecera. Mismo estado sin integrar: pendiente el mapa de registros de Z2
-# (P-15).
+# cabecera. Desde v3 del mapa de registros (22-sep-2026) ya lo instancia
+# drx_top (config vía AXI-Lite, ver docs/implementacion/registros.md), pero
+# deliberadamente SIN conectar a drx_range_gate/vector_source todavía -- ver
+# la cabecera de drx_top.sv.
 rtl/drx_timing_engine.sv
 rtl/drx_axil_regs.sv
 # drx_top.sv va al final a propósito: desde esta integración instancia

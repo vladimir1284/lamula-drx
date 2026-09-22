@@ -1864,9 +1864,17 @@ del todo (falta el modelo de integración de M pulsos sobre el ruido de fase, ve
 
 ### P-15 · El mensaje `config` del contrato solo tiene 1 PRF/ancho de pulso, no 2 lotes { #p-15 }
 
-**Estado:** abierto, identificado 21-sep-2026 · **Dueño:** quien diseñe el registro de Z2 y la
-siguiente revisión del contrato · **Bloquea:** nada hoy — [Z2](../implementacion/fases.md#z2)
-todavía no tiene RTL ni registros propios; bloquea cerrar Z2 y Z4 de verdad.
+**Estado:** abierto, mitad resuelto 22-sep-2026 · **Dueño:** siguiente revisión del contrato
+(Z4) · **Bloquea:** cerrar Z2 y Z4 de verdad — ya no bloquea nada del lado del registro.
+
+**Actualización 22-sep-2026:** el mapa de registros AXI-Lite de Z2 (v3 de
+`config/registers.toml`, ver [`registros.md#z2-en-v3`](../implementacion/registros.md#z2-en-v3))
+ya existe — TIMING_CTRL/TIMING_STATUS/PRF_DIV_*/PULSE_WIDTH/N_PULSES/TRIG_DELAY_*/TRIG_WIDTH_*,
+alimentando `drx_timing_engine` ya instanciado en `drx_top.sv`. Eso era la mitad de la condición de
+cierre de abajo. La otra mitad — el contrato — sigue intacta, a propósito: D-08 exige discutir
+cualquier cambio y subir `version_minor` con tests actualizados, y ya existía consenso de que ese
+lado es alcance de Z4, no de la sesión que diseñó el registro. No se tocó `contract/schema/
+drx_dsp_v0_1.toml` sin esa discusión.
 
 [D-13](decisiones.md#d-13) fija que el motor de timing de Z2 secuencia **2 lotes** de PRF/ancho de
 pulso por radial (Batch mode de NEXRAD). El modelo dorado (`model/drx_model/timing.py`) ya modela
@@ -1880,15 +1888,14 @@ declarando un único par en el mensaje `config`: un solo `prf_div` (`u32`) y un 
 segundo lote: ni el DSP puede pedir una configuración de 2 lotes, ni el DRx puede reportar cuál de
 los dos produjo un rayo dado.
 
-No se toca ahora porque es alcance de Z4 (el contrato es la única interfaz externa, y D-08 dice que
-cambiarlo sube `version_minor` y exige actualizar los tests) y porque el mapa de registros AXI-Lite
-de Z2 (`config/registers.toml`) tampoco existe todavía — el propio comentario del fichero dice
-explícitamente que deja fuera "cualquier registro de Z2 (triggers, PRF)". Diseñar el campo del
-contrato antes que el registro real que lo alimenta sería adelantarse sin la forma concreta en
-mano.
+No se toca ahora porque es alcance de Z4: el contrato es la única interfaz externa, y D-08 dice que
+cambiarlo sube `version_minor` y exige actualizar los tests — una decisión para discutir, no para
+tomar de paso al escribir el registro que la motiva. (Hasta el 22-sep-2026 tampoco existía todavía
+el registro real que le habría dado la forma concreta; ya existe, ver la actualización de arriba.)
 
-**Condición de cierre:** cuando se diseñe el mapa de registros de Z2, `config` gana los campos para
-2 lotes (como mínimo: `prf_div`/`pulse_width_idx`/`n_pulses` por lote, y el metadato por rayo de
+**Condición de cierre:** `config` gana los campos para 2 lotes (como mínimo:
+`prf_div`/`pulse_width_idx`/`n_pulses` por lote, ya con la forma concreta que fija
+`config/registers.toml` v3 — ver la actualización de arriba — y el metadato por rayo de
 [Z4](../implementacion/fases.md#z4) gana qué lote produjo ese rayo) y sube `version_minor`. Hasta
 entonces, cualquier prueba de aceptación de D-09/D-13 contra el contrato real (no contra el modelo
 dorado) queda bloqueada por este hueco.

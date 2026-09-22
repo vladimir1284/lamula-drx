@@ -29,9 +29,17 @@ REG_VERSION_ADDR = 0x00
 REG_CTRL_ADDR = 0x04
 REG_STATUS_ADDR = 0x08
 REG_OVERFLOW_ADDR = 0x0C
-REG_RESERVED_ADDR = 0x10
+REG_TIMING_CTRL_ADDR = 0x10
+REG_TIMING_STATUS_ADDR = 0x14
+REG_PRF_DIV_LOW_ADDR = 0x18
+REG_PRF_DIV_HIGH_ADDR = 0x1C
+REG_PULSE_WIDTH_ADDR = 0x20
+REG_N_PULSES_ADDR = 0x24
+REG_TRIG_DELAY_ADDR = [0x28, 0x2C, 0x30, 0x34]
+REG_TRIG_WIDTH_ADDR = [0x38, 0x3C, 0x40, 0x44]
+REG_RESERVED_ADDR = 0x48
 
-REGS_VERSION = 2
+REGS_VERSION = 3
 
 
 async def _reset(dut) -> None:
@@ -47,6 +55,7 @@ async def _reset(dut) -> None:
     dut.s_axi_rready.value = 1
     dut.overrun_in.value = 0
     dut.overflow_in.value = 0
+    dut.radial_done_in.value = 0
     for _ in range(3):
         await RisingEdge(dut.clk)
     dut.rst_n.value = 1
@@ -255,7 +264,7 @@ async def test_overflow_set_gana_sobre_clear_concurrente(dut):
 
 @cocotb.test()
 async def test_direccion_reservada_lee_cero_y_escritura_sin_efecto(dut):
-    """Fuera de VERSION/CTRL/STATUS, todo lee 0 (reservado para Z2, sin implementar)."""
+    """Fuera del mapa implementado, todo lee 0 (reservado, sin implementar)."""
     cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
     await _reset(dut)
 
@@ -264,3 +273,108 @@ async def test_direccion_reservada_lee_cero_y_escritura_sin_efecto(dut):
     await axil_write(dut, REG_RESERVED_ADDR, 0xFFFF_FFFF)
     assert await axil_read(dut, REG_RESERVED_ADDR) == 0
     assert int(dut.mode_coarse.value) == 0
+
+
+@cocotb.test()
+async def test_timing_ctrl_enable_rw(dut):
+    """TIMING_CTRL bit 0 controla `timing_enable`; bits altos son reservados."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    assert int(dut.timing_enable.value) == 0, "timing_enable arranca detenido"
+    assert await axil_read(dut, REG_TIMING_CTRL_ADDR) == 0
+
+    await axil_write(dut, REG_TIMING_CTRL_ADDR, 0xFFFF_FFFF)
+    assert int(dut.timing_enable.value) == 1
+    assert await axil_read(dut, REG_TIMING_CTRL_ADDR) == 1, "bits reservados de TIMING_CTRL leen 0"
+
+    await axil_write(dut, REG_TIMING_CTRL_ADDR, 0x0)
+    assert int(dut.timing_enable.value) == 0
+
+
+@cocotb.test()
+async def test_timing_status_es_sticky_y_write_1_to_clear_rearma(dut):
+    """TIMING_STATUS bit 0 latchea `radial_done_in` (pulso de un ciclo), mismo
+    patrón sticky + W1C + set-gana que OVERFLOW."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    assert await axil_read(dut, REG_TIMING_STATUS_ADDR) == 0
+
+    dut.radial_done_in.value = 1
+    await RisingEdge(dut.clk)
+    dut.radial_done_in.value = 0
+    await RisingEdge(dut.clk)
+    assert await axil_read(dut, REG_TIMING_STATUS_ADDR) == 1, (
+        "TIMING_STATUS debe seguir en 1 aunque radial_done_in ya haya vuelto a 0"
+    )
+
+    await axil_write(dut, REG_TIMING_STATUS_ADDR, 0x1)
+    assert await axil_read(dut, REG_TIMING_STATUS_ADDR) == 0, "W1C no limpió TIMING_STATUS"
+
+    dut.radial_done_in.value = 1
+    await RisingEdge(dut.clk)
+    dut.radial_done_in.value = 0
+    await RisingEdge(dut.clk)
+    assert await axil_read(dut, REG_TIMING_STATUS_ADDR) == 1, (
+        "TIMING_STATUS no se rearmó tras el clear"
+    )
+
+
+@cocotb.test()
+async def test_prf_div_low_high_rw_32_bits_completos(dut):
+    """PRF_DIV_LOW/HIGH son registros RW de 32 bits completos, sin empaquetar."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    assert int(dut.prf_div_low.value) == 0
+    assert int(dut.prf_div_high.value) == 0
+
+    await axil_write(dut, REG_PRF_DIV_LOW_ADDR, 0x0000_1234)
+    await axil_write(dut, REG_PRF_DIV_HIGH_ADDR, 0xABCD_0000)
+    assert int(dut.prf_div_low.value) == 0x0000_1234
+    assert int(dut.prf_div_high.value) == 0xABCD_0000
+    assert await axil_read(dut, REG_PRF_DIV_LOW_ADDR) == 0x0000_1234
+    assert await axil_read(dut, REG_PRF_DIV_HIGH_ADDR) == 0xABCD_0000
+
+
+@cocotb.test()
+async def test_pulse_width_y_n_pulses_empaquetan_low_high_en_una_palabra(dut):
+    """PULSE_WIDTH/N_PULSES: bits 15:0 = lote bajo, bits 31:16 = lote alto."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    await axil_write(dut, REG_PULSE_WIDTH_ADDR, (0x0102 << 16) | 0x0304)
+    assert int(dut.pulse_width_low.value) == 0x0304
+    assert int(dut.pulse_width_high.value) == 0x0102
+    assert await axil_read(dut, REG_PULSE_WIDTH_ADDR) == (0x0102 << 16) | 0x0304
+
+    await axil_write(dut, REG_N_PULSES_ADDR, (0x0506 << 16) | 0x0708)
+    assert int(dut.n_pulses_low.value) == 0x0708
+    assert int(dut.n_pulses_high.value) == 0x0506
+    assert await axil_read(dut, REG_N_PULSES_ADDR) == (0x0506 << 16) | 0x0708
+
+
+@cocotb.test()
+async def test_trig_delay_y_trig_width_rw_por_canal(dut):
+    """Los 4 canales de TRIG_DELAY/TRIG_WIDTH son registros RW independientes."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    delay_signals = [dut.trig_delay_0, dut.trig_delay_1, dut.trig_delay_2, dut.trig_delay_3]
+    width_signals = [dut.trig_width_0, dut.trig_width_1, dut.trig_width_2, dut.trig_width_3]
+
+    for ch in range(4):
+        delay_val = 0x1000 + ch
+        width_val = 0x2000 + ch
+        await axil_write(dut, REG_TRIG_DELAY_ADDR[ch], delay_val)
+        await axil_write(dut, REG_TRIG_WIDTH_ADDR[ch], width_val)
+        assert int(delay_signals[ch].value) == delay_val, f"trig_delay_{ch}"
+        assert int(width_signals[ch].value) == width_val, f"trig_width_{ch}"
+        assert await axil_read(dut, REG_TRIG_DELAY_ADDR[ch]) == delay_val
+        assert await axil_read(dut, REG_TRIG_WIDTH_ADDR[ch]) == width_val
+
+    # Ningún canal pisa a otro: los 4 valores siguen intactos al final.
+    for ch in range(4):
+        assert int(delay_signals[ch].value) == 0x1000 + ch
+        assert int(width_signals[ch].value) == 0x2000 + ch

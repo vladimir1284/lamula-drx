@@ -548,7 +548,7 @@ original, menos JESD y menos DMA.
     continuidad de fase, porque cada rayo arranca de registros en cero. **No queda trabajo
     pendiente por este motivo** — no es que se difiera más, es que deja de existir como entregable
     de Z1. Cabeceras de `rtl/drx_ddc_top.sv` y `rtl/drx_range_gate.sv` y
-    [Mapa de registros AXI-Lite](registros.md#deliberadamente-fuera-de-v2) actualizados.
+    [Mapa de registros AXI-Lite](registros.md#deliberadamente-fuera-de-v3) actualizados.
 
     **Lo que queda de la lista de Z1 tras esto:** `report_utilization`/timing de Config A específica
     (ya cerrado el 20-sep, ver más arriba — no queda nada ahí), el runner de CI con Vivado
@@ -608,24 +608,33 @@ Trabajo:
 
 - Generador de 4 triggers configurables con retardo y ancho independientes. **RTL escrito y
   verificado bit a bit contra el modelo dorado** (`rtl/drx_trigger_gen.sv` +
-  `rtl/drx_trigger_one_shot.sv`, 21-sep-2026 más tarde); falta integrarlo en `drx_top` — depende
-  del mapa de registros de Z2 (P-15), igual que el secuenciador de lotes.
+  `rtl/drx_trigger_one_shot.sv`, 21-sep-2026 más tarde) **e integrado en `drx_top`** vía el mapa de
+  registros AXI-Lite v3 (22-sep-2026, TRIG_DELAY_0..3/TRIG_WIDTH_0..3 — ver
+  [`registros.md#z2-en-v3`](registros.md#z2-en-v3)).
 - **Secuenciador de 2 lotes de PRF/ancho de pulso por radial** (Batch mode de NEXRAD, D-13, cierra
   P-04): lote de PRF baja (vigilancia) + lote de PRF alta (Doppler), conteo de pulsos por lote
   configurable por registro, alternados de forma autónoma en fabric y en bucle continuo durante el
   barrido — no un único par PRF/ancho global. Valores de registro idénticos a la ZU9. **RTL escrito
   y verificado bit a bit contra el modelo dorado** (`rtl/drx_prf_batch_seq.sv`, 21-sep-2026 más
-  tarde); falta integrarlo en `drx_top` — depende del mapa de registros de Z2 (P-15).
+  tarde) **e integrado en `drx_top`** vía el mismo mapa v3 (TIMING_CTRL/PRF_DIV_*/PULSE_WIDTH/
+  N_PULSES).
 - Selección de ancho de pulso 0,8 / 1,66 / 3,3 µs (200 / 415 / 825 ciclos a 250 MHz), por lote.
 - Manejo de modos de pulso y encuadre por PRI.
 - **Validador de configuración PRF × rango**
   ([D-09](../alcance/decisiones.md#d-09)), aplicado **a cada uno de los 2 lotes por separado**
   (D-13: sus rangos no ambiguos son distintos por diseño), con código de error hacia el contrato.
+  El modelo dorado ya lo implementa (`validate_batch`/`validate_radial`); **falta la comprobación
+  en RTL/registro** — escribir un `PRF_DIV_*`/`PULSE_WIDTH` ilegal hoy no se rechaza, ver
+  [`registros.md#z2-en-v3`](registros.md#z2-en-v3).
 - Sincronización determinista entre el trigger y el inicio del gating, incluida la transición
-  lote-bajo → lote-alto dentro de un mismo radial.
+  lote-bajo → lote-alto dentro de un mismo radial. Sigue sin ninguna decisión documentada de cómo
+  hacerlo; tocaría `drx_range_gate.sv`, ya cerrado y verificado bajo D-12 en Z1.
 - Instrumentación en fabric: contador libre en un dominio de reloj distinto, para auto-medir jitter
-  y periodo.
-- Salida de los 4 triggers a Pmod para medida con osciloscopio.
+  y periodo. Bloqueado en la práctica: `config/params.toml` no define ningún segundo dominio de
+  reloj.
+- Salida de los 4 triggers a Pmod para medida con osciloscopio. `trig_out` ya es un puerto físico
+  real de `drx_top` (22-sep-2026), pero sin pines XDC — no hay en este repo una referencia de
+  pinout físico de los Pmod de la ZedBoard verificada para inventar una asignación.
 
 **Hito ZM2 (fin S13):** matriz completa PRF × ancho de pulso × modo × 4 triggers en verde, en
 simulación y en placa, incluida la secuencia de 2 lotes por radial de Batch mode; jitter medido y
@@ -715,6 +724,35 @@ caracterizado; combinaciones ilegales rechazadas con el código correcto.
     (eso ya lo prueban sus propios L0) — solo confirma el cableado, contra
     `radial_trigger_times_cycles` + `one_shot_active_cycles` del modelo dorado aplicados en
     cadena. 1/1 test en verde. `make check` en verde (99 tests).
+
+!!! success "22-sep-2026: mapa de registros AXI-Lite v3 — Z2 integrado en `drx_top`"
+    `drx_timing_engine` deja de ser una unidad suelta: `config/registers.toml` sube a v3
+    (`schema_version` 2→3, `addr_width` 6→7 — las 18 palabras de Z2 ya no cabían en 16) con
+    TIMING_CTRL/TIMING_STATUS/PRF_DIV_LOW/PRF_DIV_HIGH/PULSE_WIDTH/N_PULSES/TRIG_DELAY_0..3/
+    TRIG_WIDTH_0..3, `rtl/drx_axil_regs.sv` los implementa (mismo patrón sticky+W1C que OVERFLOW
+    para TIMING_STATUS/`radial_done`) y `rtl/drx_top.sv` ya instancia `drx_timing_engine`
+    configurado enteramente desde AXI-Lite. Detalle completo, incluidas las tres decisiones de
+    diseño de esta sesión (por qué TRIG_DELAY/TRIG_WIDTH son 4 registros con nombre y no un array,
+    por qué el motor sigue sin conectar a range-gate, por qué `trig_out` no tiene pines XDC
+    todavía) en [`registros.md#z2-en-v3`](registros.md#z2-en-v3).
+
+    Esto era exactamente la condición de cierre que [P-15](../alcance/pendientes.md#p-15) fijaba
+    del lado del registro — mitad resuelta ahora, ver la actualización en ese mismo hallazgo. El
+    lado del contrato (`contract/schema/drx_dsp_v0_1.toml`) sigue intacto a propósito: D-08 exige
+    discutir cualquier cambio ahí, y ya había consenso de que es alcance de Z4, no de esta sesión.
+
+    `sim/tb/tb_drx_axil_regs.py` gana 5 tests nuevos (TIMING_CTRL RW, TIMING_STATUS sticky/W1C/
+    rearme, PRF_DIV_LOW/HIGH de 32 bits, el empaquetado low/high de PULSE_WIDTH/N_PULSES, los 4
+    canales de TRIG_DELAY/TRIG_WIDTH sin pisarse) — mismo patrón que STATUS/OVERFLOW, no suman
+    entradas nuevas a pytest (siguen dentro de `test_l0_axil_regs.py`). `make lint-hdl`
+    (`--top-module drx_top` sobre el `filelist.f` completo) es, por ahora, la única verificación
+    real de que `drx_timing_engine` está bien cableado dentro de `drx_top` — no hay L0/L1 a nivel
+    de `drx_top` completo. `make check` en verde (99 tests, mismo número que antes: los tests
+    nuevos son sub-tests de cocotb, no entradas nuevas de pytest).
+
+    Lo que esto NO hace, deliberadamente: correr un P&R real con los 4 pines nuevos de `trig_out`
+    (última cifra de P&R medida sigue siendo la de v2, sin este cambio) ni tocar el contrato
+    DRx↔DSP. Ambos quedan como próximos pasos reales, no como trabajo diferido sin más.
 
 ## Z3 — Lectores SSI + tagging az/el (semanas 14–18) { #z3 }
 

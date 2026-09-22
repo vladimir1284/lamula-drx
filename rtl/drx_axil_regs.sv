@@ -36,6 +36,19 @@
 // convierte en sticky-con-W1C, con la misma prioridad set-sobre-clear que
 // STATUS. No hace falta un puerto de vuelta hacia `drx_ddc_top` — el clear no
 // tiene que llegar a ninguna fuente externa, se resuelve entero aquí dentro.
+//
+// Z2 (v3, D-13) — TIMING_CTRL/TIMING_STATUS/PRF_DIV_*/PULSE_WIDTH/N_PULSES/
+// TRIG_DELAY_*/TRIG_WIDTH_* alimentan `drx_timing_engine` (instanciado en
+// `drx_top.sv`), puro paso de registro a planta salvo TIMING_STATUS, que
+// sigue el mismo patrón sticky-con-W1C que OVERFLOW (el `radial_done` de
+// `drx_prf_batch_seq` es un pulso de un ciclo; sin latch aquí, firmware
+// tendría que sondear en la ventana exacta del pulso). Los 4 canales de
+// TRIG_DELAY/TRIG_WIDTH son puertos escalares con nombre por canal, no un
+// array — mismo motivo que documenta `drx_trigger_gen.sv`: un array sin
+// empaquetar de puertos de SALIDA no es indexable de forma fiable vía VPI
+// (confirmado empíricamente con `trig_out`); `drx_top.sv` hace el
+// empaquetado hacia el array de entrada de `drx_timing_engine` (que sí
+// acepta arrays sin empaquetar como entrada, sin ese problema).
 
 `ifndef DRX_AXIL_REGS_SV
 `define DRX_AXIL_REGS_SV
@@ -87,7 +100,27 @@ module drx_axil_regs
 
     // Overflow de saturación del DDC, por canal (ver cabecera: sticky
     // mantenido dentro de este módulo, no en la fuente).
-    input logic [N_CH-1:0] overflow_in
+    input logic [N_CH-1:0] overflow_in,
+
+    // Z2 (v3, D-13) — registro -> planta, hacia drx_timing_engine.
+    output logic        timing_enable,
+    output logic [31:0] prf_div_low,
+    output logic [31:0] prf_div_high,
+    output logic [15:0] pulse_width_low,
+    output logic [15:0] pulse_width_high,
+    output logic [15:0] n_pulses_low,
+    output logic [15:0] n_pulses_high,
+    output logic [31:0] trig_delay_0,
+    output logic [31:0] trig_delay_1,
+    output logic [31:0] trig_delay_2,
+    output logic [31:0] trig_delay_3,
+    output logic [31:0] trig_width_0,
+    output logic [31:0] trig_width_1,
+    output logic [31:0] trig_width_2,
+    output logic [31:0] trig_width_3,
+
+    // Planta -> registro (ver cabecera: pulso de un ciclo, latcheado aquí).
+    input logic radial_done_in
 );
 
   // `s_axi_wstrb` no se usa a propósito (ver cabecera); se silencia en vez de
@@ -178,6 +211,89 @@ module drx_axil_regs
     end
   end
 
+  // -----------------------------------------------------------------------
+  // Z2 (v3, D-13): registros de configuración de drx_timing_engine, todos
+  // RW de paso directo salvo TIMING_STATUS (sticky, ver más abajo). Sin
+  // validación aquí -- D-09/D-13 se validan contra el modelo dorado antes de
+  // escribir estos registros, ver la cabecera de drx_prf_batch_seq.sv.
+  // -----------------------------------------------------------------------
+  logic        timing_enable_r;
+  logic [31:0] prf_div_low_r, prf_div_high_r;
+  logic [15:0] pulse_width_low_r, pulse_width_high_r;
+  logic [15:0] n_pulses_low_r, n_pulses_high_r;
+  logic [31:0] trig_delay_r[4];
+  logic [31:0] trig_width_r[4];
+
+  assign timing_enable    = timing_enable_r;
+  assign prf_div_low      = prf_div_low_r;
+  assign prf_div_high     = prf_div_high_r;
+  assign pulse_width_low  = pulse_width_low_r;
+  assign pulse_width_high = pulse_width_high_r;
+  assign n_pulses_low     = n_pulses_low_r;
+  assign n_pulses_high    = n_pulses_high_r;
+  assign trig_delay_0     = trig_delay_r[0];
+  assign trig_delay_1     = trig_delay_r[1];
+  assign trig_delay_2     = trig_delay_r[2];
+  assign trig_delay_3     = trig_delay_r[3];
+  assign trig_width_0     = trig_width_r[0];
+  assign trig_width_1     = trig_width_r[1];
+  assign trig_width_2     = trig_width_r[2];
+  assign trig_width_3     = trig_width_r[3];
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      timing_enable_r    <= 1'b0;
+      prf_div_low_r       <= '0;
+      prf_div_high_r      <= '0;
+      pulse_width_low_r   <= '0;
+      pulse_width_high_r  <= '0;
+      n_pulses_low_r      <= '0;
+      n_pulses_high_r     <= '0;
+      for (int t = 0; t < 4; t++) begin
+        trig_delay_r[t] <= '0;
+        trig_width_r[t] <= '0;
+      end
+    end else if (write_commit) begin
+      unique case (awaddr_r)
+        REG_TIMING_CTRL_ADDR: timing_enable_r <= wdata_r[0];
+        REG_PRF_DIV_LOW_ADDR: prf_div_low_r <= wdata_r;
+        REG_PRF_DIV_HIGH_ADDR: prf_div_high_r <= wdata_r;
+        REG_PULSE_WIDTH_ADDR: begin
+          pulse_width_low_r  <= wdata_r[15:0];
+          pulse_width_high_r <= wdata_r[31:16];
+        end
+        REG_N_PULSES_ADDR: begin
+          n_pulses_low_r  <= wdata_r[15:0];
+          n_pulses_high_r <= wdata_r[31:16];
+        end
+        REG_TRIG_DELAY_0_ADDR: trig_delay_r[0] <= wdata_r;
+        REG_TRIG_DELAY_1_ADDR: trig_delay_r[1] <= wdata_r;
+        REG_TRIG_DELAY_2_ADDR: trig_delay_r[2] <= wdata_r;
+        REG_TRIG_DELAY_3_ADDR: trig_delay_r[3] <= wdata_r;
+        REG_TRIG_WIDTH_0_ADDR: trig_width_r[0] <= wdata_r;
+        REG_TRIG_WIDTH_1_ADDR: trig_width_r[1] <= wdata_r;
+        REG_TRIG_WIDTH_2_ADDR: trig_width_r[2] <= wdata_r;
+        REG_TRIG_WIDTH_3_ADDR: trig_width_r[3] <= wdata_r;
+        default: ;  // resto de direcciones: sin registro que actualizar aquí
+      endcase
+    end
+  end
+
+  // TIMING_STATUS: mismo patrón sticky + W1C que OVERFLOW, set gana sobre un
+  // clear concurrente. `radial_done_in` es un pulso de un ciclo (ver la
+  // cabecera de drx_prf_batch_seq.sv), de ahí el latch.
+  logic radial_done_sticky_r;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      radial_done_sticky_r <= 1'b0;
+    end else if (radial_done_in) begin
+      radial_done_sticky_r <= 1'b1;
+    end else if (write_commit && (awaddr_r == REG_TIMING_STATUS_ADDR) && wdata_r[0]) begin
+      radial_done_sticky_r <= 1'b0;
+    end
+  end
+
   assign s_axi_bresp = 2'b00;  // OKAY siempre, ver cabecera
 
   always_ff @(posedge clk or negedge rst_n) begin
@@ -226,6 +342,20 @@ module drx_axil_regs
       REG_OVERFLOW_ADDR: begin
         for (int c = 0; c < N_CH; c++) rdata_next[c] = overflow_sticky_r[c];
       end
+      REG_TIMING_CTRL_ADDR: rdata_next[0] = timing_enable_r;
+      REG_TIMING_STATUS_ADDR: rdata_next[0] = radial_done_sticky_r;
+      REG_PRF_DIV_LOW_ADDR: rdata_next = prf_div_low_r;
+      REG_PRF_DIV_HIGH_ADDR: rdata_next = prf_div_high_r;
+      REG_PULSE_WIDTH_ADDR: rdata_next = {pulse_width_high_r, pulse_width_low_r};
+      REG_N_PULSES_ADDR: rdata_next = {n_pulses_high_r, n_pulses_low_r};
+      REG_TRIG_DELAY_0_ADDR: rdata_next = trig_delay_r[0];
+      REG_TRIG_DELAY_1_ADDR: rdata_next = trig_delay_r[1];
+      REG_TRIG_DELAY_2_ADDR: rdata_next = trig_delay_r[2];
+      REG_TRIG_DELAY_3_ADDR: rdata_next = trig_delay_r[3];
+      REG_TRIG_WIDTH_0_ADDR: rdata_next = trig_width_r[0];
+      REG_TRIG_WIDTH_1_ADDR: rdata_next = trig_width_r[1];
+      REG_TRIG_WIDTH_2_ADDR: rdata_next = trig_width_r[2];
+      REG_TRIG_WIDTH_3_ADDR: rdata_next = trig_width_r[3];
       default: rdata_next = 32'h0000_0000;  // dirección reservada: lee 0
     endcase
   end

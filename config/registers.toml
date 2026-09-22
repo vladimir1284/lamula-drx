@@ -15,15 +15,23 @@
 # reconfirmó tras el cambio de puertos: 16/16 PASS, 20-sep-2026 — ver
 # docs/implementacion/registros.md.
 #
-# Deliberadamente sigue sin cubrir cualquier registro de Z2 (triggers, PRF):
-# no se diseña por adelantado.
+# v3 (22-sep-2026) añade el mapa de Z2: TIMING_CTRL/TIMING_STATUS y la
+# configuración de `drx_timing_engine.sv` (D-13, 2 lotes de PRF/ancho de
+# pulso por radial + N_TRIGGERS de retardo/ancho). Esto es exactamente la
+# "condición de cierre" que P-15 fijaba para el lado del registro -- ver
+# docs/alcance/pendientes.md#p-15 -- pero NO toca el contrato DRx<->DSP
+# congelado (D-08): este mapa es interno (firmware<->fabric), el contrato es
+# la interfaz externa (DRx<->DSP), y P-15 sigue abierto del lado del
+# contrato a propósito, pendiente de discutirlo (bump de version_minor +
+# actualizar tests, alcance de Z4). addr_width sube de 6 a 7 porque las 18
+# palabras que hacen falta ya no caben en 16.
+schema_version = 3
 
-schema_version = 2
-
-# Bytes direccionables: 2^addr_width = 64 B = 16 palabras de 32 bits. Tres
-# registros ocupan hoy las tres primeras palabras; el resto queda reservado
-# sin implementar (lee 0, escritura sin efecto) para Z2, sin diseñarlo ahora.
-addr_width = 6
+# Bytes direccionables: 2^addr_width = 128 B = 32 palabras de 32 bits. Las
+# primeras 18 palabras (0x00-0x44) están implementadas (Z1 + Z2 v3); el resto
+# (0x48 en adelante) queda reservado sin implementar (lee 0, escritura sin
+# efecto), sin diseñarlo ahora.
+addr_width = 7
 
 [[register]]
 name = "version"
@@ -48,3 +56,89 @@ name = "overflow"
 offset = 0x0C
 access = "w1c"
 doc = "Bit c: overflow sticky de la saturación final del DDC del canal c (drx_ddc_quad_top.overflow, combinación de las ramas I/Q de drx_ddc_top). A diferencia de STATUS, el latch sticky vive AQUÍ, dentro de drx_axil_regs, no en drx_ddc_top: la fuente (drx_saturate) es deliberadamente combinacional, sin estado, y añadir un latch dentro de un núcleo ya verificado bit a bit (D-12) habría sido tocar más de lo necesario para un registro de solo lectura. Escribir 1 en el bit c lo limpia; si hay un overflow genuino el mismo ciclo que el clear, el set gana. Bits >= N_CH leen 0."
+
+# --- Z2 (D-13): motor de timing -- ver rtl/drx_timing_engine.sv --------------
+
+[[register]]
+name = "timing_ctrl"
+offset = 0x10
+access = "rw"
+doc = "Bit 0: enable de drx_prf_batch_seq (arranca/detiene el secuenciador de 2 lotes). Valor de reset: 0 (detenido). Bits 31:1 reservados: leen 0, una escritura ahí no tiene efecto."
+
+[[register]]
+name = "timing_status"
+offset = 0x14
+access = "w1c"
+doc = "Bit 0: radial_done sticky de drx_prf_batch_seq (se puso en 1 al menos una vez desde el último clear -- un radial completo, lote bajo + lote alto). Mismo patrón set-sobre-clear-concurrente que STATUS/OVERFLOW. Bits 31:1 reservados: leen 0."
+
+[[register]]
+name = "prf_div_low"
+offset = 0x18
+access = "rw"
+doc = "prf_div del lote bajo (vigilancia/PRF baja) de drx_prf_batch_seq, ciclos de FS_HZ por PRI. Sin validar aquí: D-09 (PRF x rango) se valida contra el modelo dorado antes de escribir este registro, esta capa confía en el firmware/RCP -- ver la cabecera de drx_prf_batch_seq.sv."
+
+[[register]]
+name = "prf_div_high"
+offset = 0x1C
+access = "rw"
+doc = "prf_div del lote alto (Doppler/PRF alta) de drx_prf_batch_seq. Mismas condiciones que prf_div_low."
+
+[[register]]
+name = "pulse_width"
+offset = 0x20
+access = "rw"
+doc = "Bits 15:0: pulse_width_cycles del lote bajo. Bits 31:16: pulse_width_cycles del lote alto. Empaquetados juntos (cada uno cabe en 16 bits, PulseWidthBits de drx_prf_batch_seq.sv) para no gastar dos palabras completas en un valor que nunca necesita 32 bits."
+
+[[register]]
+name = "n_pulses"
+offset = 0x24
+access = "rw"
+doc = "Bits 15:0: n_pulses del lote bajo (pulsos antes de pasar al lote alto). Bits 31:16: n_pulses del lote alto (pulsos antes de radial_done y volver al lote bajo). Mismo empaquetado que PULSE_WIDTH."
+
+[[register]]
+name = "trig_delay_0"
+offset = 0x28
+access = "rw"
+doc = "Retardo (ciclos de FS_HZ desde `pulse_trig`) del canal 0 de drx_trigger_gen. 32 bits completos, igual que el puerto delay[] de ese módulo."
+
+[[register]]
+name = "trig_delay_1"
+offset = 0x2C
+access = "rw"
+doc = "Retardo del canal 1 de drx_trigger_gen. Mismas condiciones que TRIG_DELAY_0."
+
+[[register]]
+name = "trig_delay_2"
+offset = 0x30
+access = "rw"
+doc = "Retardo del canal 2 de drx_trigger_gen. Mismas condiciones que TRIG_DELAY_0."
+
+[[register]]
+name = "trig_delay_3"
+offset = 0x34
+access = "rw"
+doc = "Retardo del canal 3 de drx_trigger_gen. Mismas condiciones que TRIG_DELAY_0."
+
+[[register]]
+name = "trig_width_0"
+offset = 0x38
+access = "rw"
+doc = "Ancho (ciclos de FS_HZ) del pulso del canal 0 de drx_trigger_gen. Tiene que ser >= 1 -- drx_trigger_one_shot.sv asume esto y no lo valida en RTL, ver su cabecera."
+
+[[register]]
+name = "trig_width_1"
+offset = 0x3C
+access = "rw"
+doc = "Ancho del canal 1 de drx_trigger_gen. Mismas condiciones que TRIG_WIDTH_0."
+
+[[register]]
+name = "trig_width_2"
+offset = 0x40
+access = "rw"
+doc = "Ancho del canal 2 de drx_trigger_gen. Mismas condiciones que TRIG_WIDTH_0."
+
+[[register]]
+name = "trig_width_3"
+offset = 0x44
+access = "rw"
+doc = "Ancho del canal 3 de drx_trigger_gen. Mismas condiciones que TRIG_WIDTH_0."
