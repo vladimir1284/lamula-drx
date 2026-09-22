@@ -23,16 +23,22 @@ CLK_PERIOD_PS = round(1e12 / PARAMS.fs_hz)  # clock-const-ok: conversión de uni
 
 N_TRIGGERS = 4
 # (delay, width) por canal, deliberadamente pequeños frente a prf_div_low/high
-# de _radial_ejemplo() (7 y 5): así ningún trigger se solapa con el disparo
-# siguiente y el "último arm gana" de drx_trigger_one_shot.sv nunca entra en
-# juego -- lo que aquí se prueba es el cableado, no esa semántica (ya cubierta
-# en tb_drx_trigger_gen.py).
+# de _radial_ejemplo(): así ningún trigger se solapa con el disparo siguiente
+# y el "último arm gana" de drx_trigger_one_shot.sv nunca entra en juego -- lo
+# que aquí se prueba es el cableado, no esa semántica (ya cubierta en
+# tb_drx_trigger_gen.py).
 TRIGGER_CONFIGS = [(0, 2), (1, 1), (2, 2), (0, 1)]
 
 
 def _radial_ejemplo() -> timing.RadialBatches:
-    low = timing.Batch(prf_div=7, pulse_width_cycles=1, n_pulses=2)
-    high = timing.Batch(prf_div=5, pulse_width_cycles=1, n_pulses=2)
+    """`pulse_width_cycles=200` en los dos lotes a propósito, no un valor
+    pequeño arbitrario como en otros L0 de Z2 (`tb_drx_prf_batch_seq.py`,
+    `tb_drx_trigger_gen.py`): desde que `drx_timing_engine` gatea `enable`
+    contra D-09 autocontenido (checks de `drx_timing_config_valid.sv`), un
+    ancho fuera de la tabla de `config/params.toml` dejaría el motor entero
+    sin correr y esta prueba no probaría el cableado que dice probar."""
+    low = timing.Batch(prf_div=201, pulse_width_cycles=200, n_pulses=2)
+    high = timing.Batch(prf_div=250, pulse_width_cycles=200, n_pulses=2)
     return timing.RadialBatches(low=low, high=high)
 
 
@@ -94,3 +100,34 @@ async def test_los_4_triggers_se_arman_con_cada_pulso_de_prf(dut):
             expected |= set(timing.one_shot_active_cycles(arm, delay, width))
         observed = {c for c in range(n_cycles) if (trig_out_samples[c] >> ch) & 1}
         assert observed == expected, f"canal {ch}: {observed} != {expected}"
+
+
+@cocotb.test()
+async def test_lote_invalido_deja_el_secuenciador_sin_correr(dut):
+    """D-09 (checks autocontenidos): un `pulse_width` que no cabe en su propio
+    PRI deja el lote inválido -- `config_invalid_*` sube y el motor entero se
+    queda congelado (ningún `pulse_trig`/`trig_out`), igual que con `enable`
+    en bajo, sin importar que `enable` esté en alto."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    # pulse_width_low=200 no cabe en un PRI de prf_div_low=7 (D-09 autocontenido);
+    # el lote alto usa valores legales (tabla + cabe en su PRI) a propósito,
+    # para aislar que es EL LOTE BAJO el que gatea el motor entero, no que
+    # ambos sean ilegales por casualidad.
+    dut.prf_div_low.value = 7
+    dut.pulse_width_low.value = 200
+    dut.n_pulses_low.value = 2
+    dut.prf_div_high.value = 201
+    dut.pulse_width_high.value = 200
+    dut.n_pulses_high.value = 2
+    dut.enable.value = 1
+    await ReadOnly()
+    assert bool(dut.config_invalid_low.value), "config_invalid_low no subió con un lote ilegal"
+    assert not bool(dut.config_invalid_high.value), "el lote alto era legal, no debería marcarse"
+
+    for _ in range(20):
+        await RisingEdge(dut.clk)
+        await ReadOnly()
+        assert not bool(dut.pulse_trig.value), "el motor disparó con un lote inválido"
+        assert int(dut.trig_out.value) == 0, "los triggers se armaron con un lote inválido"

@@ -25,7 +25,18 @@
 # contrato a propósito, pendiente de discutirlo (bump de version_minor +
 # actualizar tests, alcance de Z4). addr_width sube de 6 a 7 porque las 18
 # palabras que hacen falta ya no caben en 16.
-schema_version = 3
+#
+# v4 (22-sep-2026, más tarde) usa 2 de los bits que v3 dejaba reservados de
+# TIMING_STATUS (antes "leen 0" documentado sin más) para los checks
+# AUTOCONTENIDOS de D-09 (rtl/drx_timing_config_valid.sv, instanciado x2
+# dentro de drx_timing_engine.sv): pulse_width fuera de la tabla de
+# config/params.toml o que no cabe en su propio PRI. NO implementa D-09
+# completo -- PRF x rango sigue sin validar en RTL, ver
+# docs/implementacion/registros.md#deliberadamente-fuera-de-v3 -- así que
+# escribir un PRF_DIV_LOW/HIGH que dé un rango no ambiguo ilegal sigue sin
+# rechazarse. Redefinir bits que v3 documentaba como "siempre 0" es un
+# cambio de semántica del mapa, no solo de RTL interno, de ahí el bump.
+schema_version = 4
 
 # Bytes direccionables: 2^addr_width = 128 B = 32 palabras de 32 bits. Las
 # primeras 18 palabras (0x00-0x44) están implementadas (Z1 + Z2 v3); el resto
@@ -69,13 +80,13 @@ doc = "Bit 0: enable de drx_prf_batch_seq (arranca/detiene el secuenciador de 2 
 name = "timing_status"
 offset = 0x14
 access = "w1c"
-doc = "Bit 0: radial_done sticky de drx_prf_batch_seq (se puso en 1 al menos una vez desde el último clear -- un radial completo, lote bajo + lote alto). Mismo patrón set-sobre-clear-concurrente que STATUS/OVERFLOW. Bits 31:1 reservados: leen 0."
+doc = "Bit 0: radial_done sticky de drx_prf_batch_seq (se puso en 1 al menos una vez desde el último clear -- un radial completo, lote bajo + lote alto). Bit 1: config_invalid del lote bajo (D-09, checks autocontenidos: pulse_width fuera de tabla o que no cabe en su propio PRI) -- mientras esté en 1, drx_timing_engine mantiene el secuenciador de lotes sin correr (equivalente a enable=0), sin importar TIMING_CTRL. Bit 2: mismo check para el lote alto. Los tres bits comparten el mismo patrón set-sobre-clear-concurrente que STATUS/OVERFLOW. Bits 31:3 reservados: leen 0."
 
 [[register]]
 name = "prf_div_low"
 offset = 0x18
 access = "rw"
-doc = "prf_div del lote bajo (vigilancia/PRF baja) de drx_prf_batch_seq, ciclos de FS_HZ por PRI. Sin validar aquí: D-09 (PRF x rango) se valida contra el modelo dorado antes de escribir este registro, esta capa confía en el firmware/RCP -- ver la cabecera de drx_prf_batch_seq.sv."
+doc = "prf_div del lote bajo (vigilancia/PRF baja) de drx_prf_batch_seq, ciclos de FS_HZ por PRI. La mitad de D-09 que SÍ se valida en RTL (v4): junto con pulse_width, si el pulso no cabe en su propio PRI el lote queda inválido (TIMING_STATUS bit 1/2) y el secuenciador no corre -- ver drx_timing_config_valid.sv. PRF x rango no ambiguo (la otra mitad de D-09) sigue sin validar aquí: se valida contra el modelo dorado antes de escribir este registro, esta capa confía en el firmware/RCP -- ver docs/implementacion/registros.md#deliberadamente-fuera-de-v3."
 
 [[register]]
 name = "prf_div_high"
@@ -87,7 +98,7 @@ doc = "prf_div del lote alto (Doppler/PRF alta) de drx_prf_batch_seq. Mismas con
 name = "pulse_width"
 offset = 0x20
 access = "rw"
-doc = "Bits 15:0: pulse_width_cycles del lote bajo. Bits 31:16: pulse_width_cycles del lote alto. Empaquetados juntos (cada uno cabe en 16 bits, PulseWidthBits de drx_prf_batch_seq.sv) para no gastar dos palabras completas en un valor que nunca necesita 32 bits."
+doc = "Bits 15:0: pulse_width_cycles del lote bajo. Bits 31:16: pulse_width_cycles del lote alto. Empaquetados juntos (cada uno cabe en 16 bits, PulseWidthBits de drx_prf_batch_seq.sv) para no gastar dos palabras completas en un valor que nunca necesita 32 bits. Validado en RTL desde v4 (D-09, checks autocontenidos): tiene que estar en la tabla de config/params.toml Y caber en el prf_div de su propio lote, o el lote queda inválido -- ver timing_status."
 
 [[register]]
 name = "n_pulses"

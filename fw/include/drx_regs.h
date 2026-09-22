@@ -9,7 +9,7 @@
 #ifndef DRX_REGS_H
 #define DRX_REGS_H
 
-#define DRX_REGS_VERSION 3
+#define DRX_REGS_VERSION 4
 
 #define DRX_REG_VERSION_OFFSET 0x00u
 #define DRX_REG_CTRL_OFFSET 0x04u

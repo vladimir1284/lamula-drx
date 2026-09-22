@@ -39,7 +39,7 @@ REG_TRIG_DELAY_ADDR = [0x28, 0x2C, 0x30, 0x34]
 REG_TRIG_WIDTH_ADDR = [0x38, 0x3C, 0x40, 0x44]
 REG_RESERVED_ADDR = 0x48
 
-REGS_VERSION = 3
+REGS_VERSION = 4
 
 
 async def _reset(dut) -> None:
@@ -56,6 +56,8 @@ async def _reset(dut) -> None:
     dut.overrun_in.value = 0
     dut.overflow_in.value = 0
     dut.radial_done_in.value = 0
+    dut.config_invalid_low_in.value = 0
+    dut.config_invalid_high_in.value = 0
     for _ in range(3):
         await RisingEdge(dut.clk)
     dut.rst_n.value = 1
@@ -318,6 +320,74 @@ async def test_timing_status_es_sticky_y_write_1_to_clear_rearma(dut):
     await RisingEdge(dut.clk)
     assert await axil_read(dut, REG_TIMING_STATUS_ADDR) == 1, (
         "TIMING_STATUS no se rearmó tras el clear"
+    )
+
+
+@cocotb.test()
+async def test_timing_status_config_invalid_low_high_son_sticky_e_independientes(dut):
+    """TIMING_STATUS bits 1/2 (v4, D-09): mismo patrón sticky + W1C que bit 0,
+    pero uno por lote -- un evento en `config_invalid_low_in` no debe tocar el
+    bit del lote alto ni viceversa."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    assert await axil_read(dut, REG_TIMING_STATUS_ADDR) == 0
+
+    dut.config_invalid_low_in.value = 1
+    await RisingEdge(dut.clk)
+    dut.config_invalid_low_in.value = 0
+    await RisingEdge(dut.clk)
+    assert await axil_read(dut, REG_TIMING_STATUS_ADDR) == 0b010, (
+        "bit 1 (config_invalid_low) debe quedar sticky en 1, bit 2 intacto"
+    )
+
+    dut.config_invalid_high_in.value = 1
+    await RisingEdge(dut.clk)
+    dut.config_invalid_high_in.value = 0
+    await RisingEdge(dut.clk)
+    assert await axil_read(dut, REG_TIMING_STATUS_ADDR) == 0b110, (
+        "bit 2 (config_invalid_high) también sticky, bit 1 no se pisó"
+    )
+
+    await axil_write(dut, REG_TIMING_STATUS_ADDR, 0b010)
+    assert await axil_read(dut, REG_TIMING_STATUS_ADDR) == 0b100, (
+        "W1C solo limpió el bit escrito (1), el bit 2 sigue en 1"
+    )
+
+    await axil_write(dut, REG_TIMING_STATUS_ADDR, 0b100)
+    assert await axil_read(dut, REG_TIMING_STATUS_ADDR) == 0
+
+
+@cocotb.test()
+async def test_timing_status_config_invalid_set_gana_sobre_clear_concurrente(dut):
+    """Mismo argumento que OVERFLOW: un `config_invalid_low_in` genuino el
+    mismo ciclo que el W1C no se puede perder."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    dut.s_axi_awaddr.value = REG_TIMING_STATUS_ADDR
+    dut.s_axi_awvalid.value = 1
+    dut.s_axi_wdata.value = 0b010
+    dut.s_axi_wvalid.value = 1
+    dut.config_invalid_low_in.value = 1  # mantenido durante toda la ventana del write
+
+    aw_pending = True
+    w_pending = True
+    for _ in range(8):
+        aw_fires = aw_pending and int(dut.s_axi_awready.value)
+        w_fires = w_pending and int(dut.s_axi_wready.value)
+        await RisingEdge(dut.clk)
+        if aw_fires:
+            dut.s_axi_awvalid.value = 0
+            aw_pending = False
+        if w_fires:
+            dut.s_axi_wvalid.value = 0
+            w_pending = False
+
+    dut.config_invalid_low_in.value = 0
+    await RisingEdge(dut.clk)
+    assert await axil_read(dut, REG_TIMING_STATUS_ADDR) == 0b010, (
+        "el set debe ganar sobre un clear concurrente"
     )
 
 

@@ -49,6 +49,13 @@
 // (confirmado empíricamente con `trig_out`); `drx_top.sv` hace el
 // empaquetado hacia el array de entrada de `drx_timing_engine` (que sí
 // acepta arrays sin empaquetar como entrada, sin ese problema).
+//
+// TIMING_STATUS bits 1/2 (v4, D-09) — `config_invalid_low`/`_high` de
+// `drx_timing_engine` (D-09, checks autocontenidos: pulse_width fuera de
+// tabla o que no cabe en su propio PRI) son NIVELES combinacionales, no
+// pulsos: mismo motivo que OVERFLOW para latchearlos aquí (la fuente,
+// `drx_timing_config_valid.sv`, es deliberadamente combinacional y sin
+// estado), misma prioridad set-sobre-clear-concurrente.
 
 `ifndef DRX_AXIL_REGS_SV
 `define DRX_AXIL_REGS_SV
@@ -120,7 +127,12 @@ module drx_axil_regs
     output logic [31:0] trig_width_3,
 
     // Planta -> registro (ver cabecera: pulso de un ciclo, latcheado aquí).
-    input logic radial_done_in
+    input logic radial_done_in,
+
+    // Planta -> registro (ver cabecera: niveles combinacionales, latcheados
+    // aquí igual que OVERFLOW). D-09, checks autocontenidos.
+    input logic config_invalid_low_in,
+    input logic config_invalid_high_in
 );
 
   // `s_axi_wstrb` no se usa a propósito (ver cabecera); se silencia en vez de
@@ -213,9 +225,13 @@ module drx_axil_regs
 
   // -----------------------------------------------------------------------
   // Z2 (v3, D-13): registros de configuración de drx_timing_engine, todos
-  // RW de paso directo salvo TIMING_STATUS (sticky, ver más abajo). Sin
-  // validación aquí -- D-09/D-13 se validan contra el modelo dorado antes de
-  // escribir estos registros, ver la cabecera de drx_prf_batch_seq.sv.
+  // RW de paso directo salvo TIMING_STATUS (sticky, ver más abajo). Este
+  // módulo NO valida nada él mismo -- PRF_DIV_*/PULSE_WIDTH se escriben tal
+  // cual -- pero desde v4 drx_timing_engine SÍ valida los checks
+  // autocontenidos de D-09 (pulse_width en tabla + cabe en su propio PRI) y
+  // se niega a correr si no se cumplen, reportándolo en TIMING_STATUS bits
+  // 1/2 (ver más abajo). PRF x rango no ambiguo sigue sin validar en ningún
+  // sitio de RTL -- ver docs/implementacion/registros.md#deliberadamente-fuera-de-v3.
   // -----------------------------------------------------------------------
   logic        timing_enable_r;
   logic [31:0] prf_div_low_r, prf_div_high_r;
@@ -281,8 +297,12 @@ module drx_axil_regs
 
   // TIMING_STATUS: mismo patrón sticky + W1C que OVERFLOW, set gana sobre un
   // clear concurrente. `radial_done_in` es un pulso de un ciclo (ver la
-  // cabecera de drx_prf_batch_seq.sv), de ahí el latch.
+  // cabecera de drx_prf_batch_seq.sv), de ahí el latch. Bits 1/2 (v4, D-09):
+  // mismo patrón sobre `config_invalid_low_in`/`_high_in` (niveles
+  // combinacionales, ver cabecera del módulo).
   logic radial_done_sticky_r;
+  logic config_invalid_low_sticky_r;
+  logic config_invalid_high_sticky_r;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -291,6 +311,26 @@ module drx_axil_regs
       radial_done_sticky_r <= 1'b1;
     end else if (write_commit && (awaddr_r == REG_TIMING_STATUS_ADDR) && wdata_r[0]) begin
       radial_done_sticky_r <= 1'b0;
+    end
+  end
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      config_invalid_low_sticky_r <= 1'b0;
+    end else if (config_invalid_low_in) begin
+      config_invalid_low_sticky_r <= 1'b1;
+    end else if (write_commit && (awaddr_r == REG_TIMING_STATUS_ADDR) && wdata_r[1]) begin
+      config_invalid_low_sticky_r <= 1'b0;
+    end
+  end
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      config_invalid_high_sticky_r <= 1'b0;
+    end else if (config_invalid_high_in) begin
+      config_invalid_high_sticky_r <= 1'b1;
+    end else if (write_commit && (awaddr_r == REG_TIMING_STATUS_ADDR) && wdata_r[2]) begin
+      config_invalid_high_sticky_r <= 1'b0;
     end
   end
 
@@ -343,7 +383,11 @@ module drx_axil_regs
         for (int c = 0; c < N_CH; c++) rdata_next[c] = overflow_sticky_r[c];
       end
       REG_TIMING_CTRL_ADDR: rdata_next[0] = timing_enable_r;
-      REG_TIMING_STATUS_ADDR: rdata_next[0] = radial_done_sticky_r;
+      REG_TIMING_STATUS_ADDR: begin
+        rdata_next[0] = radial_done_sticky_r;
+        rdata_next[1] = config_invalid_low_sticky_r;
+        rdata_next[2] = config_invalid_high_sticky_r;
+      end
       REG_PRF_DIV_LOW_ADDR: rdata_next = prf_div_low_r;
       REG_PRF_DIV_HIGH_ADDR: rdata_next = prf_div_high_r;
       REG_PULSE_WIDTH_ADDR: rdata_next = {pulse_width_high_r, pulse_width_low_r};

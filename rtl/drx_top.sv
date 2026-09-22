@@ -191,6 +191,7 @@ module drx_top
   logic [31:0] trig_delay_0, trig_delay_1, trig_delay_2, trig_delay_3;
   logic [31:0] trig_width_0, trig_width_1, trig_width_2, trig_width_3;
   logic        timing_radial_done;
+  logic        timing_config_invalid_low, timing_config_invalid_high;
 
   logic [31:0] trig_delay_arr[N_TRIGGERS];
   logic [31:0] trig_width_arr[N_TRIGGERS];
@@ -244,7 +245,10 @@ module drx_top
       .trig_width_2    (trig_width_2),
       .trig_width_3    (trig_width_3),
 
-      .radial_done_in(timing_radial_done)
+      .radial_done_in(timing_radial_done),
+
+      .config_invalid_low_in (timing_config_invalid_low),
+      .config_invalid_high_in(timing_config_invalid_high)
   );
 
   // `pulse_trig` SÍ tiene consumidor real ahora (D-14: `ray_start` de
@@ -276,6 +280,9 @@ module drx_top
       .pulse_width(timing_pulse_width),
       .tx_gate    (timing_tx_gate),
       .radial_done(timing_radial_done),
+
+      .config_invalid_low (timing_config_invalid_low),
+      .config_invalid_high(timing_config_invalid_high),
 
       .trig_out(trig_out)
   );

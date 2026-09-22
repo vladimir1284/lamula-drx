@@ -22,7 +22,11 @@ rtl/drx_prf_batch_seq.sv
 # canal).
 rtl/drx_trigger_one_shot.sv
 rtl/drx_trigger_gen.sv
-# La composición de las dos piezas de arriba en un solo bloque -- ver su propia
+# D-09 (checks autocontenidos): valida pulse_width en tabla + cabe en su
+# propio PRI. Puro combinacional, instanciado x2 (low/high) dentro de
+# drx_timing_engine.sv.
+rtl/drx_timing_config_valid.sv
+# La composición de las piezas de arriba en un solo bloque -- ver su propia
 # cabecera. Desde v3 del mapa de registros (22-sep-2026) ya lo instancia
 # drx_top (config vía AXI-Lite, ver docs/implementacion/registros.md).
 # `pulse_trig` ya sincroniza el corte de rayo de drx_range_gate (D-14, mismo

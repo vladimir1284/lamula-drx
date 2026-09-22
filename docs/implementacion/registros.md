@@ -1,13 +1,14 @@
-# Mapa de registros AXI-Lite — v3 (Z1 + Z2)
+# Mapa de registros AXI-Lite — v4 (Z1 + Z2)
 
 Hasta el 19-sep-2026 este entregable de Z1 no existía en absoluto — ni RTL ni documento. Esta
-página describe el mapa **v3** (22-sep-2026): lo que `drx_top` controla y observa hoy vía
+página describe el mapa **v4** (22-sep-2026, más tarde): lo que `drx_top` controla y observa hoy vía
 `drx_axil_regs`, y lo que deliberadamente queda fuera todavía. La sección de más abajo explica por
 qué "vía AXI-Lite" no significa todavía "alcanzable desde firmware real".
 
-**v3** añade el bloque de Z2 (`drx_timing_engine`, [D-13](../alcance/decisiones.md#d-13)) —
-ver [El mapa](#el-mapa) y [Z2 en v3](#z2-en-v3) más abajo. v1/v2 (Z1, 19/20-sep-2026) siguen
-descritas tal cual en la sección [Historial](#historial-v1v2).
+**v3** añade el bloque de Z2 (`drx_timing_engine`, [D-13](../alcance/decisiones.md#d-13)) — ver
+[El mapa](#el-mapa) y [Z2 en v3](#z2-en-v3) más abajo. **v4** usa 2 de los bits que v3 dejaba
+reservados de TIMING_STATUS para los checks autocontenidos de D-09 — ver [Z2 en v4](#z2-en-v4).
+v1/v2 (Z1, 19/20-sep-2026) siguen descritas tal cual en la sección [Historial](#historial-v1v2).
 
 Fuente única de verdad: `config/registers.toml`. `tools/gen_registers.py` genera
 `rtl/generated/drx_regs_pkg.sv` (RTL) y `fw/include/drx_regs.h` (firmware) desde ese fichero —
@@ -76,10 +77,10 @@ palabras — subió de 6/16 en v3 porque el bloque de Z2 no cabía). Implementad
 | `0x08` | STATUS   | RO + write-1-to-clear | `[N_CH-1:0]` | Bit `c` = `overrun` sticky del canal `c` de range-gate (`drx_range_gate_quad_top.overrun[c]`). El latch sticky vive en `drx_range_gate` (puerto `clear` nuevo — ver más abajo); este bloque solo lo lee y pulsa la limpieza en origen. Si hay un overrun genuino el mismo ciclo que la limpieza, gana el set. |
 | `0x0C` | OVERFLOW | RO + write-1-to-clear | `[N_CH-1:0]` | Bit `c` = overflow de saturación del DDC del canal `c` (`drx_ddc_quad_top.overflow[c]`, combinación de las ramas I/Q de `drx_ddc_top`). A diferencia de STATUS, el latch sticky vive **dentro de `drx_axil_regs`**, no en la fuente: `drx_saturate` es deliberadamente combinacional y sin estado (ver su cabecera), así que añadir un latch ahí habría tocado más de lo necesario en un núcleo ya verificado bit a bit. Misma prioridad set-sobre-clear que STATUS. |
 | `0x10` | TIMING_CTRL | RW | `[0]` | `enable` de `drx_prf_batch_seq` (arranca/detiene el secuenciador de 2 lotes, D-13). Reset: 0 (detenido). |
-| `0x14` | TIMING_STATUS | RO + write-1-to-clear | `[0]` | `radial_done` sticky de `drx_prf_batch_seq` (radial completo: lote bajo + lote alto). Mismo patrón set-sobre-clear que OVERFLOW. |
-| `0x18` | PRF_DIV_LOW | RW | `[31:0]` | `prf_div` del lote bajo (vigilancia/PRF baja), ciclos de `FS_HZ` por PRI. Sin validar en RTL — D-09 (PRF × rango) se valida contra el modelo dorado antes de escribir. |
+| `0x14` | TIMING_STATUS | RO + write-1-to-clear | `[2:0]` | Bit 0 = `radial_done` sticky de `drx_prf_batch_seq` (radial completo: lote bajo + lote alto). Bits 1/2 (v4, D-09) = `config_invalid` del lote bajo/alto — mientras estén en 1, `drx_timing_engine` mantiene el secuenciador sin correr, sin importar TIMING_CTRL. Los tres bits comparten el mismo patrón set-sobre-clear que OVERFLOW. Bits `[31:3]` reservados: leen 0. |
+| `0x18` | PRF_DIV_LOW | RW | `[31:0]` | `prf_div` del lote bajo (vigilancia/PRF baja), ciclos de `FS_HZ` por PRI. PRF × rango no ambiguo sigue sin validarse en RTL (contra el modelo dorado antes de escribir); "cabe en su propio PRI" sí, desde v4 — ver PULSE_WIDTH. |
 | `0x1C` | PRF_DIV_HIGH | RW | `[31:0]` | `prf_div` del lote alto (Doppler/PRF alta). Mismas condiciones que PRF_DIV_LOW. |
-| `0x20` | PULSE_WIDTH | RW | `[15:0]`/`[31:16]` | Bits 15:0 = ancho de pulso (ciclos) del lote bajo; bits 31:16 = del lote alto. Empaquetados: cada uno cabe en 16 bits (`PulseWidthBits` de `drx_prf_batch_seq.sv`). |
+| `0x20` | PULSE_WIDTH | RW | `[15:0]`/`[31:16]` | Bits 15:0 = ancho de pulso (ciclos) del lote bajo; bits 31:16 = del lote alto. Empaquetados: cada uno cabe en 16 bits (`PulseWidthBits` de `drx_prf_batch_seq.sv`). Validado en RTL desde v4 (D-09, checks autocontenidos): tiene que estar en la tabla de `config/params.toml` **y** caber en el `prf_div` de su propio lote, o el lote queda inválido — ver TIMING_STATUS y [Z2 en v4](#z2-en-v4). |
 | `0x24` | N_PULSES | RW | `[15:0]`/`[31:16]` | Bits 15:0 = pulsos del lote bajo antes de pasar al alto; bits 31:16 = pulsos del lote alto antes de `radial_done`. Mismo empaquetado que PULSE_WIDTH. |
 | `0x28`–`0x34` | TRIG_DELAY_0..3 | RW | `[31:0]` | Retardo (ciclos desde `pulse_trig`) de cada uno de los `N_TRIGGERS=4` canales de `drx_trigger_gen`. Un registro por canal, no un array — ver [Z2 en v3](#z2-en-v3). |
 | `0x38`–`0x44` | TRIG_WIDTH_0..3 | RW | `[31:0]` | Ancho del pulso de cada canal. Tiene que ser ≥ 1 (sin validar en RTL, ver la cabecera de `drx_trigger_one_shot.sv`). |
@@ -129,6 +130,51 @@ el mapa de registros de Z2" como su condición de cierre, y ese mapa ya existe �
 tests, y eso mismo documento lo marca como alcance de Z4, no de esta sesión. Tocar el contrato
 congelado sin discutirlo antes rompería esa regla aunque el registro que lo motiva ya exista.
 
+### Z2 en v4 { #z2-en-v4 }
+
+**22-sep-2026 (más tarde).** D-09 fija que "el manejador de configuración debe validar y rechazar
+las combinaciones ilegales" — hasta v3 nada en RTL lo hacía, ver la entrada de arriba en
+[Deliberadamente fuera de v3](#deliberadamente-fuera-de-v3). v4 cierra la mitad AUTOCONTENIDA de
+ese check (la que no necesita ningún dato externo): `rtl/drx_timing_config_valid.sv`, instanciado
+×2 (lote bajo/alto) dentro de `drx_timing_engine.sv`, verifica que `pulse_width` esté en la tabla
+de `config/params.toml` y que quepa en su propio PRI (`pulse_width < prf_div`).
+
+Decisiones de esta sesión:
+
+- **"Rechazar" en fabric no puede ser un error de bus.** El slave de `drx_axil_regs` responde
+  siempre OKAY (ver [Semántica del slave](#semantica-del-slave)) y eso no cambia. El rechazo real es
+  que `drx_timing_engine` gatea su `enable` interno hacia `drx_prf_batch_seq` con
+  `config_valid_low && config_valid_high`: con un lote inválido, el secuenciador de lotes
+  simplemente no corre (mismo efecto que `TIMING_CTRL.enable=0`), sin importar lo que diga ese
+  registro. `drx_prf_batch_seq.sv` (ya cerrado y verificado bit a bit) no cambió — el gateo vive un
+  nivel arriba, en la composición.
+- **El latch vive en `drx_axil_regs`, no en el validador.** Mismo argumento que ya fija OVERFLOW en
+  su cabecera: `drx_timing_config_valid.sv` es deliberadamente combinacional y sin estado, así que
+  el sticky + write-1-to-clear de TIMING_STATUS bits 1/2 se añadió en `drx_axil_regs`, no en el
+  validador ni en `drx_timing_engine`.
+- **PRF × rango no ambiguo sigue sin validarse en ningún sitio de RTL.** Ese check necesita un
+  umbral externo (`r_max_required_m`) que hoy no existe como registro ni como constante de
+  `config/params.toml` — añadirlo es subir el mapa otra vez (registro nuevo + decidir de dónde sale
+  el valor), no un descuido de esta sesión. Sigue listado en
+  [Deliberadamente fuera de v3](#deliberadamente-fuera-de-v3), sin cerrar.
+- **`schema_version` sube a 4** aunque ningún offset se movió: v3 documentaba los bits 1/2 de
+  TIMING_STATUS como "reservados, leen 0" — redefinirlos es un cambio de semántica del mapa que un
+  firmware futuro necesita poder detectar, mismo criterio que ya se aplicó en v1→v2/v2→v3.
+
+Verificación: nuevo L0 (`sim/tb/tb_drx_timing_config_valid.py`) barre los 3 anchos de la tabla más
+uno fuera de tabla contra varios `prf_div`, bit a bit contra el oráculo
+`model/drx_model/timing.py::batch_config_valid` (D-03). `tb_drx_timing_engine.py` gana un caso con
+un lote inválido que confirma que el motor completo (no solo el validador) se queda congelado; su
+caso ya existente de composición de triggers tuvo que pasar a usar un `pulse_width` de la tabla real
+(200) en vez de un valor arbitrario pequeño, porque ahora el motor no corre con uno ilegal.
+`tb_drx_axil_regs.py` gana los mismos casos de sticky/W1C/set-gana-sobre-clear que ya cubren
+STATUS/OVERFLOW, aplicados a los bits 1/2 de TIMING_STATUS. `make check` en verde (104 tests).
+
+Lo que esto NO hace, deliberadamente: no vuelve a correr el P&R (la última cifra medida sigue siendo
+la de v3, sin este cambio — la lógica añadida es pequeña y puramente combinacional/de registro, pero
+no se ha medido) y no toca `contract/schema/drx_dsp_v0_1.toml` (P-15 sigue abierto del lado del
+contrato, sin relación con este cambio).
+
 ### Semántica del slave
 
 `drx_axil_regs.sv` es un slave AXI4-Lite mínimo a propósito: sin bursts (AXI-Lite no los tiene),
@@ -150,11 +196,16 @@ sitios distintos:
 
 ## Deliberadamente fuera de v3
 
-- **Validación de D-09/D-13 al nivel del registro.** Escribir un `PRF_DIV_LOW`/`PRF_DIV_HIGH`
-  ilegal (rango no unívoco) o un `PULSE_WIDTH` que no quepa en el PRI no se rechaza en RTL — el
-  modelo dorado (`model/drx_model/timing.py`, `validate_batch`/`validate_radial`) es hoy el único
-  sitio que lo comprueba. Añadir esa comprobación en `drx_axil_regs`/`drx_prf_batch_seq` y decidir
-  qué código de error del contrato reportar es trabajo sin empezar.
+- **Validación de D-09/D-13 al nivel del registro — mitad resuelta en v4, 22-sep-2026 (más
+  tarde).** Ver [Z2 en v4](#z2-en-v4). Lo que v4 cierra: `PULSE_WIDTH` fuera de la tabla de
+  `config/params.toml` o que no quepa en el PRI de su propio `PRF_DIV_*` ya se rechaza en RTL
+  (`drx_timing_engine` no corre el secuenciador de lotes mientras eso sea cierto, y lo reporta en
+  TIMING_STATUS bits 1/2). Lo que sigue sin cerrar: escribir un `PRF_DIV_LOW`/`PRF_DIV_HIGH` que dé
+  un rango no ambiguo ilegal (el corazón real de D-09) sigue sin rechazarse en ningún sitio de RTL
+  — ese check necesita un umbral externo (`r_max_required_m`) que hoy no existe como registro. El
+  modelo dorado (`model/drx_model/timing.py`, `validate_batch`/`validate_radial`) sigue siendo el
+  único sitio que lo comprueba completo. Tampoco se decidió ni se tocó qué código de error del
+  contrato reportar hacia el DSP — eso sigue siendo alcance de Z4 (firmware, ver P-15).
 - **Sincronización entre `drx_timing_engine` y `drx_range_gate`/`vector_source`.** Ver
   [Z2 en v3](#z2-en-v3): ninguna decisión documentada fija cómo debe hacerse, y tocaría RTL de Z1 ya
   cerrado.
@@ -179,12 +230,16 @@ sitios distintos:
   `radial_done_in`), PRF_DIV_LOW/HIGH de 32 bits completos, el empaquetado low/high de
   PULSE_WIDTH/N_PULSES, y los 4 canales de TRIG_DELAY/TRIG_WIDTH sin pisarse entre sí.
   `sim/tb/tb_drx_range_gate.py` añade la prueba directa del nuevo puerto `clear` de
-  `drx_range_gate` al nivel del propio módulo. `make sim` / `make check` los corren — 99 tests de
-  pytest en verde (cada uno arranca su propia regresión de cocotb; los sub-tests nuevos de
-  OVERFLOW/`clear`/Z2 viven dentro de los ya existentes de `test_l0_axil_regs.py`/
-  `test_l0_range_gate.py`, no suman entradas nuevas a pytest). `make lint-hdl` (Verilator,
-  `--top-module drx_top` sobre el `filelist.f` completo) también cubre v3: es lo único que ejercita
-  hoy la instanciación real de `drx_timing_engine` dentro de `drx_top.sv`.
+  `drx_range_gate` al nivel del propio módulo. — Añadido en v4 (D-09): nuevo
+  `sim/tb/tb_drx_timing_config_valid.py`, barrido bit a bit contra el oráculo
+  `batch_config_valid` del modelo dorado; `tb_drx_timing_engine.py` gana el caso de un lote
+  inválido congelando el motor completo; `tb_drx_axil_regs.py` gana el mismo sticky/W1C/set-gana
+  de OVERFLOW aplicado a TIMING_STATUS bits 1/2. `make sim` / `make check` los corren — 104 tests
+  de pytest en verde (`test_l0_timing_config_valid.py` es entrada nueva; los demás sub-tests de
+  v4 viven dentro de `test_l0_timing_engine.py`/`test_l0_axil_regs.py` ya existentes, no suman
+  entradas). `make lint-hdl` (Verilator, `--top-module drx_top` sobre el `filelist.f` completo)
+  también cubre v4: es lo único que ejercita hoy la instanciación real de `drx_timing_engine`
+  dentro de `drx_top.sv`.
 - **L1 (xsim real, con IP de Xilinx) — reconfirmado, 20-sep-2026:**
   - Matriz completa de D-12 contra `sim/tb_sv/tb_l1_ddc.sv` (8 casos × {fine, coarse} = 16
     combinaciones, `tcl/sim_l1.tcl`), tras añadir el puerto `overflow` a `drx_ddc_top.sv`/

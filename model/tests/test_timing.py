@@ -31,6 +31,25 @@ def test_un_lote_rechaza_conteos_no_positivos():
         timing.Batch(prf_div=0, pulse_width_cycles=200, n_pulses=5)
 
 
+def test_batch_config_valid_acepta_ancho_en_tabla_que_cabe_en_el_pri():
+    assert timing.batch_config_valid(PARAMS, prf_div=1000, pulse_width_cycles=200)
+
+
+def test_batch_config_valid_rechaza_ancho_fuera_de_tabla():
+    assert not timing.batch_config_valid(PARAMS, prf_div=1000, pulse_width_cycles=201)
+
+
+def test_batch_config_valid_rechaza_ancho_que_no_cabe_en_el_pri():
+    # 200 SÍ está en la tabla, pero no cabe en un PRI de 100 ciclos.
+    assert not timing.batch_config_valid(PARAMS, prf_div=100, pulse_width_cycles=200)
+
+
+def test_batch_config_valid_no_levanta_excepcion_nunca():
+    """A diferencia de `Batch`/`validate_batch`: es un oráculo booleano para
+    comparar bit a bit contra RTL, no un validador que rechaza construcción."""
+    assert timing.batch_config_valid(PARAMS, prf_div=0, pulse_width_cycles=0) is False
+
+
 def test_radial_batches_solo_admite_low_y_high():
     """El punto de D-13: el tipo mismo fija "2 lotes", no una lista de N."""
     fields = {f for f in timing.RadialBatches.__dataclass_fields__}

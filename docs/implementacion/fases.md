@@ -623,9 +623,14 @@ Trabajo:
 - **Validador de configuración PRF × rango**
   ([D-09](../alcance/decisiones.md#d-09)), aplicado **a cada uno de los 2 lotes por separado**
   (D-13: sus rangos no ambiguos son distintos por diseño), con código de error hacia el contrato.
-  El modelo dorado ya lo implementa (`validate_batch`/`validate_radial`); **falta la comprobación
-  en RTL/registro** — escribir un `PRF_DIV_*`/`PULSE_WIDTH` ilegal hoy no se rechaza, ver
-  [`registros.md#z2-en-v3`](registros.md#z2-en-v3).
+  El modelo dorado ya lo implementa (`validate_batch`/`validate_radial`). **Mitad resuelta en RTL,
+  22-sep-2026 (más tarde):** los dos checks AUTOCONTENIDOS (pulse_width en tabla + cabe en su
+  propio PRI) ya se rechazan en fabric (`rtl/drx_timing_config_valid.sv`), ver la entrada de más
+  abajo y [`registros.md#z2-en-v4`](registros.md#z2-en-v4). **Sigue sin resolver:** PRF × rango no
+  ambiguo, el corazón real de D-09 — necesita un umbral externo (`r_max_required_m`) que hoy no
+  existe como registro, así que escribir un `PRF_DIV_LOW`/`PRF_DIV_HIGH` que dé un rango ilegal
+  sigue sin rechazarse en ningún sitio de RTL. Tampoco se decidió qué código de error del contrato
+  reportar hacia el DSP — sigue siendo alcance de Z4 (firmware).
 - Sincronización determinista entre el trigger y el inicio del gating. **Resuelto, 22-sep-2026**
   ([D-14](../alcance/decisiones.md#d-14)): `drx_range_gate` gana un puerto `ray_start`, cableado a
   `pulse_trig`, que resincroniza el corte de rayo con cada pulso de PRF (de cualquiera de los 2
@@ -787,7 +792,39 @@ caracterizado; combinaciones ilegales rechazadas con el código correcto.
     Lo que esto NO resuelve, a propósito: si el conteo de bins necesita diferir entre lote bajo y
     alto (ya abierto por D-13); si `pulse_trig` debe disparar también algo del lado Tx (no existe
     todavía); y no hay ningún contador ni bit de BITE que distinga un tiempo muerto normal de un
-    `ray_start` que llegó tarde y truncó un rayo en curso — D-09 sigue sin aplicarse en RTL.
+    `ray_start` que llegó tarde y truncó un rayo en curso — D-09 (PRF x rango) sigue sin aplicarse
+    en RTL, aunque los otros dos checks de D-09 ya sí (ver la entrada siguiente).
+
+!!! success "22-sep-2026 (más tarde): mitad de D-09 (checks autocontenidos) validada en RTL — mapa de registros v4"
+    `rtl/drx_timing_config_valid.sv` (nuevo, puro combinacional, mismo patrón que `drx_saturate.sv`):
+    valida que `pulse_width` esté en la tabla de `config/params.toml` y que quepa en su propio PRI
+    (`pulse_width < prf_div`) -- los dos checks de D-09 que NO necesitan ningún dato externo.
+    Instanciado ×2 (lote bajo/alto) dentro de `drx_timing_engine.sv`, que gatea con el resultado el
+    `enable` real que llega a `drx_prf_batch_seq`: con un lote inválido, el secuenciador
+    simplemente no corre, sin importar `TIMING_CTRL`. `drx_prf_batch_seq.sv` (ya cerrado y
+    verificado bit a bit) no cambió -- el gateo vive un nivel arriba, en la composición.
+
+    PRF × rango no ambiguo -- el corazón real de D-09 -- sigue sin validarse en ningún sitio de
+    RTL: ese check necesita un umbral externo (`r_max_required_m`) que hoy no existe como registro
+    ni como constante de `config/params.toml`. Añadirlo es alcance nuevo (subir el mapa otra vez),
+    no algo que esta sesión dejó a medias por descuido -- ver
+    [`registros.md#z2-en-v4`](registros.md#z2-en-v4) para el detalle completo, incluidas las
+    decisiones de esta sesión (por qué "rechazar" es gatear `enable` y no un error de bus AXI, por
+    qué el latch de TIMING_STATUS vive en `drx_axil_regs` y no en el validador, por qué
+    `schema_version` sube a 4 aunque ningún offset se movió).
+
+    Verificación: nuevo L0 (`sim/tb/tb_drx_timing_config_valid.py`) barre los 3 anchos de la tabla
+    más uno fuera de tabla contra varios `prf_div`, bit a bit contra el oráculo
+    `model/drx_model/timing.py::batch_config_valid` (D-03, nuevo). `tb_drx_timing_engine.py` gana
+    un caso con un lote inválido que confirma que el motor completo se congela, no solo el
+    validador; su caso de composición de triggers ya existente tuvo que pasar de anchos de pulso
+    arbitrarios pequeños a uno real de la tabla (200), porque ahora el motor no corre con uno
+    ilegal. `tb_drx_axil_regs.py` gana los mismos casos de sticky/W1C/set-gana-sobre-clear que ya
+    cubren OVERFLOW, aplicados a TIMING_STATUS bits 1/2. `make check` en verde (104 tests).
+
+    Lo que esto NO hace, deliberadamente: no se corrió P&R de nuevo (la última cifra medida sigue
+    siendo la de v3) ni se tocó `contract/schema/drx_dsp_v0_1.toml` (P-15 sigue abierto del lado
+    del contrato).
 
 ## Z3 — Lectores SSI + tagging az/el (semanas 14–18) { #z3 }
 

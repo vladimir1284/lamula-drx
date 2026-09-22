@@ -1,16 +1,26 @@
-// Motor de timing de Z2 (fases.md#z2): la composición de las dos piezas ya
+// Motor de timing de Z2 (fases.md#z2): la composición de las piezas ya
 // verificadas por separado -- `drx_prf_batch_seq.sv` (2 lotes de PRF/radial,
-// D-13) y `drx_trigger_gen.sv` (N_TRIGGERS de retardo+ancho independientes) --
-// en el único bloque que se integrará en `drx_top` el día que exista el mapa
-// de registros de Z2 (P-15). Sin lógica propia: solo cablea `pulse_trig` del
-// secuenciador como `arm` del generador de triggers.
+// D-13), `drx_trigger_gen.sv` (N_TRIGGERS de retardo+ancho independientes) y,
+// desde el 22-sep-2026 (más tarde), `drx_timing_config_valid.sv` (D-09,
+// checks autocontenidos) -- en el único bloque que se integra en `drx_top`.
+// Cablea `pulse_trig` del secuenciador como `arm` del generador de triggers.
 //
 // Ese cableado (los 4 triggers se arman con CADA pulso de PRF, de cualquiera
 // de los 2 lotes, no una vez por radial) es la lectura más razonable dado el
 // propósito de medida con osciloscopio del hito ZM2 -- ver la cabecera de
 // `drx_trigger_gen.sv` -- pero ningún documento de `docs/alcance/` la fija
 // como decisión. Si resulta ser el criterio equivocado, cambia esta única
-// línea de cableado, no los dos módulos que envuelve.
+// línea de cableado, no los módulos que envuelve.
+//
+// D-09 (checks autocontenidos): `enable` real del secuenciador de lotes es
+// `enable && config_valid_low && config_valid_high` -- si cualquiera de los 2
+// lotes tiene un `pulse_width` fuera de tabla o que no cabe en su propio PRI,
+// el secuenciador simplemente no corre (mismo efecto que `enable` en bajo,
+// `drx_prf_batch_seq.sv` ya lo deja todo congelado y `tx_gate` a 0 en ese
+// caso). `config_invalid_low`/`config_invalid_high` exponen el motivo hacia
+// arriba para que `drx_axil_regs` los latchee en TIMING_STATUS. Esto NO
+// implementa D-09 completo -- ver la cabecera de `drx_timing_config_valid.sv`
+// para lo que falta (PRF x rango).
 
 `ifndef DRX_TIMING_ENGINE_SV
 `define DRX_TIMING_ENGINE_SV
@@ -47,8 +57,41 @@ module drx_timing_engine
     output logic tx_gate,
     output logic radial_done,
 
+    // D-09 (checks autocontenidos): alto cuando el lote correspondiente NO es
+    // válido hoy (`pulse_width` fuera de tabla o no cabe en su propio PRI).
+    // Nivel, no pulso -- pensado para que `drx_axil_regs` lo latchee (mismo
+    // patrón que `overflow_in`).
+    output logic config_invalid_low,
+    output logic config_invalid_high,
+
     output logic [NTriggers-1:0] trig_out
 );
+
+  logic config_valid_low, config_valid_high;
+
+  drx_timing_config_valid #(
+      .PrfDivBits(PrfDivBits),
+      .PulseWidthBits(PulseWidthBits)
+  ) u_config_valid_low (
+      .prf_div(prf_div_low),
+      .pulse_width(pulse_width_low),
+      .valid(config_valid_low)
+  );
+
+  drx_timing_config_valid #(
+      .PrfDivBits(PrfDivBits),
+      .PulseWidthBits(PulseWidthBits)
+  ) u_config_valid_high (
+      .prf_div(prf_div_high),
+      .pulse_width(pulse_width_high),
+      .valid(config_valid_high)
+  );
+
+  assign config_invalid_low  = ~config_valid_low;
+  assign config_invalid_high = ~config_valid_high;
+
+  logic enable_gated;
+  assign enable_gated = enable && config_valid_low && config_valid_high;
 
   drx_prf_batch_seq #(
       .PrfDivBits(PrfDivBits),
@@ -57,7 +100,7 @@ module drx_timing_engine
   ) u_batch_seq (
       .clk(clk),
       .rst_n(rst_n),
-      .enable(enable),
+      .enable(enable_gated),
 
       .prf_div_low(prf_div_low),
       .pulse_width_low(pulse_width_low),

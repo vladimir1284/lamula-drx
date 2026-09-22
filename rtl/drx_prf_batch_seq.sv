@@ -21,12 +21,19 @@
 // que el PRI del primer pulso del lote nuevo ya usa el divisor del lote nuevo
 // (ver el cuerpo de `always_ff` para el porqué exacto de ese orden).
 //
-// Lo que este módulo NO hace, a propósito: no valida PRF x rango (D-09, eso es
-// P-15 -- pendiente el mapa de registros de Z2 que rechace configuraciones
-// ilegales antes de aplicarlas) ni valida que `pulse_width` quepa en su propio
-// PRI. Un `Batch` del modelo dorado rechaza esas combinaciones en construcción;
-// aquí se asume que quien escribe estos registros ya pasó por ese validador --
-// esta pieza no vuelve a comprobar un invariante de un límite del sistema.
+// Lo que este módulo NO hace, a propósito: no valida nada él mismo -- ni PRF x
+// rango (D-09) ni que `pulse_width` quepa en su propio PRI. Un `Batch` del
+// modelo dorado rechaza esas combinaciones en construcción; aquí se asume que
+// quien escribe estos registros ya pasó por ese validador -- esta pieza no
+// vuelve a comprobar un invariante de un límite del sistema.
+//
+// Desde el 22-sep-2026 (más tarde, v4 del mapa de registros) el `enable` que
+// este módulo recibe YA viene gateado un nivel arriba, en
+// `drx_timing_engine.sv`, contra `drx_timing_config_valid.sv` (D-09, los dos
+// checks autocontenidos: tabla + cabe en el PRI) -- PRF x rango sigue sin
+// validarse en ningún sitio de RTL. Este módulo sigue sin saber nada de eso;
+// desde su punto de vista `enable` simplemente está en 0 mientras el lote
+// activo sea inválido.
 
 `ifndef DRX_PRF_BATCH_SEQ_SV
 `define DRX_PRF_BATCH_SEQ_SV
