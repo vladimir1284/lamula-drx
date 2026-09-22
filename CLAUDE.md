@@ -18,10 +18,17 @@ con el RCP ni con ORPG.
 
 **Z0 — substrato: cerrada.** `make check` sigue en verde (79 tests hoy, Verilator + gcc + NumPy +
 lint). Detalle en el tutorial de `docs/tutorial/` e inventario en `docs/implementacion/substrato.md`.
-El runner de CI con Vivado (`[self-hosted, vivado]`, `HAS_VIVADO_RUNNER`) sigue sin montarse — ZM0
-tal como lo define `docs/implementacion/fases.md` («`git push` produce un `BOOT.BIN` byte a byte sin
-intervención humana») sigue sin cumplirse en CI, solo demostrado a mano (5-sep-2026). Ver A7/A8 en
-`docs/alcance/pendientes.md`.
+El runner de CI con Vivado (`[self-hosted, vivado]`) **se montó el 21-sep-2026** — la propia máquina
+de desarrollo, registrada como runner, `HAS_VIVADO_RUNNER=true`. El job `gateware` ya corre de verdad
+en CI, no solo a mano: `substrato` y la síntesis+bitstream de `zedboard` cierran verdes (WNS = 2,489
+ns). ZM0 tal como lo define `docs/implementacion/fases.md` («`git push` produce un `BOOT.BIN` byte a
+byte sin intervención humana») **sigue sin cumplirse**, pero ya no por falta de runner: el paso
+`BOOT.BIN reproducible` de CI llega hasta el límite real y ya documentado de Z4 — falta `fsbl.elf`/
+`drx_app.elf`. De paso se encontraron y corrigieron tres bugs reales de infraestructura que nadie
+había ejercitado antes (lint de HDL desincronizado del Makefile, DRC de bitstream bloqueando
+`debug_probe`, nombre de archivo equivocado en `make_boot.sh`) y se sacó `zu9` de la matriz de CI:
+este Vivado no tiene el device pack de Zynq UltraScale+ instalado. Ver A7/A8/A11 en
+`docs/alcance/pendientes.md` y `fases.md#z1`, entrada del 21-sep (más tarde).
 
 **Z1 — DDC + range gating: en curso, avanzada, no cerrada.** `rtl/drx_ddc_top.sv` existe, corre
 contra IP real de Xilinx (DDS Compiler, CIC Compiler, FIR Compiler ×2) y está verificado con la
@@ -120,16 +127,25 @@ de ZedBoard y el project plan original de 34 semanas para la ZU9.
 
 Para cerrar Z1 de verdad, en orden:
 
-1. Montar el runner de CI `[self-hosted, vivado]` y poner `HAS_VIVADO_RUNNER=true` — sigue
-   pendiente desde Z0, el job `gateware` de `.github/workflows/ci.yml` ya está escrito. Vivado/xsim
-   están en PATH en esta máquina (`/home/orlando/tools/Xilinx/Vivado/2022.2`), confirmado corriendo
-   el flujo real (síntesis + P&R + xsim), no solo el binario. Bloqueado por ahora: `gh auth login`
-   sin token válido en esta máquina.
-2. BSP/FSBL vía Vitis desde el XSA que ya exporta `-top zynq -step xsa` (ver el punto 3) — Z4 real,
-   `fw/Makefile` ya lo dice explícitamente. `tools/make_boot.sh` sigue fallando igual que hoy hasta
-   que exista `fsbl.elf`.
-3. Puente equivalente para la ZU9 (`zynq_ultra_ps_e`, IP distinta de `processing_system7`) — sin
-   diseñar, se hace cuando haga falta.
+1. BSP/FSBL vía Vitis desde el XSA que ya exporta `-top zynq -step xsa` (ver el punto 2) — Z4 real,
+   `fw/Makefile` ya lo dice explícitamente. `tools/make_boot.sh` ya corre de verdad en CI (21-sep) y
+   llega hasta aquí exacto: sigue fallando (`exit 2`, "falta fsbl.elf/drx_app.elf") hasta que este
+   punto produzca esos ELF.
+2. Puente equivalente para la ZU9 (`zynq_ultra_ps_e`, IP distinta de `processing_system7`) — sin
+   diseñar, se hace cuando haga falta. Cuando se retome: este Vivado 2022.2 tampoco tiene el device
+   pack de Zynq UltraScale+ instalado (ver A11 en `pendientes.md`), así que instalarlo es requisito
+   previo a cualquier síntesis contra `xczu9eg-ffvb1156-2-e`, no solo al diseño del puente.
+
+**Montar el runner de CI `[self-hosted, vivado]`** ya **no** está en esta lista: cerrado el
+21-sep-2026. El bloqueo de `gh auth login` era de credenciales (necesitaba `--web` o un PAT, no
+disponible interactivamente en esta sesión), no arquitectónico — un self-hosted runner puede ser
+esta misma máquina de desarrollo, y el token de registro se generó desde la web de GitHub sin
+depender de `gh` autenticado aquí. `HAS_VIVADO_RUNNER=true`, runner instalado como servicio systemd.
+De paso salieron tres bugs reales en código que nunca se había ejecutado de punta a punta (lint de
+HDL de CI desincronizado de `make lint-hdl`, DRC de `write_bitstream` bloqueando `debug_probe`,
+nombre de archivo equivocado en `tools/make_boot.sh`) y un hallazgo nuevo (`zu9` sin device pack de
+UltraScale+, sacado de la matriz de CI por ahora). Detalle completo en `fases.md#z1`, entrada del
+21-sep (más tarde), y A7/A8/A11 en `pendientes.md`.
 
 **Conmutación en caliente fino/grueso** ya **no** está en esta lista: cerrada como no-requisito el
 21-sep-2026, no diferida. Se preguntó para qué serviría cambiar de celda a mitad de rayo antes de

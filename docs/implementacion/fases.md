@@ -555,6 +555,53 @@ original, menos JESD y menos DMA.
     (bloqueado por `gh auth login`), y BSP/FSBL vía Vitis (Z4 real). Z1 no tiene, hoy, ningún
     entregable de ingeniería propio sin empezar y sin bloqueante externo.
 
+!!! success "21-sep-2026 (más tarde): runner de CI con Vivado montado — A7 cerrado; tres bugs reales de infraestructura encontrados y corregidos al correr el job `gateware` por primera vez"
+    El bloqueo de `gh auth login` era de credenciales, no arquitectónico: un self-hosted runner de
+    GitHub Actions puede ser esta misma máquina de desarrollo. El token de registro se generó desde
+    la web de GitHub (no necesita `gh` autenticado en esta máquina) y el runner
+    (`lamula-drx-dev-vivado`, label `vivado`) quedó instalado como servicio systemd, `enabled`,
+    sobrevive reinicios. `HAS_VIVADO_RUNNER=true` puesto como variable de repo.
+
+    La red de esta máquina resultó tener un Pi-hole que bloqueaba por DNS varios subdominios de
+    `actions.githubusercontent.com` (`api.github.com`, `launch`, `token`, `results-receiver`, etc. —
+    necesarios para que el runner registre y reciba jobs, no solo para el registro inicial).
+    Blanqueados con una regla regex de whitelist; sin esto el runner nunca llega a "Listening for
+    Jobs" de forma útil.
+
+    Con el runner recibiendo jobs de verdad por primera vez, `substrato` siguió en verde pero
+    `gateware` destapó tres bugs reales que ningún `make check` local había ejercitado (todos en
+    código escrito pero nunca antes ejecutado de punta a punta):
+
+    1. **"Lint de HDL" de CI desincronizado de `make lint-hdl`.** Desde que `drx_ddc_top.sv`
+       instancia IP real de Xilinx, el lint necesita el blackbox de
+       `sim/tb_sv/xilinx_ip_verilator_stubs.sv` (ya existía, `make lint-hdl` ya lo usaba) — pero el
+       comando de `.github/workflows/ci.yml` nunca se actualizó para incluirlo, así que llevaba
+       fallando en CI desde que ese stub se escribió. **No necesita Vivado**: se quedó en el job
+       `substrato` (`ubuntu-latest`), solo con el argumento que faltaba.
+    2. **DRC de `write_bitstream` bloqueaba el bitstream por `debug_probe`.** `-step bitstream`
+       nunca se había corrido de verdad (solo `-step impl` estaba cerrado). `debug_probe` se deja
+       sin restringir a propósito desde que existen `zedboard.xdc`/`zedboard_zynq.xdc` (Vivado le
+       asigna un pin libre), pero el DRC de bitgen (`NSTD-1`/`UCIO-1`) trata cualquier puerto sin
+       XDC como error por defecto. `tcl/build.tcl` baja esas dos reglas a `Warning` justo antes de
+       `write_bitstream`, tal como el propio mensaje de Vivado lo sugiere para este caso.
+       **Verificado: WNS = 2,489 ns, `drx_top_tieoff.bit`/`.bin` reales escritos.**
+    3. **`tools/make_boot.sh` copiaba un `.bin` que `build.tcl` nunca produce.** El flujo por
+       defecto (`-top drx_top`, sin PS7) mapea a `set top drx_top_tieoff` — el bitstream sale como
+       `drx_top_tieoff.bin`, nunca `drx_top.bin`. Este script no se había corrido nunca contra un
+       bitstream real antes de hoy, así que el desajuste no se había notado.
+
+    Con los tres corregidos, el pipeline llega hasta donde puede llegar hoy: `substrato` verde,
+    síntesis+bitstream de `zedboard` verde, y `BOOT.BIN reproducible` para exactamente en el límite
+    ya documentado de Z4 — `exit 2`, "falta `fsbl.elf`/`drx_app.elf`" — no un error nuevo. **ZM0
+    sigue sin cumplirse, pero ya no por falta de runner ni por bugs de infraestructura: solo falta
+    Z4.**
+
+    `zu9` se sacó de la matriz de CI: este Vivado 2022.2 no tiene el device pack de Zynq
+    UltraScale+ instalado (`get_parts xczu9eg*` y `-filter {ARCHITECTURE == zynquplus}` devuelven
+    cero). Ese leg nunca se había corrido, ni en CI ni a mano, así que tampoco es una regresión de
+    hoy — es un hueco nuevo, real, que solo se hizo visible al intentar correrlo por primera vez. Ver
+    [pendientes.md](../alcance/pendientes.md).
+
 ## Z2 — Motor de timing, triggers y PRF (semanas 9–13) { #z2 }
 
 Trabajo:
