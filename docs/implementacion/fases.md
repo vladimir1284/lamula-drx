@@ -822,9 +822,31 @@ caracterizado; combinaciones ilegales rechazadas con el código correcto.
     ilegal. `tb_drx_axil_regs.py` gana los mismos casos de sticky/W1C/set-gana-sobre-clear que ya
     cubren OVERFLOW, aplicados a TIMING_STATUS bits 1/2. `make check` en verde (104 tests).
 
-    Lo que esto NO hace, deliberadamente: no se corrió P&R de nuevo (la última cifra medida sigue
-    siendo la de v3) ni se tocó `contract/schema/drx_dsp_v0_1.toml` (P-15 sigue abierto del lado
-    del contrato).
+    Lo que esto NO hace, deliberadamente: no se tocó `contract/schema/drx_dsp_v0_1.toml` (P-15
+    sigue abierto del lado del contrato). P&R con el mapa v4 se confirmó por separado, ver la
+    entrada siguiente.
+
+!!! success "22-sep-2026 (más tarde): P&R re-confirmado con el mapa de registros v4 (D-09 autocontenido + `ray_start`)"
+    Ninguna de las dos entradas anteriores (D-14, D-09 autocontenido) había vuelto a correr P&R —
+    la última cifra medida seguía siendo la de v3 (20-sep). Corrida de confirmación, sin cambiar
+    RTL: `-top drx_top -step bitstream` (flujo por defecto, sin PS7) y `-top zynq -step impl`
+    (PS7 real, el camino que de verdad llega al mapa de registros). Las dos cierran:
+
+    - `-top drx_top`: **WNS = 2,851 ns, WHS = 0,014 ns** (bitstream escrito,
+      `build/gw/zedboard/drx_top_tieoff.bit`) — sube ligeramente desde los 2,770 ns del 19-sep,
+      previo a todo Z2.
+    - `-top zynq`: **WNS = 1,859 ns, WHS = 0,010 ns** — baja desde los 2,528 ns del 20-sep (v2). Es
+      la cifra más ajustada de las cuatro medidas hasta hoy sobre este top: cada pieza nueva de Z2
+      (motor de timing completo + mapa v3/v4) se apila sobre el mismo camino crítico
+      PS7↔interconnect↔`drx_axil_regs`. Sigue con margen cómodo, pero es la que hay que vigilar si
+      seguir sumando registros a este mapa.
+
+    En ambos flujos, igual que el 20-sep: un reporte intermedio de `route_design` muestra WHS
+    momentáneamente negativo (del orden de −0,19 ns) que se resuelve solo antes del reporte final
+    — el propio gate de `tcl/build.tcl` solo mira WNS de setup, no hold, así que esto no lo
+    detectaría por sí solo si no se leyera el log completo. Ningún error, ninguna advertencia
+    crítica en síntesis en ninguno de los dos. No se corrió `-step bitstream -top zynq` ni `-step
+    xsa` en esta pasada.
 
 ## Z3 — Lectores SSI + tagging az/el (semanas 14–18) { #z3 }
 
