@@ -51,16 +51,22 @@ apply_bd_automation -rule xilinx.com:bd_rule:processing_system7 \
 set fclk_mhz [expr {1000.0 / $period_ns}]
 set_property -dict [list \
   CONFIG.PCW_USE_M_AXI_GP0 {1} \
-  CONFIG.PCW_USE_FABRIC_INTERRUPT {0} \
+  CONFIG.PCW_USE_S_AXI_HP0 {1} \
+  CONFIG.PCW_S_AXI_HP0_DATA_WIDTH {32} \
+  CONFIG.PCW_USE_FABRIC_INTERRUPT {1} \
+  CONFIG.PCW_IRQ_F2P_INTR {1} \
   CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ $fclk_mhz \
 ] [get_bd_cells $ps7]
 
-# --- Interconnect 1x1: un solo maestro (GP0), un solo slave (`drx_axil_regs`,
-#     fuera del BD, dentro de `drx_top`). No hace falta un crossbar de
-#     verdad, pero sí la traducción de ID/ancho de AXI GP0 -> AXI-Lite que un
-#     interconnect resuelve de forma estándar. ------------------------------
+# --- Interconnect de GP0: dos maestros derivados de un solo maestro (GP0) --
+#     M00 hacia `drx_axil_regs` (fuera del BD, dentro de `drx_top`, como
+#     siempre), M01 (Z4.0, nuevo) hacia el registro de control AXI-Lite del
+#     AXI DMA (`dma/S_AXI_LITE`, más abajo -- ese sí vive DENTRO del BD, así
+#     que no hace falta puerto externo para él). No hace falta un crossbar de
+#     verdad para M00, pero sí la traducción de ID/ancho de AXI GP0 ->
+#     AXI-Lite que un interconnect resuelve de forma estándar. --------------
 set axi_ic [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_interconnect:2.1 axi_ic]
-set_property -dict [list CONFIG.NUM_MI {1}] [get_bd_cells $axi_ic]
+set_property -dict [list CONFIG.NUM_MI {2}] [get_bd_cells $axi_ic]
 
 connect_bd_intf_net [get_bd_intf_pins $ps7/M_AXI_GP0] \
                      [get_bd_intf_pins $axi_ic/S00_AXI]
@@ -131,11 +137,104 @@ set_property CONFIG.ASSOCIATED_BUSIF $m00_name [get_bd_ports pl_clk0]
 create_bd_port -dir O pl_resetn0
 connect_bd_net [get_bd_pins $rst_ic/peripheral_aresetn] [get_bd_ports pl_resetn0]
 
+# --- AXI DMA S2MM, Z4.0 (fases.md#z4) ---------------------------------------
+#
+# Primer consumidor real del AXI4-Stream de `drx_ray_packer`
+# (`drx_top.m_ray_*`, N_CH canales entrelazados, 32 bits/palabra -- ver la
+# cabecera de `rtl/drx_ray_packer.sv`). Scatter-gather (D-07/fases.md#z4:
+# "AXI DMA scatter-gather S2MM hacia buffers circulares en la DDR del PS")
+# aunque el firmware que gestiona descriptores todavía no existe (Z4.2+) --
+# mismo criterio que `drx_axil_regs`, que se sintetizó semanas antes de que
+# hubiera firmware real que lo leyera.
+#
+# Solo canal S2MM: MM2S (lectura de vectores de prueba desde DDR) es Z4.3,
+# no este cambio -- `c_include_mm2s {0}` evita instanciar un motor de lectura
+# que nada usa todavía.
+set dma [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_dma:7.1 dma]
+set_property -dict [list \
+  CONFIG.c_include_mm2s          {0} \
+  CONFIG.c_include_s2mm          {1} \
+  CONFIG.c_include_sg            {1} \
+  CONFIG.c_sg_include_stscntrl_strm {0} \
+  CONFIG.c_s_axis_s2mm_tdata_width  {32} \
+  CONFIG.c_m_axi_s2mm_data_width    {32} \
+] [get_bd_cells $dma]
+
+# Reloj único de todo el BD (FCLK0, D-02) para las tres interfaces de reloj
+# del DMA -- sin automation, mismo criterio explícito que el resto de este
+# fichero. Solo tres pines de reloj, no cuatro: en modo síncrono (por
+# defecto, sin "Enable Multi Channel"/relojes asíncronos) `S_AXIS_S2MM` vive
+# en el dominio de `m_axi_s2mm_aclk`, sin pin de reloj propio -- confirmado
+# listando los pines reales de la IP generada (no hay `s_axis_s2mm_aclk`).
+foreach clk_pin {s_axi_lite_aclk m_axi_sg_aclk m_axi_s2mm_aclk} {
+  connect_bd_net [get_bd_pins $ps7/FCLK_CLK0] [get_bd_pins $dma/$clk_pin]
+}
+connect_bd_net [get_bd_pins $rst_ic/peripheral_aresetn] [get_bd_pins $dma/axi_resetn]
+
+# --- Registro de control del DMA: segundo maestro de GP0 (M01), vía su
+#     propio protocol converter -- mismo motivo que `axi_pc` para
+#     `drx_axil_regs`: M01_AXI del interconnect es AXI4 completo,
+#     `dma/S_AXI_LITE` es AXI4-Lite puro. ------------------------------------
+set axi_pc_dma [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_protocol_converter:2.1 axi_pc_dma]
+connect_bd_intf_net [get_bd_intf_pins $axi_ic/M01_AXI] [get_bd_intf_pins $axi_pc_dma/S_AXI]
+connect_bd_intf_net [get_bd_intf_pins $axi_pc_dma/M_AXI] [get_bd_intf_pins $dma/S_AXI_LITE]
+connect_bd_net [get_bd_pins $ps7/FCLK_CLK0] [get_bd_pins $axi_pc_dma/aclk]
+connect_bd_net [get_bd_pins $rst_ic/peripheral_aresetn] [get_bd_pins $axi_pc_dma/aresetn]
+
+# --- Camino de datos del DMA hacia DDR: S_AXI_HP0, vía su propio
+#     interconnect -- dos maestros del lado del DMA (M_AXI_SG, motor de
+#     scatter-gather; M_AXI_S2MM, los propios datos) contra un solo slave
+#     (HP0). --------------------------------------------------------------
+set axi_ic_hp [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_interconnect:2.1 axi_ic_hp]
+set_property -dict [list CONFIG.NUM_SI {2} CONFIG.NUM_MI {1}] [get_bd_cells $axi_ic_hp]
+
+connect_bd_intf_net [get_bd_intf_pins $dma/M_AXI_SG]   [get_bd_intf_pins $axi_ic_hp/S00_AXI]
+connect_bd_intf_net [get_bd_intf_pins $dma/M_AXI_S2MM] [get_bd_intf_pins $axi_ic_hp/S01_AXI]
+connect_bd_intf_net [get_bd_intf_pins $axi_ic_hp/M00_AXI] [get_bd_intf_pins $ps7/S_AXI_HP0]
+
+set ic_hp_clk_pins [get_bd_pins -of_objects [get_bd_cells $axi_ic_hp] \
+                                 -filter {NAME =~ "*ACLK*"}]
+connect_bd_net [get_bd_pins $ps7/FCLK_CLK0] $ic_hp_clk_pins
+connect_bd_net [get_bd_pins $ps7/FCLK_CLK0] [get_bd_pins $ps7/S_AXI_HP0_ACLK]
+
+set ic_hp_rst_pins [get_bd_pins -of_objects [get_bd_cells $axi_ic_hp] \
+                                 -filter {NAME =~ "*ARESETN*"}]
+connect_bd_net [get_bd_pins $rst_ic/peripheral_aresetn] $ic_hp_rst_pins
+
+# --- Interrupción de fin de descriptor (S2MM), Z4.0: firmware (Z4.2+) la usa
+#     para saber cuándo un rayo terminó de escribirse en DDR. Un solo origen
+#     hoy -- conexión directa a IRQ_F2P, sin `xlconcat` (haría falta en
+#     cuanto se sume una segunda fuente de interrupción). -------------------
+connect_bd_net [get_bd_pins $dma/s2mm_introut] [get_bd_pins $ps7/IRQ_F2P]
+
+# --- AXI4-Stream externo: entra el rayo empaquetado desde `drx_top`
+#     (`rtl/drx_zynq_top.sv`) hacia `dma/S_AXIS_S2MM`. TDATA_NUM_BYTES=4
+#     (32 bits, `2*IQ_BITS`, ver `drx_ray_packer.sv`) -- `s_axis_ray_tkeep`
+#     lo ata `drx_zynq_top.sv` a `4'hF` (el stream nunca trae bytes
+#     parciales), no algo que `drx_top`/`drx_ray_packer` deban saber. El
+#     interfaz `axis_rtl` no lleva reloj propio (a diferencia de `aximm_rtl`,
+#     tampoco) -- mismo dominio que `pl_clk0` (drx_top entero ya corre de ese
+#     reloj), así que se suma a su MISMA lista de ASSOCIATED_BUSIF en vez de
+#     crear un puerto de reloj nuevo.
+set s_axis_name s_axis_ray
+create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:axis_rtl:1.0 $s_axis_name
+# HAS_TLAST no es verdadero por defecto en el VLNV `axis_rtl` -- sin fijarlo,
+# `axi_dma` avisó en corrida real ("Interface connected to S_AXIS_S2MM does
+# not have TLAST port"), y TLAST es justo lo que cierra cada descriptor de
+# scatter-gather (el fin de rayo de `drx_ray_packer`). Imprescindible, no
+# cosmético.
+set_property -dict [list CONFIG.TDATA_NUM_BYTES {4} CONFIG.HAS_TKEEP {1} \
+                          CONFIG.HAS_TSTRB {0} CONFIG.HAS_TLAST {1}] \
+  [get_bd_intf_ports $s_axis_name]
+connect_bd_intf_net [get_bd_intf_ports $s_axis_name] [get_bd_intf_pins $dma/S_AXIS_S2MM]
+set_property CONFIG.ASSOCIATED_BUSIF "${m00_name}:${s_axis_name}" [get_bd_ports pl_clk0]
+
 # Vivado elige la dirección dentro del mapa de GP0 del PS7 -- no se fija a
 # mano aquí (Z2/firmware es quien la necesitará de verdad). `assign_bd_address`
-# ya imprime a qué dirección queda mapeado `m_axi_regs` ("Slave segment ...
-# is being assigned into address space ... at <0x...>"), no hace falta
-# repetirlo con un `puts` propio.
+# ya imprime a qué dirección queda mapeado `m_axi_regs`/el registro de
+# control del DMA ("Slave segment ... is being assigned into address space
+# ... at <0x...>"), no hace falta repetirlo con un `puts` propio. También
+# asigna la ventana de `M_AXI_SG`/`M_AXI_S2MM` contra la DDR vista por HP0.
 assign_bd_address
 
 validate_bd_design

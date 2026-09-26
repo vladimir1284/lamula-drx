@@ -16,6 +16,10 @@ rtl/drx_ddc_top.sv
 rtl/drx_ddc_quad_top.sv
 rtl/drx_range_gate.sv
 rtl/drx_range_gate_quad_top.sv
+# Z4.0 (fases.md#z4): primer consumidor real de las N_CH salidas de
+# drx_range_gate_quad_top -- entrelaza a un único AXI4-Stream hacia el AXI DMA
+# S2MM (ver drx_top.sv/drx_zynq_top.sv/tcl/gen_zynq_bd.tcl).
+rtl/drx_ray_packer.sv
 # Z2 (D-13): secuenciador de 2 lotes de PRF/ancho de pulso por radial.
 rtl/drx_prf_batch_seq.sv
 # Z2: generador de N_TRIGGERS triggers independientes (retardo+ancho por

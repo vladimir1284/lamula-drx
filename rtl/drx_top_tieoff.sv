@@ -51,6 +51,22 @@ module drx_top_tieoff
                             axi_tie_bresp, axi_tie_rresp, axi_tie_bvalid, axi_tie_rvalid,
                             axi_tie_rdata};
 
+  // Z4.0: sin PS7 no hay AXI DMA que drene `m_ray_*` -- se ata `m_ray_ready`
+  // a alto (nunca frena al empaquetador ni a la cadena que alimenta, mismo
+  // criterio que el `gate_ready` de antes de este cambio). Las tres salidas
+  // SÍ hace falta conectarlas a algo (Verilator con `-Wall` trata un puerto
+  // de salida sin conectar como PINCONNECTEMPTY, y el lint gate de `make
+  // check` sube warnings a error) -- van al mismo bote `unused_*` que el
+  // AXI-Lite de arriba, solo por lint. No hace falta ningún truco de "puerto
+  // real" para que Vivado no elimine la cadena que alimentan:
+  // `debug_probe_xor`, DENTRO de `drx_top`, ya las pliega antes de que
+  // lleguen a este límite de módulo -- ver la cabecera de `drx_top.sv`.
+  logic        m_ray_valid_tie;
+  logic        m_ray_last_tie;
+  logic [31:0] m_ray_data_tie;
+  logic        unused_ray_tie;
+  assign unused_ray_tie = &{1'b0, m_ray_valid_tie, m_ray_last_tie, m_ray_data_tie};
+
   drx_top #(
       .HEARTBEAT_DIV(HEARTBEAT_DIV),
       .N_CH(N_CH)
@@ -76,7 +92,12 @@ module drx_top_tieoff
       .s_axi_rdata   (axi_tie_rdata),
       .s_axi_rresp   (axi_tie_rresp),
       .s_axi_rvalid  (axi_tie_rvalid),
-      .s_axi_rready  (1'b1)
+      .s_axi_rready  (1'b1),
+
+      .m_ray_valid(m_ray_valid_tie),
+      .m_ray_ready(1'b1),
+      .m_ray_data (m_ray_data_tie),
+      .m_ray_last (m_ray_last_tie)
   );
 
 endmodule

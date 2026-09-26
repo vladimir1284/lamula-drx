@@ -1157,6 +1157,58 @@ Trabajo:
     datos generados en el PL) contra el DSP y el RCP reales — ver
     [P-13](../alcance/pendientes.md#p-13). Cerrar ZM4 contra el stub no cierra ese hueco.
 
+!!! success "26-sep-2026: Z4.0 — empaquetador de rayo + AXI DMA S2MM real, P&R cierra"
+    Primera pieza de Z4, planeada explícitamente antes de escribir código (fases Z4.0–Z4.6, orden
+    fijado con vladimir el 26-sep-2026) para que cada paso cierre algo probable antes del siguiente.
+    Las salidas de `drx_range_gate_quad_top` (N_CH canales) por fin tienen un consumidor real —
+    hasta ahora `gate_ready` iba fijo a alto y el I/Q se plegaba en `debug_probe` solo para
+    sobrevivir a la síntesis (ver la cabecera vieja de `drx_top.sv`).
+
+    - **`rtl/drx_ray_packer.sv`** (nuevo): entrelaza los N_CH canales en un único AXI4-Stream de 32
+      bits (`2*IQ_BITS`, un canal por palabra — no un TDATA ancho de `N_CH*32` bits, que con N_CH=3
+      no es potencia de dos y el AXI DMA de Xilinx solo admite anchos que sí lo son). `TLAST` es el
+      AND de los N_CH `s_last` de la muestra capturada, no de un canal cualquiera. No asume
+      sincronismo perfecto entre canales: solo captura cuando los N_CH `s_valid` están altos a la
+      vez, con el FWFT de cada `drx_range_gate` reteniendo su dato mientras tanto.
+    - **Verificado en L0 (Verilator+cocotb)**, no en xsim — es RTL propio sin IP de Xilinx de por
+      medio. Hallazgo real: la VPI que genera `--public-flat-rw` no indexa los elementos de un array
+      SIN empaquetar de un puerto de TOP (`"IndexError: s_valid(GPI_REGISTER) contains no object at
+      index 0"`), así que hizo falta un shim de solo-testbench
+      (`sim/tb_sv/drx_ray_packer_tb_dut.sv`) que reempaqueta puerto a puerto — mismo motivo, ya
+      documentado, de por qué `drx_range_gate_quad_top`/`drx_ddc_quad_top` tampoco tienen test L0
+      propio. Tres casos (orden entrelazado + TLAST, TLAST exige los N_CH `s_last` a la vez,
+      backpressure intermitente): 3/3 PASS.
+    - **`tcl/gen_zynq_bd.tcl`**: AXI DMA (`xilinx.com:ip:axi_dma:7.1`, scatter-gather, solo canal
+      S2MM — MM2S es Z4.3) + `S_AXI_HP0` del PS7 (antes deshabilitado) + interrupción de fabric
+      (antes deshabilitada, `s2mm_introut` → `IRQ_F2P`) + segundo maestro de GP0 (M01, vía su propio
+      `axi_protocol_converter`) para el registro de control AXI-Lite del DMA + un segundo
+      `axi_interconnect` combinando `M_AXI_SG`/`M_AXI_S2MM` contra HP0 + puerto externo
+      `s_axis_ray` (AXI4-Stream, hacia `drx_top.m_ray_*` vía `rtl/drx_zynq_top.sv`). Dos hallazgos
+      reales corriendo esto contra Vivado de verdad: (1) en modo síncrono `axi_dma` no tiene pin de
+      reloj propio para `S_AXIS_S2MM` — vive en el dominio de `m_axi_s2mm_aclk`, no
+      `s_axis_s2mm_aclk` (ese pin no existe); (2) el VLNV `axis_rtl` no trae `HAS_TLAST` a verdadero
+      por defecto — sin fijarlo, `axi_dma` avisaba en corrida real ("Interface connected to
+      S_AXIS_S2MM does not have TLAST port"), y TLAST es justo lo que cierra cada descriptor de
+      scatter-gather.
+    - **`rtl/drx_top.sv`**: `drx_ray_packer` instanciado, puertos nuevos `m_ray_valid/ready/data/
+      last`. `debug_probe_xor` deja de plegar `gate_valid`/`gate_i`/`gate_q`/`gate_last` (ya
+      alcanzan un puerto real vía el empaquetador) y en su lugar pliega `m_ray_valid`/`m_ray_data`/
+      `m_ray_last` — necesario porque `drx_top` también se sintetiza SOLO, sin PS7 y sin DMA
+      (`drx_top_tieoff.sv`, para medir WNS/utilización del datapath), y ahí nadie más da un sink
+      real a esas tres señales.
+    - **P&R real de `-top zynq` cierra** con el DMA/HP0/interrupción ya integrados: **WNS = 1,706
+      ns** (`-step impl`, sube desde los 1,295 ns de cierre de Z2 — la ruta crítica sigue siendo
+      PS7↔interconnect↔`drx_axil_regs`, sin tocar por este cambio). Post-síntesis, 0 críticos / 0
+      errores (el único crítico real de esta sesión, el de TLAST de arriba, se corrigió antes de
+      esta cifra). `-top drx_top` (tieoff, sin PS7) también resintetiza limpio, con el datapath
+      completo verificado vivo — 153 DSP48E1/31 tiles de BRAM post-síntesis, misma cifra histórica
+      de siempre, confirmando que `debug_probe_xor` sigue protegiendo la cadena entera.
+    - **Lo que Z4.0 NO es todavía:** no hay firmware (`drx_app.elf` sigue siendo el *Hello World* de
+      Vitis), nadie programa descriptores de scatter-gather todavía (Z4.2+), y nada de esto se probó
+      en una ZedBoard física — ver la advertencia de siempre sobre "validado en ZedBoard" vs.
+      "validado" a secas. Siguiente paso planeado: **Z4.1**, registro `TRIG_COUNT` (mapa de
+      registros v7).
+
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
 Trabajo:

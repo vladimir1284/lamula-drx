@@ -33,31 +33,23 @@
 //     antes con sus puertos AXI-Lite atados a valores inertes por quien lo
 //     instancie — ese flujo no cambia, sigue existiendo para medir solo el
 //     datapath.
-//   - `m_ready` de range-gate va siempre a alto: no hay consumidor real (el
-//     AXI DMA es Z4).
-//   - Las salidas de I/Q de range-gate no tienen consumidor real todavía (ni
-//     DMA/Z4), así que se reducen a un único bit `debug_probe` registrado, en
-//     vez de exponerse una a una. Dos hallazgos de síntesis real (19-sep-2026)
-//     llevan a esto: (1) exponerlas todas como puertos — primer intento —
-//     hace fallar `place_design` ("IO placement is infeasible", 105 puertos
-//     pedidos contra 50 sitios físicos disponibles en el paquete de la
-//     ZedBoard); (2) `(* keep = "true" *)` sobre señales internas sin ningún
-//     puerto real aguas abajo —segundo intento— no evita que `opt_design` se
-//     lleve por delante la cadena entera de todas formas (post-route quedó en
-//     22 LUTs, 0 DSP, 0 BRAM: solo el latido). Lo único que de verdad
-//     sobrevive a la eliminación de lógica muerta de la implementación es
-//     alcanzar un puerto real — un solo bit basta, mismo patrón que ya usa
-//     este árbol para "hacer real" una señal sin consumidor
-//     (`unused_nco_ready` en `drx_ddc_top.sv`), llevado hasta el top. Esta
-//     build se corre hasta `-step impl` (P&R con cierre de temporización real
-//     de este datapath, primera vez que se mide algo distinto del diseño
-//     vacío), no hasta `-step bitstream`. El `overrun` por canal, a
-//     diferencia del resto de las salidas de range-gate, SÍ tiene ahora un
-//     consumidor real (STATUS de `drx_axil_regs`) y por eso ya no depende de
-//     este hack para sobrevivir a la síntesis.
 //   - `s_last` de `vector_source` pulsa cada `DEPTH` muestras — marcador
 //     artificial de "fin de ventana" para ejercitar el framing de
 //     `drx_range_gate`, NO el PRF real (Z2 no existe todavía).
+//
+// Ray packer (Z4.0, fases.md#z4, 26-sep-2026): las dos entradas de arriba ya
+// NO aplican — `gate_ready`/las salidas de I/Q de range-gate por fin tienen
+// consumidor real, `drx_ray_packer` (nuevo), que entrelaza los N_CH canales
+// en un único AXI4-Stream (`m_ray_*`, puertos reales de este top). Llevarlo
+// hasta un AXI DMA S2MM real es responsabilidad de quien instancie este top
+// (`rtl/drx_zynq_top.sv` + `tcl/gen_zynq_bd.tcl`) — pero `drx_top` también
+// se sintetiza SOLO, sin ese consumidor (`rtl/drx_top_tieoff.sv`, para medir
+// WNS/utilización del datapath sin PS7), así que `debug_probe_xor` (más
+// abajo) sigue plegando `m_ray_valid`/`m_ray_data`/`m_ray_last` — ya no
+// `gate_valid`/`gate_i`/`gate_q`/`gate_last` directamente, que ahora es
+// `drx_ray_packer` quien los consume — para que esa build sin DMA no pierda
+// la cadena entera bajo `opt_design`, ver el comentario junto a
+// `debug_probe_xor`.
 //
 // Z2 (v3 del mapa de registros, 22-sep-2026): `drx_timing_engine` (D-13, 2
 // lotes de PRF/ancho de pulso + N_TRIGGERS de retardo/ancho) ya se instancia
@@ -149,7 +141,16 @@ module drx_top
     output logic [31:0] s_axi_rdata,
     output logic [ 1:0] s_axi_rresp,
     output logic        s_axi_rvalid,
-    input  logic        s_axi_rready
+    input  logic        s_axi_rready,
+
+    // Z4.0: AXI4-Stream de salida de `drx_ray_packer` (N_CH canales
+    // entrelazados) -- ver la cabecera. Quien instancie este top lo lleva
+    // hasta un AXI DMA S2MM real (`rtl/drx_zynq_top.sv`) o a valores
+    // inertes (`rtl/drx_top_tieoff.sv`, el flujo sin PS7).
+    output logic                 m_ray_valid,
+    input  logic                 m_ray_ready,
+    output logic [2*IQ_BITS-1:0] m_ray_data,
+    output logic                 m_ray_last
 );
 
   logic                      gate_valid  [N_CH];
@@ -384,7 +385,6 @@ module drx_top
   );
 
   logic gate_ready[N_CH];
-  assign gate_ready = '{default: 1'b1};  // sin consumidor real todavía (DMA es Z4)
 
   drx_range_gate_quad_top #(
       .N_CH(N_CH)
@@ -422,12 +422,26 @@ module drx_top
   // `timing_batch_sel`/`timing_pulse_width`/`timing_tx_gate` se suman aquí por
   // el mismo motivo (ver el comentario junto a u_timing_engine): sin esto,
   // esas cuatro salidas de drx_timing_engine no llegan a ningún puerto real.
+  //
+  // Z4.0: `m_ray_valid`/`m_ray_data`/`m_ray_last` (puertos reales de este
+  // top, más abajo) SE SUMAN AQUÍ TAMBIÉN, no en su lugar de gate_valid/
+  // gate_i/gate_q/gate_last — a propósito, no redundante. En la build con
+  // PS7 (`drx_zynq_top`) esos tres ya alcanzan un sink real (el AXI DMA), y
+  // en esa build este fold es puro cinturón y tirantes. Pero `drx_top` mismo
+  // también se sintetiza SOLO, sin PS7 y sin DMA (`drx_top_tieoff.sv`, para
+  // medir WNS/utilización del datapath) — ahí nadie conecta `m_ray_*` a
+  // nada, y sin este fold `opt_design` se llevaría por delante
+  // `drx_ray_packer` entero y, con él, la cadena completa de range-gate/DDC/
+  // vector_source que alimenta, exactamente el mismo fallo que este hack ya
+  // resolvió una vez (ver la cabecera). Metiéndolo aquí, DENTRO de
+  // `drx_top`, la protección no depende de que quien lo instancie se acuerde
+  // de darle un sink real.
   logic debug_probe_xor;
   always_comb begin
-    debug_probe_xor = timing_batch_sel ^ timing_tx_gate ^ (^timing_pulse_width);
+    debug_probe_xor = timing_batch_sel ^ timing_tx_gate ^ (^timing_pulse_width)
+        ^ m_ray_valid ^ m_ray_last ^ (^m_ray_data);
     for (int c = 0; c < N_CH; c++) begin
-      debug_probe_xor ^= gate_valid[c] ^ gate_last[c] ^ gate_overrun[c] ^ gate_ray_truncated[c]
-          ^ (^gate_i[c]) ^ (^gate_q[c]);
+      debug_probe_xor ^= gate_overrun[c] ^ gate_ray_truncated[c];
     end
   end
 
@@ -435,6 +449,26 @@ module drx_top
     if (!rst_n) debug_probe <= 1'b0;
     else debug_probe <= debug_probe_xor;
   end
+
+  // Z4.0: primer consumidor real de gate_valid/gate_i/gate_q/gate_last/
+  // gate_ready -- ver la cabecera del fichero.
+  drx_ray_packer #(
+      .N_CH(N_CH)
+  ) u_ray_packer (
+      .clk  (clk),
+      .rst_n(rst_n),
+
+      .s_valid(gate_valid),
+      .s_ready(gate_ready),
+      .s_i    (gate_i),
+      .s_q    (gate_q),
+      .s_last (gate_last),
+
+      .m_valid(m_ray_valid),
+      .m_ready(m_ray_ready),
+      .m_data (m_ray_data),
+      .m_last (m_ray_last)
+  );
 
 endmodule : drx_top
 

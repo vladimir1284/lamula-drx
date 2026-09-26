@@ -124,6 +124,21 @@ registros o pines a este mapa. Lo único que le falta al hito ZM2 tal como está
 «en placa» con osciloscopio — trabajo físico sobre hardware real, fuera de lo que un agente puede
 hacer sin acceso a la placa.
 
+**Z4 — camino de datos, firmware y contrato: en curso, empezó 26-sep-2026.** Planeado antes de
+escribir código (fases Z4.0–Z4.6, orden fijado con vladimir el 26-sep-2026, memoria del agente
+`z4-firmware-plan-order`) para no depender de hardware que no hay (solo ZedBoard) y para que cada
+paso cierre algo probable antes del siguiente. **Z4.0 cerrada** el mismo día: las salidas de
+`drx_range_gate_quad_top` tienen por fin un consumidor real —
+`rtl/drx_ray_packer.sv` (nuevo, entrelaza N_CH canales en un único AXI4-Stream de 32 bits, verificado
+3/3 en L0/cocotb) hacia un AXI DMA S2MM real (scatter-gather, `tcl/gen_zynq_bd.tcl`: `S_AXI_HP0` +
+interrupción de fabric, ambos deshabilitados hasta ahora). P&R de `-top zynq` cierra con todo esto
+integrado: **WNS = 1,706 ns** (sube desde 1,295 ns, la ruta crítica sigue siendo
+PS7↔interconnect↔`drx_axil_regs`, sin tocar por este cambio). Detalle completo, con los dos hallazgos
+reales de Vivado que hicieron falta corregir (pin de reloj del stream de entrada del DMA, `HAS_TLAST`
+del puerto AXI4-Stream externo), en `fases.md#z4`, entrada del 26-sep. Sigue sin existir firmware
+real (`drx_app.elf` sigue siendo el *Hello World* de Vitis) y nada de esto se probó en una ZedBoard
+física — próximo paso planeado, **Z4.1** (registro `TRIG_COUNT`, mapa de registros v7).
+
 Lo que sí está hecho y verificado, además de lo de arriba:
 
 - El sitio de documentación se construye y se despliega solo a

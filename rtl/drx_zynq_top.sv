@@ -22,6 +22,12 @@
 // nunca comprobaron permisos (todo responde OKAY, ver la cabecera de
 // `drx_axil_regs.sv`) y nunca tuvieron puerto para ellas -- no hay nada del
 // otro lado que conectar.
+//
+// Z4.0 (fases.md#z4): `s_axis_ray_*` es el AXI4-Stream de `drx_top.m_ray_*`
+// (empaquetador de rayo, N_CH canales entrelazados) hacia el AXI DMA S2MM
+// que ya vive DENTRO del block design (`tcl/gen_zynq_bd.tcl`) -- por eso este
+// top solo pasa las señales derechas, sin lógica propia, mismo patrón que
+// `m_axi_regs_*`.
 
 `ifndef DRX_ZYNQ_TOP_SV
 `define DRX_ZYNQ_TOP_SV
@@ -80,6 +86,11 @@ module drx_zynq_top
   logic [ 3:0] m_axi_regs_wstrb;
   logic        m_axi_regs_wvalid;
 
+  logic                 s_axis_ray_tvalid;
+  logic                 s_axis_ray_tready;
+  logic [2*IQ_BITS-1:0] s_axis_ray_tdata;
+  logic                 s_axis_ray_tlast;
+
   drx_zynq_bd_wrapper u_bd (
       .DDR_addr         (DDR_addr),
       .DDR_ba           (DDR_ba),
@@ -124,7 +135,15 @@ module drx_zynq_top
       .m_axi_regs_wdata  (m_axi_regs_wdata),
       .m_axi_regs_wready (m_axi_regs_wready),
       .m_axi_regs_wstrb  (m_axi_regs_wstrb),
-      .m_axi_regs_wvalid (m_axi_regs_wvalid)
+      .m_axi_regs_wvalid (m_axi_regs_wvalid),
+
+      .s_axis_ray_tvalid(s_axis_ray_tvalid),
+      .s_axis_ray_tready(s_axis_ray_tready),
+      .s_axis_ray_tdata (s_axis_ray_tdata),
+      .s_axis_ray_tlast (s_axis_ray_tlast),
+      // El stream nunca trae bytes parciales -- `drx_top`/`drx_ray_packer` no
+      // tienen ni necesitan noción de TKEEP, ver la cabecera.
+      .s_axis_ray_tkeep (4'hF)
   );
 
   drx_top u_drx_top (
@@ -150,7 +169,12 @@ module drx_zynq_top
       .s_axi_rdata  (m_axi_regs_rdata),
       .s_axi_rresp  (m_axi_regs_rresp),
       .s_axi_rvalid (m_axi_regs_rvalid),
-      .s_axi_rready (m_axi_regs_rready)
+      .s_axi_rready (m_axi_regs_rready),
+
+      .m_ray_valid(s_axis_ray_tvalid),
+      .m_ray_ready(s_axis_ray_tready),
+      .m_ray_data (s_axis_ray_tdata),
+      .m_ray_last (s_axis_ray_tlast)
   );
 
 endmodule
