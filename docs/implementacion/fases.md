@@ -641,11 +641,13 @@ Trabajo:
   dejaba explícitamente sin BITE propio **ya cerró también, 25-sep-2026 (más tarde):**
   `ray_truncated`/GATE_TRUNCATED (mapa v6) — ver la entrada correspondiente más abajo.
 - Instrumentación en fabric: contador libre en un dominio de reloj distinto, para auto-medir jitter
-  y periodo. Bloqueado en la práctica: `config/params.toml` no define ningún segundo dominio de
-  reloj.
-- Salida de los 4 triggers a Pmod para medida con osciloscopio. `trig_out` ya es un puerto físico
-  real de `drx_top` (22-sep-2026), pero sin pines XDC — no hay en este repo una referencia de
-  pinout físico de los Pmod de la ZedBoard verificada para inventar una asignación.
+  y periodo. **Cerrado como no-requisito, 25-sep-2026 (no como trabajo diferido)** — ver la entrada
+  correspondiente más abajo: el camino de `trig_out` + osciloscopio ya cubre lo que pide el hito
+  ZM2, y un segundo dominio de reloj de verdad no mide nada que un osciloscopio externo no mida
+  mejor.
+- Salida de los 4 triggers a Pmod para medida con osciloscopio. **Resuelto, 25-sep-2026 (más
+  tarde):** `trig_out[3:0]` ya tiene pines XDC reales (Pmod JA, `tcl/xdc/zedboard.xdc`/
+  `zedboard_zynq.xdc`) — ver la entrada correspondiente más abajo.
 
 **Hito ZM2 (fin S13):** matriz completa PRF × ancho de pulso × modo × 4 triggers en verde, en
 simulación y en placa, incluida la secuencia de 2 lotes por radial de Batch mode; jitter medido y
@@ -1004,11 +1006,55 @@ caracterizado; combinaciones ilegales rechazadas con el código correcto.
     ese mismo ciclo. Corregido antes de tocar xsim real, así que la reconfirmación de arriba ya
     corrió con la lógica buena.
 
-    Con esto, Z2 no tiene más entregables de RTL/firmware pendientes dentro de su propio alcance
-    (sin caer en Z4): lo que queda abierto -- instrumentación de jitter en fabric (bloqueada, sin
-    segundo dominio de reloj en `config/params.toml`), pines XDC de `trig_out` (sin referencia de
-    pinout física verificada de los Pmod de la ZedBoard en este repo) y el hito ZM2 en sí (matriz en
-    PLACA con osciloscopio) -- depende de hardware real, no de más RTL o modelo.
+    Lo que quedaba de la lista de Z2 tras esto -- instrumentación de jitter en fabric y pines XDC de
+    `trig_out` -- se resolvió la misma sesión, más tarde: ver las dos entradas siguientes.
+
+!!! success "25-sep-2026 (más tarde): instrumentación de jitter en fabric — cerrada como no-requisito, no como trabajo diferido"
+    Este ítem venía listado desde el arranque de Z2 como bloqueado en la práctica
+    (`config/params.toml` no define ningún segundo dominio de reloj). Antes de diseñarlo se preguntó
+    para qué serviría un contador libre en fabric si `trig_out` (ver la entrada siguiente) ya saca
+    los 4 triggers a un Pmod para medirlos con osciloscopio -- mismo criterio que ya cerró la
+    conmutación en caliente fino/grueso en Z1 (`fases.md#z1`, entrada del 21-sep-2026).
+
+    **Confirmado en sesión:** el hito ZM2 solo exige "jitter medido y caracterizado", y el camino
+    del osciloscopio ya lo cubre por completo -- mide el jitter real de la señal física, en el
+    dominio de tiempo que de verdad importa (el del instrumento de medida), sin depender de ningún
+    supuesto sobre qué tan "independiente" es un segundo dominio de reloj derivado del mismo
+    cristal de la placa. Diseñar un contador libre en un segundo dominio (p. ej. `FCLK1` del PS7)
+    añadiría un CDC nuevo y recursos de fabric para auto-medir algo que, en la práctica, un
+    osciloscopio externo mide mejor y sin ese riesgo de diseño. **No queda trabajo pendiente por
+    este motivo** -- no es que se difiera más, es que deja de existir como entregable de Z2.
+
+!!! success "25-sep-2026 (más tarde): `trig_out` gana pines XDC reales — Pmod JA"
+    `trig_out[3:0]` era, desde el mapa de registros v3 (22-sep-2026), un puerto físico real de
+    `drx_top`/`drx_top_tieoff`/`drx_zynq_top` sin ninguna restricción de pin — sintetizaba y
+    lintaba limpio, pero no había forma de conectarle un osciloscopio de verdad. Lo que faltaba no
+    era diseño, era una referencia de pinout físico de los Pmod de la ZedBoard en la que confiar.
+
+    Pinout tomado del *ZedBoard (Zynq Evaluation and Development) Hardware User's Guide* oficial de
+    Digilent/Avnet (Tabla 16, "Pmod Connections"): los cuatro Pmod orientados a PL (JA/JB/JC/JD)
+    cuelgan del Banco 13 (3,3 V); JC1/JD1 están routeados en modo diferencial (LVDS), JA/JB son
+    single-ended. Se eligió **JA** (`trig_out[0..3]` → JA1/JA2/JA3/JA4 → Y11/AA11/Y10/AA9): un
+    trigger digital de un bit no necesita diferencial, y JB queda libre para otro uso futuro. El
+    mapeo canal→pin es arbitrario a propósito -- ningún documento de `docs/alcance/` fija uno, lo
+    único que importa para ZM2 es que cada trigger tenga un pin físico estable y documentado.
+    `tcl/xdc/zedboard.xdc` (flujo `-top drx_top`) y `tcl/xdc/zedboard_zynq.xdc` (flujo `-top zynq`)
+    ganan las cuatro restricciones, LVCMOS33, mismos pines en los dos.
+
+    **P&R real re-confirmado tras el cambio** (`-step impl`, sin bitstream): esta era la primera vez
+    que `place_design` corría con estos 4 pines restringidos (antes Vivado los colocaba libres,
+    sin comprobar si esos sitios concretos eran alcanzables desde la lógica que los alimenta).
+    `-top drx_top`: **WNS = 2,527 ns, WHS = 0,032 ns** -- cierra, prácticamente igual que los
+    2,851 ns del 22-sep (la diferencia es ruido de rutamiento normal entre corridas, no una
+    regresión). `-top zynq`: **WNS = 1,295 ns, WHS = 0,012 ns** -- cierra, pero baja de forma
+    notable desde los 1,859 ns del 22-sep. Fijar estos 4 pines a sitios concretos (en vez de dejar
+    que Vivado elija libremente) le quita margen de maniobra al rutamiento justo cerca del mismo
+    camino crítico que ya se venía señalando como el más ajustado
+    (PS7↔interconnect↔`drx_axil_regs`, ver la entrada del 22-sep, más tarde) -- sigue con margen
+    positivo, pero es la cifra más ajustada medida hasta hoy sobre este top, y la tendencia (v3:
+    2,528 ns → v4/D-14/D-09: 1,859 ns → v6+XDC: 1,295 ns) merece vigilarse antes de seguir
+    sumando registros o pines a este mapa. Ningún RTL cambió -- solo restricciones físicas -- así
+    que no hizo falta reconfirmar D-12 ni ninguna suite de simulación.
 
 ## Z3 — Lectores SSI + tagging az/el (semanas 14–18) { #z3 }
 

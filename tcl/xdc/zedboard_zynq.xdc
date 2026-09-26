@@ -12,3 +12,11 @@ set_property -dict {PACKAGE_PIN T22 IOSTANDARD LVCMOS33} [get_ports led_heartbea
 # `debug_probe` se deja sin restringir a propósito, igual que en el flujo sin
 # PS7 (zedboard.xdc tampoco lo restringe): es un bit de depuración sin
 # significado externo, Vivado le asigna un pin libre.
+
+# `trig_out[3:0]` a Pmod JA -- mismos 4 pines físicos que zedboard.xdc (el
+# LED de arriba): ver esa cabecera para el pinout y por qué JA. Es el mismo
+# puerto de `drx_zynq_top`, que lo pasa a través de `drx_top` sin tocarlo.
+set_property -dict {PACKAGE_PIN Y11  IOSTANDARD LVCMOS33} [get_ports {trig_out[0]}]
+set_property -dict {PACKAGE_PIN AA11 IOSTANDARD LVCMOS33} [get_ports {trig_out[1]}]
+set_property -dict {PACKAGE_PIN Y10  IOSTANDARD LVCMOS33} [get_ports {trig_out[2]}]
+set_property -dict {PACKAGE_PIN AA9  IOSTANDARD LVCMOS33} [get_ports {trig_out[3]}]

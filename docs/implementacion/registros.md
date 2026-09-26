@@ -293,8 +293,9 @@ número: son sub-tests de cocotb).
 
 Lo que esto NO hace, deliberadamente: no se corrió P&R con este cambio (mismo argumento que v5 —
 lógica de bajo costo dentro de un módulo ya cerrado) y no toca el código de error del contrato hacia
-el DSP (Z4, P-15). Tampoco resuelve la instrumentación de jitter en fabric ni los pines XDC de
-`trig_out` — ver [Deliberadamente fuera de v3](#deliberadamente-fuera-de-v3).
+el DSP (Z4, P-15). La instrumentación de jitter en fabric y los pines XDC de `trig_out` se
+resolvieron aparte, la misma sesión, más tarde — ver [Deliberadamente fuera de v3](#deliberadamente-fuera-de-v3)
+y `fases.md#z2`.
 
 ### Semántica del slave
 
@@ -329,7 +330,9 @@ sitios distintos:
   configurable en runtime (viene de DSP/RCP según el VCP), no un requisito fijo. Lo único que sigue
   sin decidirse: qué código de error del contrato reportar hacia el DSP — eso sigue siendo alcance
   de Z4 (firmware, ver P-15).
-- **Pines XDC / P&R real para `trig_out`.** Ver [Z2 en v3](#z2-en-v3).
+- **Pines XDC / P&R real para `trig_out`.** Ver [Z2 en v3](#z2-en-v3). **Resuelto, 25-sep-2026 (más
+  tarde):** Pmod JA (`Y11`/`AA11`/`Y10`/`AA9`), P&R reconfirmado en `tcl/xdc/zedboard.xdc`/
+  `zedboard_zynq.xdc` — ver `fases.md#z2`, entrada correspondiente.
 - **El lado del contrato de [P-15](../alcance/pendientes.md#p-15).** `contract/schema/
   drx_dsp_v0_1.toml` sigue con un solo `prf_div`/`pulse_width_idx`, sin campos para 2 lotes.
 - **Conmutación en caliente fino/grueso** — cerrado como no-requisito, 21-sep-2026, no diferido:
@@ -387,3 +390,10 @@ sitios distintos:
   optimización de `opt_design` que eliminó los DSP48 de coeficiente cero de `fir_compiler_halfband`
   en la otra build no se repitió aquí de forma determinista — dato observado, sin explicar más a
   fondo (no bloquea nada, ver [`fases.md#z1`](fases.md#z1)).
+- **P&R re-confirmado tras los pines XDC de `trig_out`, 25-sep-2026 (más tarde, v6)** — primera vez
+  que `place_design` corre con esos 4 pines restringidos a sitios concretos (Pmod JA) en vez de
+  dejar que Vivado los coloque libremente: `-top drx_top`, **WNS = 2,527 ns, WHS = 0,032 ns**
+  (cierra, prácticamente igual que la última cifra medida sobre este top); `-top zynq`,
+  **WNS = 1,295 ns, WHS = 0,012 ns** (cierra, pero es la cifra más ajustada medida hasta hoy sobre
+  este top — ver [`fases.md#z2`](fases.md#z2), entrada correspondiente, para la tendencia completa
+  y por qué merece vigilarse).
