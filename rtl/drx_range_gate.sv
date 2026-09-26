@@ -60,6 +60,20 @@
 // necesita vectores nuevos del modelo dorado (`ray_start` en bajo es
 // bit a bit idéntico al comportamiento ya verificado bajo D-12).
 //
+// `ray_truncated` (BITE, 25-sep-2026, mapa de registros v6): D-14 dejaba
+// ese descarte completamente mudo -- ni un contador ni un bit distinguían
+// "PRI bien calibrado, ray_start llegó justo al wrap natural" de "ray_start
+// llegó tarde y truncó un rayo real en curso". Se dispara (sticky, mismo
+// patrón W1C que `overrun`, con `clear_truncated` como su propio puerto de
+// limpieza -- NO comparte `clear`, porque son dos diagnósticos distintos con
+// registros distintos en el mapa) cuando `ray_start` encuentra el banco en
+// curso con algo escrito que no se completa en este mismo ciclo -- NO es
+// simplemente `wr_ptr != 0` (ver el comentario junto al `always_ff`: ese
+// valor sigue siendo `last_idx` en el ciclo exacto del wrap natural, la
+// asignación a 0 del bloque de escritura todavía no se ha "visto"). Con el
+// banco vacío (`wr_ptr == 0`) o completándose por cuenta propia ese mismo
+// ciclo (wrap natural) NO se activa -- eso es operación normal, no un fallo.
+//
 // `bin_count` (D-15, 25-sep-2026, reemplaza `mode_coarse` en ESTE módulo): el
 // conteo de bins ya no es una elección binaria fino/grueso fija en
 // `config/params.toml` -- es un registro por lote (D-13: lote bajo/alto
@@ -123,7 +137,12 @@ module drx_range_gate
     output logic overrun,
 
     // Resync con el motor de timing de Z2 (D-14, ver cabecera).
-    input logic ray_start
+    input logic ray_start,
+
+    // BITE de tiempo muerto (ver cabecera): write-1-to-clear PROPIO, no
+    // comparte `clear` con `overrun` -- son dos registros distintos del mapa.
+    input  logic clear_truncated,
+    output logic ray_truncated
 );
 
   localparam int Depth = BINS_MAX;
@@ -199,6 +218,7 @@ module drx_range_gate
       bank_pending[0] <= 1'b0;
       bank_pending[1] <= 1'b0;
       overrun <= 1'b0;
+      ray_truncated <= 1'b0;
       m_valid_r <= 1'b0;
       m_last_r  <= 1'b0;
       rd_from_bank1_r <= 1'b0;
@@ -208,6 +228,7 @@ module drx_range_gate
       // después en este mismo `always_ff` y gana (última asignación no
       // bloqueante sobre la misma señal manda). Ver la cabecera del fichero.
       if (clear) overrun <= 1'b0;
+      if (clear_truncated) ray_truncated <= 1'b0;
 
       // Escritura: nunca se detiene, sigue el ritmo de `s_valid`. El propio
       // dato (`mem0`/`mem1`) se escribe en los procesos de abajo, cada uno
@@ -233,7 +254,25 @@ module drx_range_gate
       // dos escriben el mismo valor). No toca `bank_pending`/`bank_last_idx`:
       // ver la cabecera del fichero sobre por qué un recorte forzado nunca
       // marca un banco como listo para leer.
-      if (ray_start) wr_ptr <= '0;
+      //
+      // `ray_truncated` (BITE) NO es simplemente "`wr_ptr` != 0": ese valor
+      // sigue siendo `last_idx` (no cero) en el ciclo exacto del wrap
+      // natural, porque el `wr_ptr <= '0` del bloque de escritura de arriba
+      // todavía no se ha "visto" (es una asignación no bloqueante sobre el
+      // mismo registro que se lee aquí). El caso de no-op de verdad es
+      // `s_valid && (wr_ptr == last_idx)` -- el banco se completa por cuenta
+      // propia ESTE mismo ciclo, `ray_start` no descarta nada real. Cualquier
+      // otro `wr_ptr` != 0 sí es un descarte genuino (con o sin `s_valid` a
+      // la vez: una muestra que llega el mismo ciclo que un `ray_start` que
+      // NO alcanza a completar el banco también se pierde). Va DESPUÉS de
+      // `if (clear_truncated) ray_truncated <= 1'b0;` de arriba a propósito,
+      // misma prioridad set-sobre-clear-concurrente que `overrun`.
+      if (ray_start) begin
+        wr_ptr <= '0;
+        if ((wr_ptr != '0) && !(s_valid && (wr_ptr == last_idx))) begin
+          ray_truncated <= 1'b1;
+        end
+      end
 
       // Lectura: registrada. Solo intenta cargar el siguiente dato cuando el
       // registro de salida está libre (nunca tuvo nada válido, o lo que tenía

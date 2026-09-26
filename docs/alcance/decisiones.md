@@ -333,8 +333,10 @@ interlock de hardware, no un bloque numérico con oráculo de valores.
   no existe todavía en este repo.
 - Diagnóstico del tiempo muerto descartado: hoy no hay ningún contador ni bit de BITE que distinga
   "PRI bien calibrado, `ray_start` llegó justo cuando tocaba" de "`ray_start` llegó tarde y truncó
-  un rayo en curso". Sigue sin resolver — es independiente de D-09, que desde
-  [D-15](#d-15) (25-sep-2026) sí se aplica completo en RTL, incluido el conteo de bins.
+  un rayo en curso". **Cerrado, 25-sep-2026 (más tarde): `ray_truncated` por canal (GATE_TRUNCATED,
+  mapa v6)** — ver la entrada correspondiente en [`fases.md#z2`](../implementacion/fases.md#z2). Es
+  independiente de D-09, que desde [D-15](#d-15) (25-sep-2026) sí se aplica completo en RTL,
+  incluido el conteo de bins.
 
 ## D-15 · Conteo de bins de range-gate por lote: registro configurable en runtime, no una elección fino/grueso { #d-15 }
 

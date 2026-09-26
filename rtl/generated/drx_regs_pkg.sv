@@ -9,7 +9,7 @@
 
 package drx_regs_pkg;
 
-  localparam int REGS_VERSION = 5;
+  localparam int REGS_VERSION = 6;
   localparam int REGS_ADDR_WIDTH = 7;
 
   localparam logic [REGS_ADDR_WIDTH-1:0] REG_VERSION_ADDR = REGS_ADDR_WIDTH'(32'h00000000);
@@ -32,6 +32,7 @@ package drx_regs_pkg;
   localparam logic [REGS_ADDR_WIDTH-1:0] REG_TRIG_WIDTH_3_ADDR = REGS_ADDR_WIDTH'(32'h00000044);
   localparam logic [REGS_ADDR_WIDTH-1:0] REG_BINS_LOW_ADDR = REGS_ADDR_WIDTH'(32'h00000048);
   localparam logic [REGS_ADDR_WIDTH-1:0] REG_BINS_HIGH_ADDR = REGS_ADDR_WIDTH'(32'h0000004C);
+  localparam logic [REGS_ADDR_WIDTH-1:0] REG_GATE_TRUNCATED_ADDR = REGS_ADDR_WIDTH'(32'h00000050);
 
 endpackage : drx_regs_pkg
 

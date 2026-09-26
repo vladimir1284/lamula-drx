@@ -62,6 +62,14 @@
 // PRF_DIV_LOW/HIGH: el conteo de bins de range-gate por lote, configurable en
 // runtime (viene de DSP/RCP según el VCP), sin validar aquí -- se valida en
 // `drx_timing_config_valid.sv` contra el techo físico de BRAM.
+//
+// GATE_TRUNCATED (offset REG_GATE_TRUNCATED_ADDR, v6) — BITE de D-14: bit `c`
+// es el `ray_truncated` sticky del canal `c` de `drx_range_gate_quad_top`,
+// MISMO patrón que STATUS/overrun (el latch vive en `drx_range_gate`, este
+// bloque solo lo expone y pulsa `ray_truncated_clear[c]`) — registro propio,
+// no bits nuevos de STATUS: es un diagnóstico distinto, con su propia fuente
+// y su propio clear en RTL (`drx_range_gate.clear_truncated`, no comparte
+// `clear`/`overrun`).
 
 `ifndef DRX_AXIL_REGS_SV
 `define DRX_AXIL_REGS_SV
@@ -114,6 +122,11 @@ module drx_axil_regs
     // Overflow de saturación del DDC, por canal (ver cabecera: sticky
     // mantenido dentro de este módulo, no en la fuente).
     input logic [N_CH-1:0] overflow_in,
+
+    // BITE de tiempo muerto (D-14/v6), por canal -- mismo patrón que
+    // overrun_in/overrun_clear (latch en la fuente, ver cabecera).
+    input  logic [N_CH-1:0] ray_truncated_in,
+    output logic [N_CH-1:0] ray_truncated_clear,
 
     // Z2 (v3, D-13) — registro -> planta, hacia drx_timing_engine.
     output logic        timing_enable,
@@ -207,6 +220,16 @@ module drx_axil_regs
   always_comb begin
     for (int c = 0; c < N_CH; c++) begin
       overrun_clear[c] = write_commit && (awaddr_r == REG_STATUS_ADDR) && wdata_r[c];
+    end
+  end
+
+  // `ray_truncated_clear[c]` (BITE, v6): mismo pulso combinacional de un
+  // ciclo que `overrun_clear`, sobre REG_GATE_TRUNCATED_ADDR en vez de
+  // REG_STATUS_ADDR -- ver la cabecera del módulo sobre por qué es un
+  // registro propio y no bits nuevos de STATUS.
+  always_comb begin
+    for (int c = 0; c < N_CH; c++) begin
+      ray_truncated_clear[c] = write_commit && (awaddr_r == REG_GATE_TRUNCATED_ADDR) && wdata_r[c];
     end
   end
 
@@ -392,6 +415,9 @@ module drx_axil_regs
       REG_CTRL_ADDR:    rdata_next[0] = mode_coarse_r;
       REG_STATUS_ADDR: begin
         for (int c = 0; c < N_CH; c++) rdata_next[c] = overrun_in[c];
+      end
+      REG_GATE_TRUNCATED_ADDR: begin
+        for (int c = 0; c < N_CH; c++) rdata_next[c] = ray_truncated_in[c];
       end
       REG_OVERFLOW_ADDR: begin
         for (int c = 0; c < N_CH; c++) rdata_next[c] = overflow_sticky_r[c];

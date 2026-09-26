@@ -46,11 +46,20 @@
 # ya reflejan también un `bins` fuera del techo físico de BRAM (ver
 # docs/implementacion/registros.md#z2-en-v5), sin bit nuevo -- el mismo
 # `valid` por lote de drx_timing_config_valid.sv ya incluía ese cuarto check.
-schema_version = 5
+#
+# v6 (25-sep-2026, más tarde) añade GATE_TRUNCATED: el BITE de tiempo muerto
+# que D-14 dejaba explícitamente abierto ("no hay hoy ningún contador ni bit
+# que distinga un tiempo muerto normal de un ray_start que llegó tarde y
+# truncó un rayo en curso"). Bit c es el `ray_truncated` sticky del canal c de
+# drx_range_gate_quad_top -- mismo patrón W1C que STATUS, registro propio (no
+# bits nuevos de STATUS/TIMING_STATUS) porque es un diagnóstico distinto con
+# su propia fuente y su propio clear en RTL (`clear_truncated`, no comparte
+# `clear` con `overrun`).
+schema_version = 6
 
 # Bytes direccionables: 2^addr_width = 128 B = 32 palabras de 32 bits. Las
-# primeras 20 palabras (0x00-0x4C) están implementadas (Z1 + Z2 v3/v5); el
-# resto (0x50 en adelante) queda reservado sin implementar (lee 0, escritura
+# primeras 21 palabras (0x00-0x50) están implementadas (Z1 + Z2 v3/v5/v6); el
+# resto (0x54 en adelante) queda reservado sin implementar (lee 0, escritura
 # sin efecto), sin diseñarlo ahora.
 addr_width = 7
 
@@ -177,3 +186,9 @@ name = "bins_high"
 offset = 0x4C
 access = "rw"
 doc = "Conteo de bins de range-gate del lote alto (Doppler). Mismas condiciones que bins_low."
+
+[[register]]
+name = "gate_truncated"
+offset = 0x50
+access = "w1c"
+doc = "Bit c: ray_truncated sticky del canal c de range-gate (drx_range_gate_quad_top.ray_truncated) -- BITE de D-14 (v6): se pone en 1 cuando un ray_start (D-14) llega con el puntero de escritura del canal c a mitad de rayo (tiempo muerto acumulado, o un PRI configurado más corto que bin_count) y descarta ese banco en curso sin emitirlo. Un ray_start que coincide con el wrap natural (el banco se completa por cuenta propia ese mismo ciclo) NO lo activa -- eso es operación normal, no un fallo. Mismo patrón W1C que status: escribir 1 en el bit c pulsa clear_truncated hacia el canal c de drx_range_gate; un truncamiento genuino el mismo ciclo que el clear gana. Registro propio, no bits nuevos de status/timing_status: es un diagnóstico distinto, con su propia fuente en RTL y su propio clear (no comparte clear con overrun). Bits >= N_CH leen 0."

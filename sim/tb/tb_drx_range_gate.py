@@ -40,6 +40,7 @@ async def _reset(dut) -> None:
     dut.m_ready.value = 1
     dut.clear.value = 0
     dut.ray_start.value = 0
+    dut.clear_truncated.value = 0
     for _ in range(3):
         await RisingEdge(dut.clk)
     dut.rst_n.value = 1
@@ -402,4 +403,110 @@ async def test_ray_start_con_tiempo_muerto_descarta_muestras_extra(dut):
     expected += [(400 + n, 400 + n + 2000, n == BINS_FINE - 1) for n in range(BINS_FINE)]
     assert received == expected, (
         "las muestras de tiempo muerto (900...) no deben colarse en ningún rayo"
+    )
+
+
+@cocotb.test()
+async def test_ray_truncated_no_se_dispara_en_wrap_natural(dut):
+    """BITE: un `ray_start` que coincide con el wrap natural (PRI bien
+    calibrado) es operación normal, no un truncamiento -- no debe activar
+    `ray_truncated`."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+    dut.bin_count.value = BINS_FINE
+
+    assert int(dut.ray_truncated.value) == 0, "arranca en alto sin haber corrido nada"
+
+    n_rays = 3
+    actions = []
+    for r in range(n_rays):
+        for n in range(BINS_FINE):
+            idx = r * BINS_FINE + n
+            if n == BINS_FINE - 1:
+                actions.append(("sample_and_start", idx))
+            else:
+                actions.append(("sample", idx))
+
+    await _feed_ray_start_and_collect(dut, actions)
+
+    assert int(dut.ray_truncated.value) == 0, (
+        "ray_truncated no debe dispararse cuando ray_start coincide con el wrap natural"
+    )
+
+
+@cocotb.test()
+async def test_ray_truncated_se_dispara_al_descartar_banco_en_curso(dut):
+    """BITE: un `ray_start` temprano (D-14, descarta un banco a medias)
+    tiene que dejar constancia en `ray_truncated`, sticky."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+    dut.bin_count.value = BINS_FINE
+
+    actions = (
+        [("sample", 100 + n) for n in range(3)]  # menos de BINS_FINE: rayo a medias
+        + [("ray_start",)]  # se descarta -- esto SÍ es un truncamiento real
+        + [("sample", 200 + n) for n in range(BINS_FINE)]  # rayo real, completo
+    )
+
+    await _feed_ray_start_and_collect(dut, actions)
+
+    assert int(dut.ray_truncated.value) == 1, (
+        "ray_truncated no se disparó al descartar un banco con datos reales a medias"
+    )
+
+
+@cocotb.test()
+async def test_clear_truncated_limpia_ray_truncated_y_permite_un_segundo_disparo(dut):
+    """`clear_truncated` (mapa de registros AXI-Lite) borra `ray_truncated`, y
+    un truncamiento genuino posterior se vuelve a ver -- mismo patrón que
+    `clear`/`overrun`, registro y puerto propios (ver cabecera del RTL)."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+    dut.bin_count.value = BINS_FINE
+
+    async def _truncate_mid_ray() -> None:
+        for n in range(3):
+            dut.s_valid.value = 1
+            dut.s_i.value = n
+            dut.s_q.value = n
+            await RisingEdge(dut.clk)
+        dut.s_valid.value = 0
+        dut.ray_start.value = 1
+        await RisingEdge(dut.clk)
+        dut.ray_start.value = 0
+        await RisingEdge(dut.clk)
+
+    await _truncate_mid_ray()
+    assert int(dut.ray_truncated.value) == 1, "precondición: truncamiento disparado"
+
+    dut.clear_truncated.value = 1
+    for _ in range(4):
+        await RisingEdge(dut.clk)
+        if int(dut.ray_truncated.value) == 0:
+            break
+    else:
+        raise AssertionError("clear_truncated no limpió ray_truncated en un margen razonable")
+    dut.clear_truncated.value = 0
+
+    await _truncate_mid_ray()
+    assert int(dut.ray_truncated.value) == 1, (
+        "ray_truncated no se volvió a disparar tras limpiarlo: no se rearmó"
+    )
+
+    # Un truncamiento genuino el mismo ciclo que `clear_truncated` tiene que
+    # ganar -- mismo argumento que ya prueba `overrun` frente a `clear`.
+    dut.clear_truncated.value = 1
+    for n in range(3):
+        dut.s_valid.value = 1
+        dut.s_i.value = n
+        dut.s_q.value = n
+        await RisingEdge(dut.clk)
+    dut.s_valid.value = 0
+    dut.ray_start.value = 1
+    await RisingEdge(dut.clk)
+    dut.ray_start.value = 0
+    dut.clear_truncated.value = 0
+    await RisingEdge(dut.clk)
+    assert int(dut.ray_truncated.value) == 1, (
+        "el set debe ganar sobre un clear_truncated concurrente"
     )

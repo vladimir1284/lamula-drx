@@ -20,6 +20,10 @@
 // `drx_timing_engine`) para todos los canales de un mismo radial. Reemplaza
 // `mode_coarse`, que ya no llega hasta `drx_range_gate` -- ver la cabecera de
 // ese fichero y D-15 en decisiones.md.
+//
+// `ray_truncated`/`clear_truncated` (BITE, 25-sep-2026): por canal, mismo
+// patrón array que `overrun`/`clear` -- cada canal descarta su propio banco
+// en curso de forma independiente, así que el BITE también es por canal.
 
 `ifndef DRX_RANGE_GATE_QUAD_TOP_SV
 `define DRX_RANGE_GATE_QUAD_TOP_SV
@@ -54,7 +58,11 @@ module drx_range_gate_quad_top
     // `ray_start` (D-14) es COMPARTIDO entre los N_CH canales, igual que
     // `bin_count`: un solo `pulse_trig` de `drx_timing_engine` marca el mismo
     // instante de disparo para todos los canales de un mismo radial.
-    input logic ray_start
+    input logic ray_start,
+
+    // BITE de tiempo muerto, por canal (ver la cabecera).
+    input  logic clear_truncated[N_CH],
+    output logic ray_truncated  [N_CH]
 );
 
   genvar gc;
@@ -82,7 +90,10 @@ module drx_range_gate_quad_top
           .clear  (clear[gc]),
           .overrun(overrun[gc]),
 
-          .ray_start(ray_start)
+          .ray_start(ray_start),
+
+          .clear_truncated(clear_truncated[gc]),
+          .ray_truncated  (ray_truncated[gc])
       );
     end
   endgenerate

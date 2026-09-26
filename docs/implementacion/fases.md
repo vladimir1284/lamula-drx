@@ -634,11 +634,12 @@ Trabajo:
 - Sincronización determinista entre el trigger y el inicio del gating. **Resuelto, 22-sep-2026**
   ([D-14](../alcance/decisiones.md#d-14)): `drx_range_gate` gana un puerto `ray_start`, cableado a
   `pulse_trig`, que resincroniza el corte de rayo con cada pulso de PRF (de cualquiera de los 2
-  lotes) — ver la entrada de más abajo. Lo que sigue sin resolver: cualquier diagnóstico de tiempo
-  muerto descartado (sin BITE propio todavía). El conteo de bins distinto por lote bajo/alto que
-  D-13/D-14 dejaban abierto **ya cerró** ([D-15](../alcance/decisiones.md#d-15), 25-sep-2026):
+  lotes) — ver la entrada de más abajo. El conteo de bins distinto por lote bajo/alto que D-13/D-14
+  dejaban abierto **ya cerró** ([D-15](../alcance/decisiones.md#d-15), 25-sep-2026):
   BINS_LOW/BINS_HIGH, un registro por lote, configurable en runtime (viene de DSP/RCP según el VCP)
-  — ver la entrada correspondiente más abajo.
+  — ver la entrada correspondiente más abajo. El diagnóstico de tiempo muerto descartado que D-14
+  dejaba explícitamente sin BITE propio **ya cerró también, 25-sep-2026 (más tarde):**
+  `ray_truncated`/GATE_TRUNCATED (mapa v6) — ver la entrada correspondiente más abajo.
 - Instrumentación en fabric: contador libre en un dominio de reloj distinto, para auto-medir jitter
   y periodo. Bloqueado en la práctica: `config/params.toml` no define ningún segundo dominio de
   reloj.
@@ -797,6 +798,10 @@ caracterizado; combinaciones ilegales rechazadas con el código correcto.
     `ray_start` que llegó tarde y truncó un rayo en curso — D-09 (PRF x rango) sigue sin aplicarse
     en RTL, aunque los otros dos checks de D-09 ya sí (ver la entrada siguiente).
 
+    **Actualización, 25-sep-2026: el conteo de bins por lote cerró con
+    [D-15](../alcance/decisiones.md#d-15) y el BITE de tiempo muerto cerró más tarde el mismo
+    día — ver las entradas correspondientes más abajo.** El lado Tx sigue sin resolver.
+
 !!! success "22-sep-2026 (más tarde): mitad de D-09 (checks autocontenidos) validada en RTL — mapa de registros v4"
     `rtl/drx_timing_config_valid.sv` (nuevo, puro combinacional, mismo patrón que `drx_saturate.sv`):
     valida que `pulse_width` esté en la tabla de `config/params.toml` y que quepa en su propio PRI
@@ -953,6 +958,57 @@ caracterizado; combinaciones ilegales rechazadas con el código correcto.
     sin relación con este cambio) y el diagnóstico de tiempo muerto/BITE que D-14 ya dejaba abierto.
     Tampoco se corrió P&R -- lógica combinacional adicional de bajo costo dentro de un módulo ya
     cerrado; la última cifra medida sigue siendo la de D-09/v4.
+
+!!! success "25-sep-2026 (más tarde): BITE de tiempo muerto — `ray_truncated`, mapa de registros v6"
+    Punto que D-14 dejaba explícitamente abierto: "no hay hoy ningún contador ni bit de BITE que
+    distinga un tiempo muerto normal de un `ray_start` que llegó tarde y truncó un rayo en curso".
+    `rtl/drx_range_gate.sv` gana un puerto de salida `ray_truncated` (sticky, por canal) y uno de
+    entrada `clear_truncated` (write-1-to-clear, PROPIO -- no comparte `clear` con `overrun`, son
+    dos diagnósticos distintos con registros distintos del mapa). Se dispara cuando `ray_start`
+    encuentra el banco en curso con datos reales que no se completan ese mismo ciclo -- NO es
+    simplemente `wr_ptr != 0` (ver la cabecera del RTL): en el ciclo exacto del wrap natural,
+    `wr_ptr` sigue leyendo `last_idx`, no 0, porque la asignación a 0 del bloque de escritura
+    todavía no se ha "visto" en ese mismo `always_ff`. La condición real excluye el caso en que el
+    banco se completa por cuenta propia ese ciclo (`s_valid && wr_ptr == last_idx`).
+
+    `rtl/drx_range_gate_quad_top.sv` expone los dos puertos por canal, mismo patrón array que
+    `overrun`/`clear`. `config/registers.toml` sube a v6: GATE_TRUNCATED (offset 0x50, w1c, bit `c`
+    por canal), registro propio y no bits nuevos de STATUS -- mismo criterio que ya separó OVERFLOW
+    de STATUS en v2. `rtl/drx_axil_regs.sv`/`rtl/drx_top.sv` lo cablean con el mismo patrón de
+    empaquetado/desempaquetado que ya usa `overrun`. Detalle completo, incluida la decisión de dónde
+    vive el latch, en [`registros.md#z2-en-v6`](registros.md#z2-en-v6).
+
+    Es un cambio aditivo sobre RTL ya cerrado bajo [D-12](../alcance/decisiones.md#d-12), mismo
+    argumento que D-14/D-15: con `ray_start`/`clear_truncated` en bajo (el estado de toda la matriz
+    L1) el comportamiento es bit a bit idéntico al de antes. Verificación: 3 tests L0 nuevos en
+    `sim/tb/tb_drx_range_gate.py` (un `ray_start` alineado con el wrap natural NO dispara
+    `ray_truncated` -- este caso concreto falló en el primer intento, ver el hallazgo de abajo; uno
+    que descarta un banco con datos reales a medias SÍ lo dispara, sticky; `clear_truncated` lo
+    limpia y permite un segundo disparo, con el mismo set-gana-sobre-clear-concurrente que ya prueba
+    `overrun`) -- 11/11 tests del módulo en verde. `sim/tb/tb_drx_axil_regs.py` gana el mismo patrón
+    de lectura directa + pulso de clear que ya cubre STATUS, aplicado a GATE_TRUNCATED, y corrige
+    `REGS_VERSION`/la dirección de "reservado" (0x50 ya no lo es, ahora 0x54). `make check` en verde
+    (108 tests, mismo número: son sub-tests de cocotb). **Reconfirmado contra xsim real**
+    (`tb_l1_ddc_range_tri.sv`, con una comprobación nueva -- `$fatal` si `ray_truncated` se dispara
+    alguna vez con `ray_start` atado a 0 en toda la cadena): fine, 288/288/288 muestras en tolerancia
+    D-12 y TLAST bit a bit en los tres canales; coarse, 144/144/144 -- las mismas cifras que ya
+    medía D-15, sin ningún `ray_truncated` espurio en ninguno de los dos modos.
+
+    **Hallazgo real de esta sesión:** la primera versión de la condición de disparo era literalmente
+    `ray_start && wr_ptr != 0`, y falló en el primer intento de L0
+    (`test_ray_truncated_no_se_dispara_en_wrap_natural`, no por inspección): en el ciclo en que
+    `ray_start` coincide con el wrap natural (PRI bien calibrado), `wr_ptr` en ESE ciclo sigue
+    valiendo `last_idx` -- el `wr_ptr <= '0` del bloque de escritura es una asignación no bloqueante
+    sobre el mismo registro que la condición lee, así que "no se ve" hasta el ciclo siguiente. La
+    condición corregida excluye explícitamente el caso en que el banco se completa por cuenta propia
+    ese mismo ciclo. Corregido antes de tocar xsim real, así que la reconfirmación de arriba ya
+    corrió con la lógica buena.
+
+    Con esto, Z2 no tiene más entregables de RTL/firmware pendientes dentro de su propio alcance
+    (sin caer en Z4): lo que queda abierto -- instrumentación de jitter en fabric (bloqueada, sin
+    segundo dominio de reloj en `config/params.toml`), pines XDC de `trig_out` (sin referencia de
+    pinout física verificada de los Pmod de la ZedBoard en este repo) y el hito ZM2 en sí (matriz en
+    PLACA con osciloscopio) -- depende de hardware real, no de más RTL o modelo.
 
 ## Z3 — Lectores SSI + tagging az/el (semanas 14–18) { #z3 }
 

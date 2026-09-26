@@ -1,7 +1,7 @@
-# Mapa de registros AXI-Lite — v5 (Z1 + Z2)
+# Mapa de registros AXI-Lite — v6 (Z1 + Z2)
 
 Hasta el 19-sep-2026 este entregable de Z1 no existía en absoluto — ni RTL ni documento. Esta
-página describe el mapa **v5** (25-sep-2026): lo que `drx_top` controla y observa hoy vía
+página describe el mapa **v6** (25-sep-2026): lo que `drx_top` controla y observa hoy vía
 `drx_axil_regs`, y lo que deliberadamente queda fuera todavía. La sección de más abajo explica por
 qué "vía AXI-Lite" no significa todavía "alcanzable desde firmware real".
 
@@ -9,8 +9,9 @@ qué "vía AXI-Lite" no significa todavía "alcanzable desde firmware real".
 [El mapa](#el-mapa) y [Z2 en v3](#z2-en-v3) más abajo. **v4** usa 2 de los bits que v3 dejaba
 reservados de TIMING_STATUS para los checks autocontenidos de D-09 — ver [Z2 en v4](#z2-en-v4).
 **v5** añade BINS_LOW/BINS_HIGH (conteo de bins de range-gate por lote, [D-15](../alcance/decisiones.md#d-15))
-y con eso cierra D-09 del todo — ver [Z2 en v5](#z2-en-v5). v1/v2 (Z1, 19/20-sep-2026) siguen
-descritas tal cual en la sección [Historial](#historial-v1v2).
+y con eso cierra D-09 del todo — ver [Z2 en v5](#z2-en-v5). **v6** añade GATE_TRUNCATED, el BITE de
+tiempo muerto que D-14 dejaba explícitamente abierto — ver [Z2 en v6](#z2-en-v6). v1/v2 (Z1,
+19/20-sep-2026) siguen descritas tal cual en la sección [Historial](#historial-v1v2).
 
 Fuente única de verdad: `config/registers.toml`. `tools/gen_registers.py` genera
 `rtl/generated/drx_regs_pkg.sv` (RTL) y `fw/include/drx_regs.h` (firmware) desde ese fichero —
@@ -242,6 +243,58 @@ Lo que esto NO hace, deliberadamente: no se corrió P&R con este cambio (lógica
 adicional dentro de un módulo ya cerrado, de bajo costo — una comparación de 32 bits más por
 instancia — la última cifra medida sigue siendo la de v4/D-09) y no toca el código de error del
 contrato hacia el DSP (sigue siendo alcance de Z4, P-15).
+
+### Z2 en v6 { #z2-en-v6 }
+
+**25-sep-2026 (más tarde).** Cierra el BITE de tiempo muerto que [D-14](../alcance/decisiones.md#d-14)
+dejaba explícitamente abierto: hasta esta sesión, un `ray_start` que descartaba un banco de
+`drx_range_gate` a medias (tiempo muerto acumulado, o un PRI configurado más corto que `bin_count`)
+lo hacía en completo silencio — nada en el mapa de registros distinguía eso de la operación normal
+(el wrap natural del propio conteo de bins).
+
+Decisiones de esta sesión:
+
+- **El latch vive en `drx_range_gate`, no en `drx_axil_regs` — mismo criterio que STATUS/overrun,
+  no que OVERFLOW/TIMING_STATUS.** `drx_range_gate` ya conoce `wr_ptr` ciclo a ciclo; recalcular la
+  misma condición un nivel arriba, a partir de señales derivadas, sería duplicar lógica sin
+  necesidad. Puerto nuevo por canal: `ray_truncated` (salida, sticky) y `clear_truncated` (entrada,
+  write-1-to-clear).
+- **`clear_truncated` es un puerto PROPIO, no reutiliza `clear` (el de `overrun`).** Son dos
+  diagnósticos distintos con registros distintos del mapa (STATUS vs. GATE_TRUNCATED); si
+  compartieran el mismo `clear`, limpiar uno limpiaría el otro sin que firmware lo pidiera.
+- **GATE_TRUNCATED es un registro propio (offset nuevo, 0x50), no bits nuevos de STATUS.** Mismo
+  argumento que ya separó OVERFLOW de STATUS en v2: son fuentes y semánticas distintas, aunque el
+  patrón sticky+W1C sea idéntico.
+- **La condición de disparo NO es simplemente `wr_ptr != 0`.** Un `ray_start` que coincide con el
+  ciclo exacto en que el banco se completa por cuenta propia (`s_valid && wr_ptr == last_idx`) deja
+  `wr_ptr` en `last_idx` (no en 0) hasta que esa misma asignación no bloqueante "se ve" — leerlo tal
+  cual habría marcado como truncamiento un wrap perfectamente normal. La condición real es "`wr_ptr`
+  != 0 Y el banco no se completa por cuenta propia este mismo ciclo" — ver la cabecera de
+  `rtl/drx_range_gate.sv` para el razonamiento completo. Se encontró exactamente este falso positivo
+  al correr L0 la primera vez (`test_ray_truncated_no_se_dispara_en_wrap_natural`), no por
+  inspección.
+- **`schema_version` sube a 6** por el mismo criterio que las subidas anteriores: un registro nuevo
+  que firmware necesita poder detectar (offsets 0x54 en adelante siguen reservados).
+
+Verificación: es una característica de interlock de hardware, no un bloque numérico con oráculo de
+valores — mismo argumento que ya justificaba no tener modelo dorado para `ray_start`/D-14. Tres
+tests L0 nuevos en `sim/tb/tb_drx_range_gate.py` (un `ray_start` alineado con el wrap natural NO
+dispara `ray_truncated`; uno que descarta un banco con datos reales a medias SÍ lo dispara y es
+sticky; `clear_truncated` lo limpia y permite un segundo disparo, con el mismo set-gana-sobre-clear-
+concurrente que ya prueba `overrun`) — 11/11 tests del módulo en verde. `sim/tb/tb_drx_axil_regs.py`
+gana el mismo patrón de lectura directa + pulso de clear que ya cubre STATUS, aplicado a
+GATE_TRUNCATED, y su test de "dirección reservada" se corrigió a 0x54 (0x50 ya no lo es).
+`sim/tb_sv/tb_l1_ddc_range_tri.sv` gana una comprobación nueva (`$fatal` si `ray_truncated` se
+dispara alguna vez con `ray_start` atado a 0 en toda la cadena) y se reconfirmó completa contra xsim
+real (`clear_truncated` atado a 0): fine, 288/288/288 muestras en tolerancia D-12 y TLAST bit a bit
+en los tres canales; coarse, 144/144/144 -- las mismas cifras que ya medía D-15, sin ningún
+`ray_truncated` espurio en ninguno de los dos modos. `make check` en verde (108 tests, mismo
+número: son sub-tests de cocotb).
+
+Lo que esto NO hace, deliberadamente: no se corrió P&R con este cambio (mismo argumento que v5 —
+lógica de bajo costo dentro de un módulo ya cerrado) y no toca el código de error del contrato hacia
+el DSP (Z4, P-15). Tampoco resuelve la instrumentación de jitter en fabric ni los pines XDC de
+`trig_out` — ver [Deliberadamente fuera de v3](#deliberadamente-fuera-de-v3).
 
 ### Semántica del slave
 

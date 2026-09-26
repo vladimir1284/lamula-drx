@@ -114,6 +114,8 @@ module tb_l1_ddc_range_tri;
   logic                      gate_last [N_CH];
   logic                      gate_clear[N_CH];
   logic                      gate_overrun[N_CH];
+  logic                      gate_clear_truncated[N_CH];
+  logic                      gate_ray_truncated  [N_CH];
 
   logic mode_coarse;
 
@@ -141,6 +143,10 @@ module tb_l1_ddc_range_tri;
       // se ata a 0, igual que el resto de la cadena L1 no ejercita reset
       // parcial de status.
       assign gate_clear[gr] = 1'b0;
+      // BITE de tiempo muerto (v6, ray_truncated/clear_truncated), mismo
+      // argumento: ya lo cubre tb_drx_range_gate.py/tb_drx_axil_regs.py en
+      // L0, aquí se ata a 0.
+      assign gate_clear_truncated[gr] = 1'b0;
     end
   endgenerate
 
@@ -194,7 +200,10 @@ module tb_l1_ddc_range_tri;
       .clear  (gate_clear),
       .overrun(gate_overrun),
 
-      .ray_start(gate_ray_start)
+      .ray_start(gate_ray_start),
+
+      .clear_truncated(gate_clear_truncated),
+      .ray_truncated  (gate_ray_truncated)
   );
 `else
   // Mismo razonamiento que tb_l1_ddc_tri.sv: sin DUT no hay nada que
@@ -212,10 +221,12 @@ module tb_l1_ddc_range_tri;
       assign gate_q[gu]       = '0;
       assign gate_last[gu]    = 1'b0;
       assign gate_overrun[gu] = 1'b0;
+      assign gate_ray_truncated[gu] = 1'b0;
 
       logic unused_no_dut_ch;
       assign unused_no_dut_ch = &{1'b0, stim_valid[gu], stim_last[gu], stim_done[gu], stim_data[gu],
-                                   gate_ready[gu], gate_clear[gu], ddc_valid[gu], ddc_i[gu], ddc_q[gu]};
+                                   gate_ready[gu], gate_clear[gu], gate_clear_truncated[gu],
+                                   ddc_valid[gu], ddc_i[gu], ddc_q[gu]};
     end
   endgenerate
 
@@ -339,6 +350,17 @@ module tb_l1_ddc_range_tri;
     for (int c = 0; c < N_CH; c++) begin
       if (gate_overrun[c]) begin
         $fatal(1, "L1 range-tri: canal %0d, overrun del ping-pong con el lector siempre listo: bug de framing",
+               c);
+      end
+    end
+
+    // BITE de tiempo muerto (v6): `ray_start` está atado a 0 en toda esta
+    // cadena (ver la cabecera), así que `ray_truncated` no debería dispararse
+    // nunca -- confirma que el puerto nuevo no introduce falsos positivos,
+    // no solo que compila.
+    for (int c = 0; c < N_CH; c++) begin
+      if (gate_ray_truncated[c]) begin
+        $fatal(1, "L1 range-tri: canal %0d, ray_truncated con ray_start atado a 0: falso positivo del BITE",
                c);
       end
     end

@@ -98,6 +98,13 @@
 // `pulse_width`) hacia `drx_range_gate_quad_top`. El techo físico (BRAM real,
 // BINS_MODE_FINE) se valida en `drx_timing_config_valid.sv`, no aquí -- ver
 // decisiones.md#d-15.
+//
+// BITE de tiempo muerto (25-sep-2026, más tarde, mapa v6): el párrafo de D-14
+// de arriba ("el tiempo muerto... se descarta en silencio, sin ningún
+// contador de diagnóstico") ya no aplica -- `drx_range_gate_quad_top` gana
+// `ray_truncated`/`clear_truncated` por canal, expuestos como GATE_TRUNCATED
+// en el mapa de registros (mismo patrón W1C que STATUS/overrun, registro
+// propio). Ver decisiones.md#d-14 (actualización) y registros.md#z2-en-v6.
 
 `ifndef DRX_TOP_SV
 `define DRX_TOP_SV
@@ -151,6 +158,8 @@ module drx_top
   logic                      gate_last   [N_CH];
   logic                      gate_overrun[N_CH];
   logic                      gate_clear  [N_CH];
+  logic                      gate_ray_truncated  [N_CH];
+  logic                      gate_clear_truncated[N_CH];
 
   drx_heartbeat #(
       .DIV(HEARTBEAT_DIV)
@@ -176,6 +185,19 @@ module drx_top
 
   always_comb begin
     for (int c = 0; c < N_CH; c++) gate_clear[c] = gate_clear_packed[c];
+  end
+
+  // Mismo empaquetado, para el BITE de tiempo muerto (GATE_TRUNCATED, v6) --
+  // ver la cabecera.
+  logic [N_CH-1:0] gate_ray_truncated_packed;
+  logic [N_CH-1:0] gate_clear_truncated_packed;
+
+  always_comb begin
+    for (int c = 0; c < N_CH; c++) gate_ray_truncated_packed[c] = gate_ray_truncated[c];
+  end
+
+  always_comb begin
+    for (int c = 0; c < N_CH; c++) gate_clear_truncated[c] = gate_clear_truncated_packed[c];
   end
 
   // Mismo empaquetado que arriba, para el overflow de saturación del DDC
@@ -239,6 +261,9 @@ module drx_top
       .overrun_clear(gate_clear_packed),
 
       .overflow_in(ddc_overflow_packed),
+
+      .ray_truncated_in   (gate_ray_truncated_packed),
+      .ray_truncated_clear(gate_clear_truncated_packed),
 
       .timing_enable   (timing_enable),
       .prf_div_low     (prf_div_low),
@@ -383,7 +408,11 @@ module drx_top
       .overrun(gate_overrun),
 
       // D-14: cada pulso de PRF (lote bajo o alto) resetea el corte de rayo.
-      .ray_start(timing_pulse_trig)
+      .ray_start(timing_pulse_trig),
+
+      // BITE de tiempo muerto (v6, ver la cabecera del fichero).
+      .clear_truncated(gate_clear_truncated),
+      .ray_truncated  (gate_ray_truncated)
   );
 
   // Un solo bit, registrado, que depende de toda la cadena — ver la cabecera
@@ -397,7 +426,7 @@ module drx_top
   always_comb begin
     debug_probe_xor = timing_batch_sel ^ timing_tx_gate ^ (^timing_pulse_width);
     for (int c = 0; c < N_CH; c++) begin
-      debug_probe_xor ^= gate_valid[c] ^ gate_last[c] ^ gate_overrun[c]
+      debug_probe_xor ^= gate_valid[c] ^ gate_last[c] ^ gate_overrun[c] ^ gate_ray_truncated[c]
           ^ (^gate_i[c]) ^ (^gate_q[c]);
     end
   end

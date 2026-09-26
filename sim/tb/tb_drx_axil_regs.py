@@ -39,9 +39,10 @@ REG_TRIG_DELAY_ADDR = [0x28, 0x2C, 0x30, 0x34]
 REG_TRIG_WIDTH_ADDR = [0x38, 0x3C, 0x40, 0x44]
 REG_BINS_LOW_ADDR = 0x48
 REG_BINS_HIGH_ADDR = 0x4C
-REG_RESERVED_ADDR = 0x50  # primera palabra sin implementar desde v5 (D-15)
+REG_GATE_TRUNCATED_ADDR = 0x50
+REG_RESERVED_ADDR = 0x54  # primera palabra sin implementar desde v6 (BITE de D-14)
 
-REGS_VERSION = 5
+REGS_VERSION = 6
 
 
 async def _reset(dut) -> None:
@@ -57,6 +58,7 @@ async def _reset(dut) -> None:
     dut.s_axi_rready.value = 1
     dut.overrun_in.value = 0
     dut.overflow_in.value = 0
+    dut.ray_truncated_in.value = 0
     dut.radial_done_in.value = 0
     dut.config_invalid_low_in.value = 0
     dut.config_invalid_high_in.value = 0
@@ -199,6 +201,65 @@ async def test_status_write_1_to_clear_pulsa_overrun_clear(dut):
 
     await RisingEdge(dut.clk)
     assert int(dut.overrun_clear.value) == 0, "el pulso de clear dura un solo ciclo"
+
+
+@cocotb.test()
+async def test_gate_truncated_lee_ray_truncated_in_directo(dut):
+    """GATE_TRUNCATED (BITE de D-14, v6) refleja `ray_truncated_in` bit a bit,
+    canal a canal -- mismo patrón que STATUS/overrun, registro propio."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    assert await axil_read(dut, REG_GATE_TRUNCATED_ADDR) == 0
+
+    dut.ray_truncated_in.value = 0b010
+    await RisingEdge(dut.clk)
+    assert await axil_read(dut, REG_GATE_TRUNCATED_ADDR) == 0b010
+
+    dut.ray_truncated_in.value = 0b111
+    await RisingEdge(dut.clk)
+    assert await axil_read(dut, REG_GATE_TRUNCATED_ADDR) == 0b111
+
+
+@cocotb.test()
+async def test_gate_truncated_write_1_to_clear_pulsa_ray_truncated_clear(dut):
+    """Escribir 1 en un bit de GATE_TRUNCATED pulsa `ray_truncated_clear` UN
+    ciclo en ese canal -- mismo patrón que STATUS/overrun_clear, sin pisar ese
+    registro (son puertos y direcciones distintos)."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    assert int(dut.ray_truncated_clear.value) == 0
+
+    dut.s_axi_awaddr.value = REG_GATE_TRUNCATED_ADDR
+    dut.s_axi_awvalid.value = 1
+    dut.s_axi_wdata.value = 0b101  # limpiar canales 0 y 2, dejar el 1 intacto
+    dut.s_axi_wvalid.value = 1
+
+    pulsed = {c: False for c in range(N_CH)}
+    aw_pending = True
+    w_pending = True
+    for _ in range(8):
+        aw_fires = aw_pending and int(dut.s_axi_awready.value)
+        w_fires = w_pending and int(dut.s_axi_wready.value)
+        await RisingEdge(dut.clk)
+        if aw_fires:
+            dut.s_axi_awvalid.value = 0
+            aw_pending = False
+        if w_fires:
+            dut.s_axi_wvalid.value = 0
+            w_pending = False
+        clear_val = int(dut.ray_truncated_clear.value)
+        for c in range(N_CH):
+            if clear_val & (1 << c):
+                pulsed[c] = True
+
+    assert pulsed == {0: True, 1: False, 2: True}, (
+        f"ray_truncated_clear no pulsó exactamente en los canales escritos: {pulsed}"
+    )
+
+    await RisingEdge(dut.clk)
+    assert int(dut.ray_truncated_clear.value) == 0, "el pulso de clear dura un solo ciclo"
 
 
 @cocotb.test()
