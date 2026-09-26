@@ -22,12 +22,14 @@ El runner de CI con Vivado (`[self-hosted, vivado]`) **se montó el 21-sep-2026*
 de desarrollo, registrada como runner, `HAS_VIVADO_RUNNER=true`. El job `gateware` ya corre de verdad
 en CI, no solo a mano: `substrato` y la síntesis+bitstream de `zedboard` cierran verdes (WNS = 2,489
 ns). El bloqueador que dejaba ZM0 sin cumplir —`fsbl.elf`/`drx_app.elf` inexistentes— se cerró a
-mano el 26-sep-2026 (BSP/FSBL vía Vitis, detalle en «Lo primero que hay que hacer» más abajo):
-`tools/make_boot.sh` ya no falla y `BOOT.BIN` salió reproducible byte a byte. **ZM0 tal como lo
-define `docs/implementacion/fases.md`** («`git push` produce un `BOOT.BIN` byte a byte sin
-intervención humana») **todavía no está confirmado**: `.github/workflows/ci.yml` ya tiene los pasos
-de Vitis añadidos (26-sep), pero nadie ha visto un `git push` real completar ese camino en el runner
-de CI todavía — es la única verificación que falta, no diseño pendiente. De paso se encontraron y
+mano el 26-sep-2026 (BSP/FSBL vía Vitis, detalle más abajo). **ZM0 tal como lo define
+`docs/implementacion/fases.md`** («`git push` produce un `BOOT.BIN` byte a byte sin intervención
+humana») **quedó confirmado el 26-sep-2026**: el push del propio commit de docs de Z2 (`8b3302a`)
+disparó el job `ci` en el runner `[self-hosted, vivado]` (run 36262739882, 26m49s) y las cinco etapas
+corrieron solas de punta a punta — síntesis+implementación, exportar XSA, BSP/FSBL/app vía Vitis,
+verificación de `BOOT.BIN` reproducible y `upload-artifact` (`gateware-zedboard`) — todas verdes, sin
+tocar la máquina. Ya no falta ninguna verificación para ZM0; lo que sigue (firmware real de Z4,
+puente para ZU9) es trabajo nuevo, no cierre de este hito. De paso se encontraron y
 corrigieron tres bugs reales de infraestructura que nadie había ejercitado antes (lint de HDL
 desincronizado del Makefile, DRC de bitstream bloqueando `debug_probe`, nombre de archivo equivocado
 en `make_boot.sh`) y se sacó `zu9` de la matriz de CI: este Vivado no tiene el device pack de Zynq
@@ -147,14 +149,16 @@ de ZedBoard y el project plan original de 34 semanas para la ZU9.
 
 ## Lo primero que hay que hacer
 
-1. Confirmar ZM0 con un `git push` real: `.github/workflows/ci.yml` ya tiene los pasos de XSA +
-   `tools/build_vitis.sh` + `tools/make_boot.sh` (26-sep-2026, ver el cierre de BSP/FSBL más abajo),
-   pero nadie ha visto ese camino completo correr en el runner de CI todavía — solo a mano en esta
-   máquina. Es verificación, no diseño pendiente.
-2. Puente equivalente para la ZU9 (`zynq_ultra_ps_e`, IP distinta de `processing_system7`) — sin
+1. Puente equivalente para la ZU9 (`zynq_ultra_ps_e`, IP distinta de `processing_system7`) — sin
    diseñar, se hace cuando haga falta. Cuando se retome: este Vivado 2022.2 tampoco tiene el device
    pack de Zynq UltraScale+ instalado (ver A11 en `pendientes.md`), así que instalarlo es requisito
    previo a cualquier síntesis contra `xczu9eg-ffvb1156-2-e`, no solo al diseño del puente.
+
+**Confirmar ZM0 con un `git push` real** ya **no** está en esta lista: confirmado el 26-sep-2026. El
+push de `8b3302a` disparó el job `ci` en el runner `[self-hosted, vivado]` y las cinco etapas del
+camino completo (síntesis+impl → XSA → BSP/FSBL/app vía Vitis → `BOOT.BIN` reproducible →
+`upload-artifact`) corrieron solas y en verde (run 36262739882, 26m49s). Detalle en la sección de
+Z0 más arriba.
 
 **BSP/FSBL vía Vitis** ya **no** está en esta lista: cerrado a mano el 26-sep-2026.
 `tcl/gen_bsp.tcl` + `tools/build_vitis.sh` (nuevos) generan BSP/FSBL/`drx_app` con `xsct` desde el
