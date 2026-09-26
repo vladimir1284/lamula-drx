@@ -15,22 +15,30 @@
 // falta un generador de vectores nuevo. Lo que sí es nuevo es el criterio de
 // `m_last`, que no necesita fichero de oráculo.
 //
-// `BINS_FINE`/`BINS_COARSE` de `drx_range_gate_quad_top` van a `L1TestBins*`
-// (pequeños), NO a `BINS_MODE_FINE`/`BINS_MODE_COARSE` (3689/1844) — hallazgo
-// de la primera corrida real de este fichero: con el rayo a profundidad real,
-// el ping-pong no entrega NADA hasta llenar el primer banco entero, y estos
-// manifiestos (heredados de `tb_l1_ddc_tri.sv`, que compara muestra a muestra
-// suelta) solo traen 315/157 muestras decimadas — muy por debajo de 3689. El
-// comparador se habría quedado en `checked=0` para siempre, sin llegar nunca
-// a `done`, y el único límite real habría sido `TimeoutCycles` de más abajo:
-// a la velocidad medida de xsim con esta IP real (~15 ciclos/s en esta
-// máquina, medida contra el propio `tb_l1_ddc_tri.sv`), eso son >70 horas, no
-// un cuelgue. La cuenta bit a bit de `drx_range_gate` a la profundidad REAL
-// (3689/1844) ya está demostrada, exhaustiva y rápida, en
-// `sim/tb/tb_drx_range_gate.py` sobre Verilator (L0) — este fichero, en xsim,
-// demuestra otra cosa: que la IP real de Xilinx, no un generador sintético,
-// alimenta correctamente el framing y el `m_last` cae donde toca, con
-// varios rayos completos dentro de los mismos manifiestos ya existentes.
+// `BINS_MAX` de `drx_range_gate_quad_top` va a `L1TestBinsFine` (pequeño), NO
+// a `BINS_MODE_FINE` (3689) — hallazgo de la primera corrida real de este
+// fichero: con el rayo a profundidad real, el ping-pong no entrega NADA hasta
+// llenar el primer banco entero, y estos manifiestos (heredados de
+// `tb_l1_ddc_tri.sv`, que compara muestra a muestra suelta) solo traen 315/157
+// muestras decimadas — muy por debajo de 3689. El comparador se habría
+// quedado en `checked=0` para siempre, sin llegar nunca a `done`, y el único
+// límite real habría sido `TimeoutCycles` de más abajo: a la velocidad medida
+// de xsim con esta IP real (~15 ciclos/s en esta máquina, medida contra el
+// propio `tb_l1_ddc_tri.sv`), eso son >70 horas, no un cuelgue. La cuenta bit
+// a bit de `drx_range_gate` a la profundidad REAL (3689) ya está demostrada,
+// exhaustiva y rápida, en `sim/tb/tb_drx_range_gate.py` sobre Verilator (L0)
+// — este fichero, en xsim, demuestra otra cosa: que la IP real de Xilinx, no
+// un generador sintético, alimenta correctamente el framing y el `m_last` cae
+// donde toca, con varios rayos completos dentro de los mismos manifiestos ya
+// existentes.
+//
+// D-15 (25-sep-2026): `drx_range_gate_quad_top` ya no toma `mode_coarse` --
+// toma `bin_count` (registro). Este testbench no tiene motor de timing de Z2
+// (solo DDC + gating), así que sigue derivando `bin_count` del mismo
+// `+mode=` plusarg de siempre (`L1TestBinsFine`/`L1TestBinsCoarse`), calculado
+// localmente en vez de recibir el registro real -- ver `gate_bins` más abajo.
+// `mode_coarse` sigue existiendo para `drx_ddc_quad_top` (decimación), que sí
+// lo necesita.
 //
 // `m_ready` va fijo a 1 en las tres salidas: el backpressure real y el
 // disparo de `overrun` ya los cubre `sim/tb/tb_drx_range_gate.py` en L0, con
@@ -115,6 +123,12 @@ module tb_l1_ddc_range_tri;
     mode_coarse = (mode_arg != 0);
   end
 
+  // D-15: `bin_count` de `drx_range_gate_quad_top` ya no es `mode_coarse` --
+  // este testbench no tiene motor de timing de Z2 que lo alimente en runtime,
+  // así que lo deriva del mismo `+mode=` de siempre (ver la cabecera).
+  logic [31:0] gate_bins;
+  assign gate_bins = mode_coarse ? 32'(L1TestBinsCoarse) : 32'(L1TestBinsFine);
+
   genvar gr;
   generate
     for (gr = 0; gr < N_CH; gr = gr + 1) begin : g_ready
@@ -160,8 +174,7 @@ module tb_l1_ddc_range_tri;
 
   drx_range_gate_quad_top #(
       .N_CH(N_CH),
-      .BINS_FINE  (L1TestBinsFine),
-      .BINS_COARSE(L1TestBinsCoarse)
+      .BINS_MAX(L1TestBinsFine)
   ) u_gate (
       .clk (clk),
       .rst_n(rst_n),
@@ -170,7 +183,7 @@ module tb_l1_ddc_range_tri;
       .s_i    (ddc_i),
       .s_q    (ddc_q),
 
-      .mode_coarse(mode_coarse),
+      .bin_count(gate_bins),
 
       .m_valid(gate_valid),
       .m_ready(gate_ready),
@@ -207,7 +220,7 @@ module tb_l1_ddc_range_tri;
   endgenerate
 
   logic unused_no_dut;
-  assign unused_no_dut = &{1'b0, mode_coarse, gate_ray_start};
+  assign unused_no_dut = &{1'b0, mode_coarse, gate_ray_start, (^gate_bins)};
 
   initial begin
     $fatal(1, "tb_l1_ddc_range_tri: falta drx_ddc_quad_top (trabajo de Z1). Elabora con +define+DRX_HAVE_DDC cuando exista.");
@@ -242,10 +255,10 @@ module tb_l1_ddc_range_tri;
   // --- comparación de TLAST, una por canal ----------------------------------
   //
   // Sin fichero de oráculo: la posición de `m_last` dentro de un rayo es
-  // `L1TestBinsFine-1` / `L1TestBinsCoarse-1` muestras después del inicio —
-  // los mismos genéricos que se le pasan a `u_gate` arriba, no
-  // `BINS_MODE_FINE`/`BINS_MODE_COARSE` (ver el hallazgo de la cabecera) —,
-  // igual para los tres canales porque `mode_coarse` es compartido.
+  // `gate_bins-1` muestras después del inicio -- el mismo `bin_count` que
+  // recibe `u_gate` arriba, no `BINS_MODE_FINE`/`BINS_MODE_COARSE` (ver el
+  // hallazgo de la cabecera) --, igual para los tres canales porque
+  // `gate_bins` es compartido.
   genvar gt;
   generate
     for (gt = 0; gt < N_CH; gt = gt + 1) begin : g_tlast
@@ -254,8 +267,7 @@ module tb_l1_ddc_range_tri;
       int unsigned last_checked;
 
       logic expected_last;
-      assign expected_last = (ray_pos == (mode_coarse ?
-                               unsigned'(L1TestBinsCoarse - 1) : unsigned'(L1TestBinsFine - 1)));
+      assign expected_last = (ray_pos == unsigned'(gate_bins - 32'd1));
 
       always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin

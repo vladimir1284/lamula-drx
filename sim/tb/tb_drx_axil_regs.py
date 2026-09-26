@@ -37,9 +37,11 @@ REG_PULSE_WIDTH_ADDR = 0x20
 REG_N_PULSES_ADDR = 0x24
 REG_TRIG_DELAY_ADDR = [0x28, 0x2C, 0x30, 0x34]
 REG_TRIG_WIDTH_ADDR = [0x38, 0x3C, 0x40, 0x44]
-REG_RESERVED_ADDR = 0x48
+REG_BINS_LOW_ADDR = 0x48
+REG_BINS_HIGH_ADDR = 0x4C
+REG_RESERVED_ADDR = 0x50  # primera palabra sin implementar desde v5 (D-15)
 
-REGS_VERSION = 4
+REGS_VERSION = 5
 
 
 async def _reset(dut) -> None:
@@ -406,6 +408,24 @@ async def test_prf_div_low_high_rw_32_bits_completos(dut):
     assert int(dut.prf_div_high.value) == 0xABCD_0000
     assert await axil_read(dut, REG_PRF_DIV_LOW_ADDR) == 0x0000_1234
     assert await axil_read(dut, REG_PRF_DIV_HIGH_ADDR) == 0xABCD_0000
+
+
+@cocotb.test()
+async def test_bins_low_high_rw_32_bits_completos(dut):
+    """D-15: BINS_LOW/HIGH son registros RW de 32 bits completos, sin
+    empaquetar -- mismo patrón que PRF_DIV_LOW/HIGH."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    assert int(dut.bins_low.value) == 0
+    assert int(dut.bins_high.value) == 0
+
+    await axil_write(dut, REG_BINS_LOW_ADDR, 0x0000_0E71)
+    await axil_write(dut, REG_BINS_HIGH_ADDR, 0x0000_00E4)
+    assert int(dut.bins_low.value) == 0x0000_0E71
+    assert int(dut.bins_high.value) == 0x0000_00E4
+    assert await axil_read(dut, REG_BINS_LOW_ADDR) == 0x0000_0E71
+    assert await axil_read(dut, REG_BINS_HIGH_ADDR) == 0x0000_00E4
 
 
 @cocotb.test()

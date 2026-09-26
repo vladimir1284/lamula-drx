@@ -33,20 +33,20 @@ def test_un_lote_rechaza_conteos_no_positivos():
 
 def test_batch_config_valid_acepta_ancho_en_tabla_que_cabe_en_el_pri():
     assert timing.batch_config_valid(
-        PARAMS, prf_div=1000, pulse_width_cycles=200, prf_div_min_range=1
+        PARAMS, prf_div=1000, pulse_width_cycles=200, prf_div_min_range=1, bins=1, bins_max=1
     )
 
 
 def test_batch_config_valid_rechaza_ancho_fuera_de_tabla():
     assert not timing.batch_config_valid(
-        PARAMS, prf_div=1000, pulse_width_cycles=201, prf_div_min_range=1
+        PARAMS, prf_div=1000, pulse_width_cycles=201, prf_div_min_range=1, bins=1, bins_max=1
     )
 
 
 def test_batch_config_valid_rechaza_ancho_que_no_cabe_en_el_pri():
     # 200 SÍ está en la tabla, pero no cabe en un PRI de 100 ciclos.
     assert not timing.batch_config_valid(
-        PARAMS, prf_div=100, pulse_width_cycles=200, prf_div_min_range=1
+        PARAMS, prf_div=100, pulse_width_cycles=200, prf_div_min_range=1, bins=1, bins_max=1
     )
 
 
@@ -54,7 +54,9 @@ def test_batch_config_valid_no_levanta_excepcion_nunca():
     """A diferencia de `Batch`/`validate_batch`: es un oráculo booleano para
     comparar bit a bit contra RTL, no un validador que rechaza construcción."""
     assert (
-        timing.batch_config_valid(PARAMS, prf_div=0, pulse_width_cycles=0, prf_div_min_range=1)
+        timing.batch_config_valid(
+            PARAMS, prf_div=0, pulse_width_cycles=0, prf_div_min_range=1, bins=1, bins_max=1
+        )
         is False
     )
 
@@ -64,10 +66,26 @@ def test_batch_config_valid_rechaza_prf_div_bajo_el_piso_de_rango():
     un `pulse_width` legal y que cabe en su PRI igual se rechaza si `prf_div`
     no llega al piso de rango exigido."""
     assert not timing.batch_config_valid(
-        PARAMS, prf_div=499, pulse_width_cycles=200, prf_div_min_range=500
+        PARAMS, prf_div=499, pulse_width_cycles=200, prf_div_min_range=500, bins=1, bins_max=1
     )
     assert timing.batch_config_valid(
-        PARAMS, prf_div=500, pulse_width_cycles=200, prf_div_min_range=500
+        PARAMS, prf_div=500, pulse_width_cycles=200, prf_div_min_range=500, bins=1, bins_max=1
+    )
+
+
+def test_batch_config_valid_rechaza_bins_fuera_del_techo_fisico_de_bram():
+    """D-15: el conteo de bins es configurable por lote (viene de DSP/RCP según
+    el VCP), pero tiene un techo físico -- la profundidad real de la BRAM de
+    `drx_range_gate`. `bins=0` también se rechaza: un rayo de cero muestras no
+    tiene sentido y el RTL no puede representar `last_idx` para ese caso."""
+    assert not timing.batch_config_valid(
+        PARAMS, prf_div=1000, pulse_width_cycles=200, prf_div_min_range=1, bins=0, bins_max=3689
+    )
+    assert not timing.batch_config_valid(
+        PARAMS, prf_div=1000, pulse_width_cycles=200, prf_div_min_range=1, bins=3690, bins_max=3689
+    )
+    assert timing.batch_config_valid(
+        PARAMS, prf_div=1000, pulse_width_cycles=200, prf_div_min_range=1, bins=3689, bins_max=3689
     )
 
 
@@ -86,17 +104,22 @@ def test_batch_config_valid_con_los_pisos_reales_de_produccion():
     invariante contra un `prf_div` de otra escala.
     """
     div_1200hz = PARAMS.invariant["prf_div_min"]
+    bins_max = PARAMS.invariant["bins_mode_fine"]
     assert not timing.batch_config_valid(
         PARAMS,
         prf_div=div_1200hz,
         pulse_width_cycles=200,
         prf_div_min_range=PARAMS.prf_div_min_low,
+        bins=1,
+        bins_max=bins_max,
     )
     assert timing.batch_config_valid(
         PARAMS,
         prf_div=div_1200hz,
         pulse_width_cycles=200,
         prf_div_min_range=PARAMS.prf_div_min_high,
+        bins=1,
+        bins_max=bins_max,
     )
 
 

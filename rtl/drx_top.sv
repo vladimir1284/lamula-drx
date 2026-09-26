@@ -80,16 +80,24 @@
 // corrida) el comportamiento es bit a bit idéntico al de antes, así que no
 // hizo falta generar vectores nuevos del modelo dorado, solo reconfirmar
 // (xsim real) que `tb_l1_ddc_range_tri.sv` sigue en verde con el puerto
-// añadido. Lo que esto NO resuelve, a propósito: si `drx_range_gate` necesita
-// un conteo de bins distinto por lote (ya lo deja abierto D-13, sin relación
-// con esta sincronización); si `pulse_trig` debe disparar también
-// `vector_source`/algo del lado Tx (no existe ese lado todavía); y el tiempo
-// muerto entre el fin de un rayo real y el siguiente `ray_start` se descarta
-// en silencio, sin ningún contador de diagnóstico -- no hay hoy ningún BITE
-// que distinga "PRI bien calibrado" de "un `ray_start` llegó tarde y truncó
-// un rayo en curso". Esto es independiente de D-09 (PRF x rango), que desde
-// el 22-sep-2026 (más tarde) sí se aplica completo en RTL -- ver la cabecera
-// de `drx_timing_engine.sv`.
+// añadido. Lo que esto NO resuelve, a propósito: si `pulse_trig` debe
+// disparar también `vector_source`/algo del lado Tx (no existe ese lado
+// todavía); y el tiempo muerto entre el fin de un rayo real y el siguiente
+// `ray_start` se descarta en silencio, sin ningún contador de diagnóstico --
+// no hay hoy ningún BITE que distinga "PRI bien calibrado" de "un
+// `ray_start` llegó tarde y truncó un rayo en curso". Esto es independiente
+// de D-09 (PRF x rango), que desde el 22-sep-2026 (más tarde) sí se aplica
+// completo en RTL -- ver la cabecera de `drx_timing_engine.sv`.
+//
+// D-15 (25-sep-2026): el conteo de bins por lote que D-13/D-14 dejaban
+// abierto ya está resuelto -- `mode_coarse` deja de llegar a
+// `drx_range_gate_quad_top` (sigue yendo a `drx_ddc_quad_top`, que es quien
+// de verdad lo necesita para decimación). En su lugar, `bins_low`/`bins_high`
+// (registros AXI-Lite nuevos, mapa v5) alimentan `drx_timing_engine`, que
+// expone el conteo del lote ACTIVO (`timing_bins`, mismo mux que ya hace con
+// `pulse_width`) hacia `drx_range_gate_quad_top`. El techo físico (BRAM real,
+// BINS_MODE_FINE) se valida en `drx_timing_config_valid.sv`, no aquí -- ver
+// decisiones.md#d-15.
 
 `ifndef DRX_TOP_SV
 `define DRX_TOP_SV
@@ -190,6 +198,7 @@ module drx_top
   logic [31:0] prf_div_low, prf_div_high;
   logic [15:0] pulse_width_low, pulse_width_high;
   logic [15:0] n_pulses_low, n_pulses_high;
+  logic [31:0] bins_low, bins_high;
   logic [31:0] trig_delay_0, trig_delay_1, trig_delay_2, trig_delay_3;
   logic [31:0] trig_width_0, trig_width_1, trig_width_2, trig_width_3;
   logic        timing_radial_done;
@@ -238,6 +247,8 @@ module drx_top
       .pulse_width_high(pulse_width_high),
       .n_pulses_low    (n_pulses_low),
       .n_pulses_high   (n_pulses_high),
+      .bins_low        (bins_low),
+      .bins_high       (bins_high),
       .trig_delay_0    (trig_delay_0),
       .trig_delay_1    (trig_delay_1),
       .trig_delay_2    (trig_delay_2),
@@ -261,6 +272,7 @@ module drx_top
   // (`unused_nco_ready` en drx_ddc_top.sv).
   logic timing_pulse_trig, timing_batch_sel, timing_tx_gate;
   logic [15:0] timing_pulse_width;
+  logic [31:0] timing_bins;
 
   drx_timing_engine u_timing_engine (
       .clk   (clk),
@@ -274,12 +286,16 @@ module drx_top
       .pulse_width_high(pulse_width_high),
       .n_pulses_high   (n_pulses_high),
 
+      .bins_low (bins_low),
+      .bins_high(bins_high),
+
       .trig_delay(trig_delay_arr),
       .trig_width(trig_width_arr),
 
       .pulse_trig (timing_pulse_trig),
       .batch_sel  (timing_batch_sel),
       .pulse_width(timing_pulse_width),
+      .bin_count  (timing_bins),
       .tx_gate    (timing_tx_gate),
       .radial_done(timing_radial_done),
 
@@ -355,7 +371,7 @@ module drx_top
       .s_i    (ddc_i),
       .s_q    (ddc_q),
 
-      .mode_coarse(mode_coarse),
+      .bin_count(timing_bins),
 
       .m_valid(gate_valid),
       .m_ready(gate_ready),

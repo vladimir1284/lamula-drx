@@ -24,13 +24,18 @@ def test_l0_timing_engine_verilator():
 
 def test_l0_timing_engine_pisos_reales_de_produccion_verilator():
     # Sin override: elabora con PrfDivMinRangeLow/High = PRF_DIV_MIN_LOW/HIGH
-    # del paquete de parámetros -- los mismos valores que usa `drx_top.sv` en
-    # producción. Ver `test_pisos_reales_de_produccion_gatean_enable_gated` en
+    # y BinsMaxLow/High = BINS_MODE_FINE, todos del paquete de parámetros --
+    # los mismos valores que usa `drx_top.sv` en producción. Ver
+    # `test_pisos_reales_de_produccion_gatean_enable`/
+    # `test_techo_real_de_bins_gatea_enable` (D-15) en
     # tb_drx_timing_engine.py: solo checks combinacionales, sin recorrer
     # ningún dwell completo (a 767198 ciclos/lote sería impracticable).
     SimJob(
         hdl_toplevel="drx_timing_engine",
         test_module="tb_drx_timing_engine",
-        testcases=["test_pisos_reales_de_produccion_gatean_enable"],
+        testcases=[
+            "test_pisos_reales_de_produccion_gatean_enable",
+            "test_techo_real_de_bins_gatea_enable",
+        ],
         backend=L0,
     ).run()

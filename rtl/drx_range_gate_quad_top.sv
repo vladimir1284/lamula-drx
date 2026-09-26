@@ -11,10 +11,15 @@
 // (P-12) lo instancian con N_CH=3 exactamente igual que instancian
 // `drx_ddc_quad_top` — mismo módulo, otro generic.
 //
-// `BINS_FINE`/`BINS_COARSE` se reexportan como parámetros (en vez de fijar
-// `drx_range_gate` a los valores del paquete) por la misma razón que en
-// `drx_range_gate.sv`: que un testbench pueda instanciar esto con rayos
-// cortos.
+// `BINS_MAX` se reexporta como parámetro (en vez de fijar `drx_range_gate` al
+// valor del paquete) por la misma razón que en `drx_range_gate.sv`: que un
+// testbench pueda instanciar esto con rayos cortos.
+//
+// `bin_count` (D-15, 25-sep-2026) es COMPARTIDO entre los N_CH canales, igual
+// que `ray_start`: un solo conteo de bins del lote activo (de
+// `drx_timing_engine`) para todos los canales de un mismo radial. Reemplaza
+// `mode_coarse`, que ya no llega hasta `drx_range_gate` -- ver la cabecera de
+// ese fichero y D-15 en decisiones.md.
 
 `ifndef DRX_RANGE_GATE_QUAD_TOP_SV
 `define DRX_RANGE_GATE_QUAD_TOP_SV
@@ -22,9 +27,9 @@
 module drx_range_gate_quad_top
   import drx_params_pkg::*;
 #(
-    parameter int N_CH        = N_RX_CH,
-    parameter int BINS_FINE   = BINS_MODE_FINE,
-    parameter int BINS_COARSE = BINS_MODE_COARSE
+    parameter int N_CH     = N_RX_CH,
+    parameter int BINS_MAX = BINS_MODE_FINE,
+    parameter int BinsBits = 32
 ) (
     input logic clk,
     input logic rst_n,
@@ -33,7 +38,7 @@ module drx_range_gate_quad_top
     input logic signed [IQ_BITS-1:0] s_i    [N_CH],
     input logic signed [IQ_BITS-1:0] s_q    [N_CH],
 
-    input logic mode_coarse,
+    input logic [BinsBits-1:0] bin_count,
 
     output logic                      m_valid[N_CH],
     input  logic                      m_ready[N_CH],
@@ -47,8 +52,8 @@ module drx_range_gate_quad_top
     output logic overrun[N_CH],
 
     // `ray_start` (D-14) es COMPARTIDO entre los N_CH canales, igual que
-    // `mode_coarse`: un solo `pulse_trig` de `drx_timing_engine` marca el
-    // mismo instante de disparo para todos los canales de un mismo radial.
+    // `bin_count`: un solo `pulse_trig` de `drx_timing_engine` marca el mismo
+    // instante de disparo para todos los canales de un mismo radial.
     input logic ray_start
 );
 
@@ -56,8 +61,8 @@ module drx_range_gate_quad_top
   generate
     for (gc = 0; gc < N_CH; gc = gc + 1) begin : g_ch
       drx_range_gate #(
-          .BINS_FINE  (BINS_FINE),
-          .BINS_COARSE(BINS_COARSE)
+          .BINS_MAX(BINS_MAX),
+          .BinsBits(BinsBits)
       ) u_gate (
           .clk (clk),
           .rst_n(rst_n),
@@ -66,7 +71,7 @@ module drx_range_gate_quad_top
           .s_i    (s_i[gc]),
           .s_q    (s_q[gc]),
 
-          .mode_coarse(mode_coarse),
+          .bin_count(bin_count),
 
           .m_valid(m_valid[gc]),
           .m_ready(m_ready[gc]),

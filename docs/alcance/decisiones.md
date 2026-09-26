@@ -276,6 +276,8 @@ Consecuencias para el diseño de Z2:
 - El metadato por rayo ya contempla PRF y modo de pulso ([Z4](../implementacion/fases.md#z4)), pero
   si el conteo de bins de range-gate necesita diferir entre lotes dentro del mismo radial, eso es
   alcance nuevo de Z2 a resolver cuando se diseñe esa pieza — no lo resuelve esta decisión.
+  **Sí difiere, y se resolvió en [D-15](#d-15), 25-sep-2026: BINS_LOW/BINS_HIGH, un registro por
+  lote.**
 
 **Lo que esta decisión NO resuelve:**
 
@@ -286,6 +288,7 @@ Consecuencias para el diseño de Z2:
   registros de Z2, no aquí.
 - Si el range-gate necesita dos configuraciones de bins simultáneas (una por lote) dentro de un
   mismo radial, o si un solo conjunto de bins alcanza para los dos — pendiente de diseño.
+  **Resuelto en [D-15](#d-15): sí, dos registros, BINS_LOW/BINS_HIGH.**
 - Sincronización entre el cambio de lote del motor de timing y la lectura de azimut/elevación de
   [Z3](../implementacion/fases.md#z3) — cada lote dentro del mismo radial comparte az/el, pero el
   diseño concreto del tagging todavía no existe.
@@ -325,10 +328,64 @@ interlock de hardware, no un bloque numérico con oráculo de valores.
 **Lo que esta decisión NO resuelve:**
 
 - Si `drx_range_gate` necesita un conteo de bins distinto por lote — ya lo deja abierto
-  [D-13](#d-13), sin relación con esta sincronización.
+  [D-13](#d-13), sin relación con esta sincronización. **Cerrado por [D-15](#d-15), 25-sep-2026.**
 - Si `pulse_trig` debe disparar también algo del lado Tx (`vector_source` u otra fuente) — ese lado
   no existe todavía en este repo.
 - Diagnóstico del tiempo muerto descartado: hoy no hay ningún contador ni bit de BITE que distinga
   "PRI bien calibrado, `ray_start` llegó justo cuando tocaba" de "`ray_start` llegó tarde y truncó
-  un rayo en curso". D-09 sigue sin aplicarse en RTL — la responsabilidad de no configurar un PRI
-  ilegal sigue siendo de quien escribe los registros.
+  un rayo en curso". Sigue sin resolver — es independiente de D-09, que desde
+  [D-15](#d-15) (25-sep-2026) sí se aplica completo en RTL, incluido el conteo de bins.
+
+## D-15 · Conteo de bins de range-gate por lote: registro configurable en runtime, no una elección fino/grueso { #d-15 }
+
+**Decisión, 25-sep-2026 (en sesión):** el conteo de bins que `drx_range_gate` usa para cortar cada
+rayo deja de ser `BINS_MODE_FINE`/`BINS_MODE_COARSE` (3689/1844, `config/params.toml`) elegidos por
+`mode_coarse`, y pasa a ser un **registro por lote** (`BINS_LOW`/`BINS_HIGH`, mapa v5) — el mismo
+patrón que ya tienen `PRF_DIV_LOW`/`PRF_DIV_HIGH` y `PULSE_WIDTH`/`N_PULSES` desde D-13.
+
+Confirmado por vladimir: el conteo de bins es configurable, y llega a DRx a través de DSP, que a su
+vez lo recibe de RCP — la proporción entre el rango del lote bajo (vigilancia) y el del lote alto
+(Doppler) nunca es la misma, y esa proporción la fija el VCP en curso, no un valor congelado del
+proyecto. Esto cierra el punto que D-13 dejaba explícitamente abierto ("si el conteo de bins de
+range-gate necesita diferir entre lotes dentro del mismo radial, eso es alcance nuevo de Z2") y el
+mismo punto que D-14 también dejaba sin resolver.
+
+Consecuencias para el diseño:
+
+- `mode_coarse` (CTRL bit 0) deja de llegar a `drx_range_gate` — sigue existiendo, pero solo para
+  `drx_ddc_quad_top` (decimación/tamaño de celda), un eje independiente del conteo de bins.
+  `drx_range_gate`/`drx_range_gate_quad_top` ganan un puerto `bin_count` (no `bins`: SystemVerilog
+  reserva esa palabra para coverpoints/randomize, Verilator la rechaza como identificador) que lo
+  reemplaza por completo en ese módulo.
+- El conteo ACTIVO (el del lote que está corriendo en cada instante) lo compone `drx_prf_batch_seq`:
+  gana `bins_low`/`bins_high` como entradas y `bin_count` como salida, con el mismo mux combinacional
+  que ya usaba para `pulse_width` (seleccionado por `batch_sel`) — no hace falta ningún registro ni
+  lógica nueva de "cuál lote está activo", ya existía para otra señal.
+- El techo físico (D-09, la profundidad real de la BRAM de `drx_range_gate`, `BINS_MODE_FINE`) SÍ se
+  valida en RTL: `drx_timing_config_valid.sv` gana un cuarto check
+  (`bin_count >= 1 && bin_count <= BinsMax`), con el mismo gateo de `enable` que ya usan los otros
+  tres. A diferencia del piso de rango de D-09 (que sí difiere por lote), el techo es el MISMO
+  requisito físico para los dos lotes — una sola BRAM real — así que las dos instancias de
+  `drx_timing_config_valid` comparten el mismo `BinsMax` por defecto (`BINS_MODE_FINE`).
+- `BinsMax` es un PARÁMETRO, no un registro, mismo argumento que el piso de PRF de D-09: es un
+  requisito fijo de hardware (la BRAM no cambia de tamaño en runtime), no algo que el DSP configure
+  — por eso el mapa de registros sube a v5 solo por los dos registros nuevos (BINS_LOW/HIGH) y el
+  cambio de semántica de CTRL bit 0, no por el techo en sí.
+
+Es un cambio aditivo sobre el comportamiento de `drx_range_gate` cerrado bajo [D-12](#d-12) en el
+sentido de que no reordena ni transforma ningún dato — solo cambia de dónde sale el conteo de bins
+(de una constante de compilación seleccionada por `mode_coarse`, a un registro de entrada) — pero
+**no es bit a bit transparente por defecto** como lo fue D-14 (`ray_start`): con `BINS_MODE_FINE`
+como profundidad real de BRAM sin cambios, cualquier `bin_count` igual al valor que antes producía
+`mode_coarse` reproduce el mismo comportamiento; verificado reconfirmando `tb_l1_ddc_range_tri.sv`
+(xsim real, corrida completa) con `bin_count` derivado del mismo `+mode=` de siempre — fine:
+288/288/288 muestras en tolerancia D-12 y TLAST bit a bit en los tres canales; coarse: 144/144/144 —
+las mismas cifras que ya medía D-14.
+
+**Lo que esta decisión NO resuelve:**
+
+- Qué código de error del contrato DRx↔DSP reportar cuando `BINS_LOW`/`BINS_HIGH` es inválido — sigue
+  siendo alcance de Z4, igual que el resto de D-09 (ver [P-15](pendientes.md#p-15)).
+- Diagnóstico de tiempo muerto / BITE que D-14 ya dejaba abierto — sin relación con este cambio.
+- P&R real con este cambio — no se corrió en esta sesión (lógica combinacional adicional de bajo
+  costo dentro de un módulo ya cerrado; la última cifra medida sigue siendo la de D-09/v4).

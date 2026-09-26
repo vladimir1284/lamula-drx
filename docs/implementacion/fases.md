@@ -634,9 +634,11 @@ Trabajo:
 - Sincronización determinista entre el trigger y el inicio del gating. **Resuelto, 22-sep-2026**
   ([D-14](../alcance/decisiones.md#d-14)): `drx_range_gate` gana un puerto `ray_start`, cableado a
   `pulse_trig`, que resincroniza el corte de rayo con cada pulso de PRF (de cualquiera de los 2
-  lotes) — ver la entrada de más abajo. Lo que sigue sin resolver: si el conteo de bins necesita
-  diferir entre el lote bajo y el alto (ya lo deja abierto D-13, sin relación con esta
-  sincronización) y cualquier diagnóstico de tiempo muerto descartado (sin BITE propio todavía).
+  lotes) — ver la entrada de más abajo. Lo que sigue sin resolver: cualquier diagnóstico de tiempo
+  muerto descartado (sin BITE propio todavía). El conteo de bins distinto por lote bajo/alto que
+  D-13/D-14 dejaban abierto **ya cerró** ([D-15](../alcance/decisiones.md#d-15), 25-sep-2026):
+  BINS_LOW/BINS_HIGH, un registro por lote, configurable en runtime (viene de DSP/RCP según el VCP)
+  — ver la entrada correspondiente más abajo.
 - Instrumentación en fabric: contador libre en un dominio de reloj distinto, para auto-medir jitter
   y periodo. Bloqueado en la práctica: `config/params.toml` no define ningún segundo dominio de
   reloj.
@@ -902,6 +904,55 @@ caracterizado; combinaciones ilegales rechazadas con el código correcto.
     corrió P&R con este cambio — es lógica combinacional adicional dentro de un módulo ya cerrado y
     de bajo costo (una comparación de 32 bits más por instancia); la última cifra medida sigue
     siendo la de v4 (entrada anterior).
+
+!!! success "25-sep-2026: D-15 — conteo de bins de range-gate por lote, registro configurable en runtime (mapa v5)"
+    Punto abierto desde D-13/D-14: si `drx_range_gate` necesita un conteo de bins distinto por lote.
+    Confirmado por vladimir en sesión: sí, es configurable, y llega a DRx a través de DSP, que a su
+    vez lo recibe de RCP según el VCP en curso — la proporción entre el rango del lote de vigilancia
+    y el del lote Doppler nunca es la misma. Ver [D-15](../alcance/decisiones.md#d-15) para el
+    razonamiento completo.
+
+    `mode_coarse` (CTRL bit 0) deja de llegar a `drx_range_gate` -- sigue existiendo, pero solo para
+    `drx_ddc_quad_top` (decimación/tamaño de celda). `rtl/drx_range_gate.sv`/
+    `rtl/drx_range_gate_quad_top.sv` ganan un puerto `bin_count` (no `bins`: SystemVerilog reserva
+    esa palabra para coverpoints/randomize, Verilator la rechaza como identificador) que lo
+    reemplaza por completo. `rtl/drx_prf_batch_seq.sv` gana `bins_low`/`bins_high` como entradas y
+    `bin_count` como salida, con el mismo mux combinacional que ya usaba para `pulse_width`
+    (seleccionado por `batch_sel`). `rtl/drx_timing_config_valid.sv` gana un cuarto check
+    (`bin_count >= 1 && bin_count <= BinsMax`), mismo patrón de gateo de `enable` que los otros tres
+    — `BinsMax` por defecto es `BINS_MODE_FINE` para los dos lotes (a diferencia del piso de PRF, el
+    techo físico de BRAM es el mismo requisito para los dos: una sola BRAM real).
+
+    `config/registers.toml` sube a v5: BINS_LOW (0x48) / BINS_HIGH (0x4C), RW de 32 bits completos,
+    mismo patrón que PRF_DIV_LOW/HIGH. `rtl/drx_axil_regs.sv` los implementa y `rtl/drx_top.sv` deja
+    de cablear `mode_coarse` hacia `drx_range_gate_quad_top` -- en su lugar cablea la salida
+    `bin_count` de `drx_timing_engine`. Detalle completo, incluidas las decisiones de esta sesión,
+    en [`registros.md#z2-en-v5`](registros.md#z2-en-v5).
+
+    Verificación: `model/drx_model/timing.py::batch_config_valid` gana `bins`/`bins_max` (D-03), en
+    unidades de registro (sin punto flotante). Nuevos tests en `model/tests/test_timing.py`.
+    `sim/tb/tb_drx_timing_config_valid.py` añade `bin_count` al sweep existente. `sim/tb/
+    tb_drx_prf_batch_seq.py` gana un caso que confirma el mux de `bin_count` contra `batch_sel`.
+    `sim/tb/tb_drx_timing_engine.py` gana un caso con los pisos reales de producción
+    (`BinsMaxLow/High = BINS_MODE_FINE`, sin override) que confirma que el motor completo propaga el
+    techo hasta el gateo de `enable` -- solo checks combinacionales en la frontera, igual que ya hace
+    el caso equivalente de D-09/PRF. `sim/tb/tb_drx_range_gate.py` reemplaza `mode_coarse` por
+    `bin_count` en los 8 tests existentes -- D-14 no se re-verifica desde cero, los mismos casos de
+    `ray_start` ya cubrían el framing. `sim/tb_sv/tb_l1_ddc_range_tri.sv` (xsim real, corrida
+    completa contra Vivado -- no solo `--lint-only`) se reconfirmó con `bin_count` derivado
+    localmente del mismo `+mode=` de siempre (este testbench no tiene motor de timing de Z2): fine,
+    288/288/288 muestras en tolerancia D-12 y TLAST bit a bit en los tres canales; coarse, 144/144/144
+    -- las mismas cifras que ya medía D-14, confirmando que el puerto nuevo no cambia ni un bit del
+    comportamiento ya verificado. `sim/tb/tb_drx_axil_regs.py` gana el mismo RW de
+    32 bits que ya cubre PRF_DIV_LOW/HIGH, aplicado a BINS_LOW/HIGH, y corrige `REGS_VERSION`/la
+    dirección de "reservado" (0x48 ya no lo es) que habían quedado hardcodeadas. `sim/runner.py::
+    SimJob` ya tenía `testcases` (de la entrada anterior); se reutiliza igual aquí. `make check` en
+    verde (108 tests).
+
+    Lo que esto NO resuelve, a propósito: el código de error del contrato hacia el DSP (Z4, P-15,
+    sin relación con este cambio) y el diagnóstico de tiempo muerto/BITE que D-14 ya dejaba abierto.
+    Tampoco se corrió P&R -- lógica combinacional adicional de bajo costo dentro de un módulo ya
+    cerrado; la última cifra medida sigue siendo la de D-09/v4.
 
 ## Z3 — Lectores SSI + tagging az/el (semanas 14–18) { #z3 }
 

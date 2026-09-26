@@ -84,14 +84,22 @@ def unambiguous_range_m(params: Params, prf_div: int) -> float:
 
 
 def batch_config_valid(
-    params: Params, prf_div: int, pulse_width_cycles: int, prf_div_min_range: int
+    params: Params,
+    prf_div: int,
+    pulse_width_cycles: int,
+    prf_div_min_range: int,
+    bins: int,
+    bins_max: int,
 ) -> bool:
     """Oráculo de D-09 completo que corre en fabric hoy
     (`rtl/drx_timing_config_valid.sv`): que `pulse_width_cycles` esté en la tabla de
-    `config/params.toml`, que quepa en su propio PRI, y que `prf_div` no viole el
+    `config/params.toml`, que quepa en su propio PRI, que `prf_div` no viole el
     piso de rango no ambiguo del lote (`prf_div_min_range` -- en producción
     `params.prf_div_min_low`/`prf_div_min_high`; un entero pequeño arbitrario en
-    los L0 que no prueban D-09 en sí). No decide nada -- a diferencia de
+    los L0 que no prueban D-09 en sí), y que `bins` (D-15: conteo de bins de
+    range-gate configurable por lote, viene de DSP/RCP según el VCP) quepa en
+    la BRAM real (`bins_max` -- en producción `BINS_MODE_FINE`, la profundidad
+    física de `drx_range_gate`). No decide nada -- a diferencia de
     `Batch`/`validate_batch`, no levanta excepción, para que RTL y modelo se
     comparen bit a bit sobre el mismo booleano.
 
@@ -106,6 +114,8 @@ def batch_config_valid(
     if pulse_width_cycles >= prf_div:
         return False
     if prf_div < prf_div_min_range:
+        return False
+    if bins < 1 or bins > bins_max:
         return False
     return True
 

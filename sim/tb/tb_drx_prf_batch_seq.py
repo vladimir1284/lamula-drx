@@ -28,6 +28,13 @@ from drx_model.params import load
 PARAMS = load("zedboard")
 CLK_PERIOD_PS = round(1e12 / PARAMS.fs_hz)  # clock-const-ok: conversión de unidades s->ps
 
+# D-15: bin_count no tiene equivalente en timing.Batch/RadialBatches (es un
+# registro de range-gate, no de timing), así que se prueba con dos constantes
+# arbitrarias y distintas -- no con valores del modelo dorado, no hace falta:
+# el mux es idéntico al de pulse_width, ya verificado.
+BINS_LOW_TEST = 111
+BINS_HIGH_TEST = 222
+
 
 async def _reset(dut) -> None:
     dut.rst_n.value = 0
@@ -38,6 +45,8 @@ async def _reset(dut) -> None:
     dut.prf_div_high.value = 1
     dut.pulse_width_high.value = 0
     dut.n_pulses_high.value = 1
+    dut.bins_low.value = BINS_LOW_TEST
+    dut.bins_high.value = BINS_HIGH_TEST
     for _ in range(3):
         await RisingEdge(dut.clk)
     dut.rst_n.value = 1
@@ -66,6 +75,7 @@ async def _run(dut, n_cycles: int) -> list[dict]:
                 "cycle": cycle,
                 "trig": bool(dut.pulse_trig.value),
                 "batch_sel": int(dut.batch_sel.value),
+                "bin_count": int(dut.bin_count.value),
                 "tx_gate": bool(dut.tx_gate.value),
                 "radial_done": bool(dut.radial_done.value),
             }
@@ -106,6 +116,30 @@ async def test_los_disparos_coinciden_bit_a_bit_con_el_modelo_dorado(dut):
 
     observed = [(s["cycle"], s["batch_sel"]) for s in samples if s["trig"]]
     assert observed == expected, f"disparos != modelo: {observed} != {expected}"
+
+
+@cocotb.test()
+async def test_bin_count_sigue_a_batch_sel(dut):
+    """D-15: `bin_count` es el mismo mux combinacional que `pulse_width` --
+    `bins_low` mientras `batch_sel==0`, `bins_high` mientras `batch_sel==1`,
+    en todo ciclo, no solo en los disparos."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    batches = _radial_ejemplo()
+    n_radiales = 2
+    _apply_batches(dut, batches)
+    dut.enable.value = 1
+
+    dwell = batches.dwell_cycles()
+    samples = await _run(dut, n_cycles=n_radiales * dwell)
+
+    for s in samples:
+        expected = BINS_HIGH_TEST if s["batch_sel"] else BINS_LOW_TEST
+        assert s["bin_count"] == expected, (
+            f"ciclo {s['cycle']}: bin_count={s['bin_count']} != {expected} "
+            f"(batch_sel={s['batch_sel']})"
+        )
 
 
 @cocotb.test()

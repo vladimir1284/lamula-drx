@@ -1,6 +1,6 @@
 // Range gating — Z1 (fases.md#z1): trocea el flujo continuo de I/Q que sale de
-// `drx_ddc_top` en rayos de `BINS_FINE`/`BINS_COARSE` muestras, con `m_last`
-// (TLAST) en la última de cada rayo. Es el equivalente en hardware de
+// `drx_ddc_top` en rayos de `bin_count` muestras (registro de entrada, D-15),
+// con `m_last` (TLAST) en la última de cada rayo. Es el equivalente en hardware de
 // `model/drx_model/gating.py::gate` — mismo criterio de corte, un bin de rango
 // es una muestra decimada, nada más.
 //
@@ -30,11 +30,12 @@
 // `always_ff` de abajo): un fallo real nunca se pierde por una carrera con la
 // limpieza de firmware.
 //
-// `BINS_FINE`/`BINS_COARSE` son parámetros, no los `localparam` del paquete
-// directamente, por lo mismo que `DIV` lo es en `drx_heartbeat.sv`: para que
-// los testbenches puedan simular rayos de unas pocas muestras en vez de los
-// 3689/1844 reales. La instancia de producción no pasa nada y hereda los
-// valores de `drx_params_pkg` (D-02: single source of truth).
+// `BINS_MAX` es un parámetro, no el `localparam` del paquete directamente,
+// por lo mismo que `DIV` lo es en `drx_heartbeat.sv`: para que los
+// testbenches puedan simular rayos de unas pocas muestras en vez de los 3689
+// reales. La instancia de producción no pasa nada y hereda `BINS_MODE_FINE`
+// de `drx_params_pkg` (D-02: single source of truth) -- es el techo físico
+// de esta BRAM, no un "modo fino"; ver D-15 más abajo.
 //
 // `ray_start` (D-14, 22-sep-2026, mapa de registros v3/Z2): pulso de un ciclo
 // que fuerza `wr_ptr` a 0 -- lo conecta `drx_top` a `pulse_trig` de
@@ -59,12 +60,20 @@
 // necesita vectores nuevos del modelo dorado (`ray_start` en bajo es
 // bit a bit idéntico al comportamiento ya verificado bajo D-12).
 //
-// `mode_coarse` se trata igual que en `drx_ddc_top`: entrada de tiempo de
-// ejecución pero estática durante una corrida. Cambiarla a mitad de rayo no
-// es un caso de uso real de este proyecto — confirmado, 21-sep-2026: la
-// resolución de celda solo cambia entre rayos distintos, nunca dentro de
-// uno, así que no hace falta continuidad de fase aquí. No queda trabajo
-// pendiente por este motivo.
+// `bin_count` (D-15, 25-sep-2026, reemplaza `mode_coarse` en ESTE módulo): el
+// conteo de bins ya no es una elección binaria fino/grueso fija en
+// `config/params.toml` -- es un registro por lote (D-13: lote bajo/alto
+// tienen requisitos de rango distintos), configurable en runtime, que viene
+// de DSP y en última instancia de RCP según el VCP (la proporción entre el
+// rango del lote bajo y el del alto nunca es la misma). `drx_timing_engine`
+// ya expone el valor del lote ACTIVO como su salida `bin_count` (mismo mux
+// que `pulse_width`); este módulo solo lo usa tal cual para `last_idx`, sin
+// saber nada de lotes ni de PRF. `mode_coarse` sigue existiendo, pero solo
+// para `drx_ddc_top` (decimación/tamaño de celda) -- ya no llega hasta aquí.
+// Validar que `bin_count` no supere `BINS_MAX` (el techo físico real de esta
+// BRAM) es responsabilidad de `drx_timing_config_valid.sv`, no de este
+// módulo (D-09 completo) -- ver decisiones.md#d-15. Se llama `bin_count`, no
+// `bins`: SystemVerilog reserva `bins` como palabra clave de coverpoints.
 //
 // El puerto de lectura es REGISTRADO (`m_i`/`m_q`/`m_valid`/`m_last` salen de
 // un registro que se carga con la lectura de `mem0`/`mem1`, no de un `assign`
@@ -86,8 +95,8 @@
 module drx_range_gate
   import drx_params_pkg::*;
 #(
-    parameter int BINS_FINE   = BINS_MODE_FINE,
-    parameter int BINS_COARSE = BINS_MODE_COARSE
+    parameter int BINS_MAX = BINS_MODE_FINE,
+    parameter int BinsBits = 32
 ) (
     input logic clk,
     input logic rst_n,
@@ -97,7 +106,10 @@ module drx_range_gate
     input logic signed [IQ_BITS-1:0] s_i,
     input logic signed [IQ_BITS-1:0] s_q,
 
-    input logic mode_coarse,
+    // Conteo de bins del rayo EN CURSO (D-15, reemplaza `mode_coarse` en este
+    // módulo -- ver la cabecera). Validado <= BINS_MAX aguas arriba, en
+    // `drx_timing_config_valid.sv`; este módulo no vuelve a comprobarlo.
+    input logic [BinsBits-1:0] bin_count,
 
     // Salida: AXI4-Stream real, con m_ready.
     output logic                      m_valid,
@@ -114,15 +126,15 @@ module drx_range_gate
     input logic ray_start
 );
 
-  localparam int Depth = (BINS_FINE > BINS_COARSE) ? BINS_FINE : BINS_COARSE;
+  localparam int Depth = BINS_MAX;
   localparam int AddrW = $clog2(Depth);
 
   // Último índice del rayo (bins-1), no el conteo: el conteo puede no caber en
   // AddrW bits cuando Depth es una potencia de dos exacta (p. ej. un
-  // testbench con BINS_FINE=8 pide AddrW=3, y "8" no cabe en 3 bits, pero
-  // "7" sí). El índice máximo siempre cabe, por construcción de `$clog2`.
+  // testbench con BINS_MAX=8 pide AddrW=3, y "8" no cabe en 3 bits, pero "7"
+  // sí). El índice máximo siempre cabe, por construcción de `$clog2`.
   logic [AddrW-1:0] last_idx;
-  assign last_idx = mode_coarse ? AddrW'(BINS_COARSE - 1) : AddrW'(BINS_FINE - 1);
+  assign last_idx = AddrW'(bin_count - BinsBits'(1));
 
   // Dos bancos independientes en vez de un array indexado por `wr_bank`: cada
   // uno es un simple-dual-port de libro (un puerto de escritura, uno de

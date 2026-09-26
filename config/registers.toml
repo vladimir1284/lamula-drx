@@ -30,18 +30,28 @@
 # TIMING_STATUS (antes "leen 0" documentado sin más) para los checks
 # AUTOCONTENIDOS de D-09 (rtl/drx_timing_config_valid.sv, instanciado x2
 # dentro de drx_timing_engine.sv): pulse_width fuera de la tabla de
-# config/params.toml o que no cabe en su propio PRI. NO implementa D-09
-# completo -- PRF x rango sigue sin validar en RTL, ver
-# docs/implementacion/registros.md#deliberadamente-fuera-de-v3 -- así que
-# escribir un PRF_DIV_LOW/HIGH que dé un rango no ambiguo ilegal sigue sin
-# rechazarse. Redefinir bits que v3 documentaba como "siempre 0" es un
-# cambio de semántica del mapa, no solo de RTL interno, de ahí el bump.
-schema_version = 4
+# config/params.toml o que no cabe en su propio PRI. NO implementaba D-09
+# completo todavía -- PRF x rango no se validaba en RTL (ver v5, más abajo).
+# Redefinir bits que v3 documentaba como "siempre 0" es un cambio de
+# semántica del mapa, no solo de RTL interno, de ahí el bump.
+#
+# v5 (25-sep-2026) añade BINS_LOW/BINS_HIGH: el conteo de bins de range-gate
+# por lote (D-15) deja de ser la elección fino/grueso fija de
+# config/params.toml (BINS_MODE_FINE/COARSE) y pasa a ser un registro por
+# lote, configurable en runtime -- viene de DSP, que a su vez lo recibe de
+# RCP según el VCP (la proporción entre el rango del lote bajo y el del alto
+# nunca es la misma). `mode_coarse` (bit 0 de CTRL) deja de llegar a
+# drx_range_gate -- sigue existiendo, pero solo para drx_ddc_quad_top
+# (decimación). El mismo cambio cierra del todo D-09: TIMING_STATUS bits 1/2
+# ya reflejan también un `bins` fuera del techo físico de BRAM (ver
+# docs/implementacion/registros.md#z2-en-v5), sin bit nuevo -- el mismo
+# `valid` por lote de drx_timing_config_valid.sv ya incluía ese cuarto check.
+schema_version = 5
 
 # Bytes direccionables: 2^addr_width = 128 B = 32 palabras de 32 bits. Las
-# primeras 18 palabras (0x00-0x44) están implementadas (Z1 + Z2 v3); el resto
-# (0x48 en adelante) queda reservado sin implementar (lee 0, escritura sin
-# efecto), sin diseñarlo ahora.
+# primeras 20 palabras (0x00-0x4C) están implementadas (Z1 + Z2 v3/v5); el
+# resto (0x50 en adelante) queda reservado sin implementar (lee 0, escritura
+# sin efecto), sin diseñarlo ahora.
 addr_width = 7
 
 [[register]]
@@ -54,7 +64,7 @@ doc = "Versión de ESTE mapa de registros (= schema_version de arriba). Permite 
 name = "ctrl"
 offset = 0x04
 access = "rw"
-doc = "Bit 0: mode_coarse (0 = fino, valor de reset; 1 = grueso), compartido por los N_CH canales de drx_top, igual que ya lo era como localparam. Bits 31:1 reservados: leen 0, una escritura ahí no tiene efecto."
+doc = "Bit 0: mode_coarse (0 = fino, valor de reset; 1 = grueso), compartido por los N_CH canales de drx_ddc_quad_top (decimación), igual que ya lo era como localparam. Desde v5 (D-15) ya NO llega a drx_range_gate -- el conteo de bins de range-gate es BINS_LOW/BINS_HIGH, no una elección fino/grueso fija. Bits 31:1 reservados: leen 0, una escritura ahí no tiene efecto."
 
 [[register]]
 name = "status"
@@ -80,25 +90,25 @@ doc = "Bit 0: enable de drx_prf_batch_seq (arranca/detiene el secuenciador de 2 
 name = "timing_status"
 offset = 0x14
 access = "w1c"
-doc = "Bit 0: radial_done sticky de drx_prf_batch_seq (se puso en 1 al menos una vez desde el último clear -- un radial completo, lote bajo + lote alto). Bit 1: config_invalid del lote bajo (D-09, checks autocontenidos: pulse_width fuera de tabla o que no cabe en su propio PRI) -- mientras esté en 1, drx_timing_engine mantiene el secuenciador de lotes sin correr (equivalente a enable=0), sin importar TIMING_CTRL. Bit 2: mismo check para el lote alto. Los tres bits comparten el mismo patrón set-sobre-clear-concurrente que STATUS/OVERFLOW. Bits 31:3 reservados: leen 0."
+doc = "Bit 0: radial_done sticky de drx_prf_batch_seq (se puso en 1 al menos una vez desde el último clear -- un radial completo, lote bajo + lote alto). Bit 1: config_invalid del lote bajo (D-09 completo desde v5: pulse_width fuera de tabla, no cabe en su propio PRI, prf_div bajo el piso de rango no ambiguo, o bins sobre el techo físico de BRAM -- D-15) -- mientras esté en 1, drx_timing_engine mantiene el secuenciador de lotes sin correr (equivalente a enable=0), sin importar TIMING_CTRL. Bit 2: mismo check para el lote alto. Los tres bits comparten el mismo patrón set-sobre-clear-concurrente que STATUS/OVERFLOW. Bits 31:3 reservados: leen 0."
 
 [[register]]
 name = "prf_div_low"
 offset = 0x18
 access = "rw"
-doc = "prf_div del lote bajo (vigilancia/PRF baja) de drx_prf_batch_seq, ciclos de FS_HZ por PRI. La mitad de D-09 que SÍ se valida en RTL (v4): junto con pulse_width, si el pulso no cabe en su propio PRI el lote queda inválido (TIMING_STATUS bit 1/2) y el secuenciador no corre -- ver drx_timing_config_valid.sv. PRF x rango no ambiguo (la otra mitad de D-09) sigue sin validar aquí: se valida contra el modelo dorado antes de escribir este registro, esta capa confía en el firmware/RCP -- ver docs/implementacion/registros.md#deliberadamente-fuera-de-v3."
+doc = "prf_div del lote bajo (vigilancia/PRF baja) de drx_prf_batch_seq, ciclos de FS_HZ por PRI. Validado en RTL desde v5 (D-09 completo, drx_timing_config_valid.sv): junto con pulse_width, si el pulso no cabe en su propio PRI, o si prf_div da un rango no ambiguo por debajo de 460 km (piso fijo, ver config/params.toml), el lote queda inválido (TIMING_STATUS bit 1/2) y el secuenciador no corre."
 
 [[register]]
 name = "prf_div_high"
 offset = 0x1C
 access = "rw"
-doc = "prf_div del lote alto (Doppler/PRF alta) de drx_prf_batch_seq. Mismas condiciones que prf_div_low."
+doc = "prf_div del lote alto (Doppler/PRF alta) de drx_prf_batch_seq. Mismas condiciones que prf_div_low, con el piso de rango del lote alto (115 km) en vez del del lote bajo."
 
 [[register]]
 name = "pulse_width"
 offset = 0x20
 access = "rw"
-doc = "Bits 15:0: pulse_width_cycles del lote bajo. Bits 31:16: pulse_width_cycles del lote alto. Empaquetados juntos (cada uno cabe en 16 bits, PulseWidthBits de drx_prf_batch_seq.sv) para no gastar dos palabras completas en un valor que nunca necesita 32 bits. Validado en RTL desde v4 (D-09, checks autocontenidos): tiene que estar en la tabla de config/params.toml Y caber en el prf_div de su propio lote, o el lote queda inválido -- ver timing_status."
+doc = "Bits 15:0: pulse_width_cycles del lote bajo. Bits 31:16: pulse_width_cycles del lote alto. Empaquetados juntos (cada uno cabe en 16 bits, PulseWidthBits de drx_prf_batch_seq.sv) para no gastar dos palabras completas en un valor que nunca necesita 32 bits. Validado en RTL desde v4 (D-09): tiene que estar en la tabla de config/params.toml Y caber en el prf_div de su propio lote, o el lote queda inválido -- ver timing_status."
 
 [[register]]
 name = "n_pulses"
@@ -153,3 +163,17 @@ name = "trig_width_3"
 offset = 0x44
 access = "rw"
 doc = "Ancho del canal 3 de drx_trigger_gen. Mismas condiciones que TRIG_WIDTH_0."
+
+# --- Z2 (D-15, v5): conteo de bins de range-gate por lote --------------------
+
+[[register]]
+name = "bins_low"
+offset = 0x48
+access = "rw"
+doc = "Conteo de bins de range-gate del lote bajo (D-15, v5): cuántas muestras decimadas entran en un rayo de este lote. Configurable en runtime -- viene de DSP, que a su vez lo recibe de RCP según el VCP (Batch mode de NEXRAD: el lote de vigilancia necesita ver más lejos que el de Doppler, D-13). Validado en RTL desde v5: tiene que ser >= 1 y no superar BINS_MODE_FINE (3689, la profundidad física real de la BRAM de drx_range_gate) o el lote queda inválido -- ver timing_status y drx_timing_config_valid.sv. `mode_coarse` (CTRL bit 0) ya NO decide esto -- ver ctrl."
+
+[[register]]
+name = "bins_high"
+offset = 0x4C
+access = "rw"
+doc = "Conteo de bins de range-gate del lote alto (Doppler). Mismas condiciones que bins_low."

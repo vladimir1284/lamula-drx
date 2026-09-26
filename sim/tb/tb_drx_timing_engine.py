@@ -11,10 +11,11 @@ Dos builds distintos, ver `sim/tests/test_l0_timing_engine.py`:
   inválido por D-09 autocontenido congela el motor. Usan `prf_div_low/high`
   pequeños a propósito -- con el piso real activo, esos valores ya serían
   inválidos por D-09 completo y no probarían el cableado que dicen probar.
-- Sin override (los reales de producción, PRF_DIV_MIN_LOW/HIGH):
-  `test_pisos_reales_de_produccion_gatean_enable`, solo checks
-  combinacionales alrededor de la frontera -- un dwell completo a esa escala
-  sería impracticable en L0.
+- Sin override (los reales de producción, PRF_DIV_MIN_LOW/HIGH y
+  BinsMaxLow/High = BINS_MODE_FINE): `test_pisos_reales_de_produccion_gatean_enable`
+  y `test_techo_real_de_bins_gatea_enable` (D-15), solo checks combinacionales
+  alrededor de la frontera -- un dwell completo a esa escala sería
+  impracticable en L0.
 
 Oráculo, igual que en los L0 que compone: `model/drx_model/timing.py`. Los
 ciclos de disparo salen de `radial_trigger_times_cycles`; los ciclos activos
@@ -63,6 +64,11 @@ async def _reset(dut) -> None:
     dut.prf_div_high.value = 1
     dut.pulse_width_high.value = 0
     dut.n_pulses_high.value = 1
+    # D-15: bins_low/high por defecto en 1 -- válido con cualquier BinsMax de
+    # este fichero (nunca overrideado a menos de 3689, el real de producción),
+    # así que las pruebas que no ejercitan D-15 en sí no lo necesitan tocar.
+    dut.bins_low.value = 1
+    dut.bins_high.value = 1
     for ch in range(N_TRIGGERS):
         dut.trig_delay[ch].value = 0
         dut.trig_width[ch].value = 1
@@ -181,4 +187,38 @@ async def test_pisos_reales_de_produccion_gatean_enable(dut):
     await ReadOnly()
     assert not bool(dut.config_invalid_low.value), (
         f"prf_div_low={at_floor}, el piso real de 460 km exacto, debería ser válido"
+    )
+
+
+@cocotb.test()
+async def test_techo_real_de_bins_gatea_enable(dut):
+    """D-15, mismo build que el test anterior (sin override -- BinsMaxLow/High
+    por defecto son BINS_MODE_FINE, el techo físico real de BRAM). Solo
+    confirma que `drx_timing_engine` propaga ese techo hasta el gateo de
+    `enable` -- el barrido bit a bit del check en sí ya lo hace
+    `tb_drx_timing_config_valid.py`."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    bins_max = PARAMS.invariant["bins_mode_fine"]
+
+    dut.prf_div_low.value = PARAMS.prf_div_min_low  # legal, justo el piso real
+    dut.pulse_width_low.value = 200
+    dut.n_pulses_low.value = 1
+    dut.prf_div_high.value = PARAMS.prf_div_min_high
+    dut.pulse_width_high.value = 200
+    dut.n_pulses_high.value = 1
+    dut.enable.value = 1
+
+    dut.bins_low.value = bins_max + 1
+    await ReadOnly()
+    assert bool(dut.config_invalid_low.value), (
+        f"bins_low={bins_max + 1}, justo sobre el techo físico real, debería ser inválido"
+    )
+
+    await RisingEdge(dut.clk)
+    dut.bins_low.value = bins_max
+    await ReadOnly()
+    assert not bool(dut.config_invalid_low.value), (
+        f"bins_low={bins_max}, el techo físico real exacto, debería ser válido"
     )

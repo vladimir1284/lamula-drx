@@ -14,12 +14,13 @@
 //
 // D-09 completo: `enable` real del secuenciador de lotes es `enable &&
 // config_valid_low && config_valid_high` -- si cualquiera de los 2 lotes
-// tiene un `pulse_width` fuera de tabla, que no cabe en su propio PRI, o un
-// `prf_div` que viola el piso de rango no ambiguo de su lote, el secuenciador
-// simplemente no corre (mismo efecto que `enable` en bajo, `drx_prf_batch_seq.
-// sv` ya lo deja todo congelado y `tx_gate` a 0 en ese caso).
-// `config_invalid_low`/`config_invalid_high` exponen el motivo hacia arriba
-// para que `drx_axil_regs` los latchee en TIMING_STATUS.
+// tiene un `pulse_width` fuera de tabla, que no cabe en su propio PRI, un
+// `prf_div` que viola el piso de rango no ambiguo de su lote, o (D-15) un
+// `bin_count` que supera el techo físico de BRAM de `drx_range_gate`, el
+// secuenciador simplemente no corre (mismo efecto que `enable` en bajo,
+// `drx_prf_batch_seq.sv` ya lo deja todo congelado y `tx_gate` a 0 en ese
+// caso). `config_invalid_low`/`config_invalid_high` exponen el motivo hacia
+// arriba para que `drx_axil_regs` los latchee en TIMING_STATUS.
 //
 // Cada instancia de `drx_timing_config_valid` toma su propio piso de rango
 // (`PrfDivMinRangeLow`/`PrfDivMinRangeHigh`, por defecto PRF_DIV_MIN_LOW/
@@ -30,6 +31,21 @@
 // `prf_div` válido en el rango existente puede violarlo, así que ese check
 // no rechaza nada en la práctica todavía; se deja cableado igual por si
 // PRF_DIV_MIN cambia. Ver docs/implementacion/fases.md#z2.
+//
+// `bin_count`/`BinsMaxLow`/`BinsMaxHigh` (D-15, 25-sep-2026): a diferencia del
+// piso de PRF, el techo de bins es el MISMO requisito físico para los dos
+// lotes (la BRAM de `drx_range_gate` tiene una única profundidad real,
+// BINS_MODE_FINE), no dos requisitos de producto distintos -- por eso las dos
+// instancias de `drx_timing_config_valid` comparten el mismo `BinsMax` por
+// defecto. El conteo de bins en sí (`bins_low`/`bins_high`) SÍ es distinto por
+// lote y configurable en runtime: viene de DSP, que a su vez lo recibe de RCP
+// según el VCP -- la proporción entre el rango del lote bajo y el del lote
+// alto nunca es la misma. `bin_count` (salida) es el conteo del lote ACTIVO,
+// mismo mux que ya hace `drx_prf_batch_seq.sv` para `pulse_width` -- lo
+// consume `drx_range_gate_quad_top` en vez de un `mode_coarse` estático (ver
+// D-15 en decisiones.md y la cabecera de `drx_range_gate.sv`). Se llama
+// `bin_count`, no `bins`: SystemVerilog reserva `bins` como palabra clave de
+// coverpoints/randomize.
 
 `ifndef DRX_TIMING_ENGINE_SV
 `define DRX_TIMING_ENGINE_SV
@@ -40,13 +56,17 @@ module drx_timing_engine
     parameter int PrfDivBits     = 32,
     parameter int PulseWidthBits = 16,
     parameter int NPulsesBits    = 16,
+    parameter int BinsBits       = 32,
     parameter int NTriggers      = N_TRIGGERS,
     parameter int TrigDelayBits  = 32,
     parameter int TrigWidthBits  = 32,
     // D-09: piso de rango no ambiguo por lote, en unidades de `prf_div` --
     // ver la cabecera de este fichero y la de `drx_timing_config_valid.sv`.
     parameter int PrfDivMinRangeLow  = PRF_DIV_MIN_LOW,
-    parameter int PrfDivMinRangeHigh = PRF_DIV_MIN_HIGH
+    parameter int PrfDivMinRangeHigh = PRF_DIV_MIN_HIGH,
+    // D-15: techo de bins -- el mismo para los dos lotes (una sola BRAM real).
+    parameter logic [BinsBits-1:0] BinsMaxLow  = BinsBits'(BINS_MODE_FINE),
+    parameter logic [BinsBits-1:0] BinsMaxHigh = BinsBits'(BINS_MODE_FINE)
 ) (
     input logic clk,
     input logic rst_n,
@@ -60,6 +80,10 @@ module drx_timing_engine
     input logic [PulseWidthBits-1:0] pulse_width_high,
     input logic [ NPulsesBits-1:0] n_pulses_high,
 
+    // Conteo de bins de range-gate por lote (D-15) -- ver la cabecera.
+    input logic [BinsBits-1:0] bins_low,
+    input logic [BinsBits-1:0] bins_high,
+
     // Retardo/ancho de cada uno de los NTriggers -- ver `drx_trigger_gen.sv`.
     input logic [TrigDelayBits-1:0] trig_delay[NTriggers],
     input logic [TrigWidthBits-1:0] trig_width[NTriggers],
@@ -67,11 +91,13 @@ module drx_timing_engine
     output logic pulse_trig,
     output logic batch_sel,
     output logic [PulseWidthBits-1:0] pulse_width,
+    output logic [BinsBits-1:0] bin_count,
     output logic tx_gate,
     output logic radial_done,
 
-    // D-09 (checks autocontenidos): alto cuando el lote correspondiente NO es
-    // válido hoy (`pulse_width` fuera de tabla o no cabe en su propio PRI).
+    // D-09 completo: alto cuando el lote correspondiente NO es válido hoy
+    // (`pulse_width` fuera de tabla, no cabe en su propio PRI, `prf_div` bajo
+    // el piso de rango de su lote, o `bin_count` sobre el techo de BRAM).
     // Nivel, no pulso -- pensado para que `drx_axil_regs` lo latchee (mismo
     // patrón que `overflow_in`).
     output logic config_invalid_low,
@@ -85,20 +111,26 @@ module drx_timing_engine
   drx_timing_config_valid #(
       .PrfDivBits(PrfDivBits),
       .PulseWidthBits(PulseWidthBits),
-      .PrfDivMinRange(PrfDivMinRangeLow)
+      .BinsBits(BinsBits),
+      .PrfDivMinRange(PrfDivMinRangeLow),
+      .BinsMax(BinsMaxLow)
   ) u_config_valid_low (
       .prf_div(prf_div_low),
       .pulse_width(pulse_width_low),
+      .bin_count(bins_low),
       .valid(config_valid_low)
   );
 
   drx_timing_config_valid #(
       .PrfDivBits(PrfDivBits),
       .PulseWidthBits(PulseWidthBits),
-      .PrfDivMinRange(PrfDivMinRangeHigh)
+      .BinsBits(BinsBits),
+      .PrfDivMinRange(PrfDivMinRangeHigh),
+      .BinsMax(BinsMaxHigh)
   ) u_config_valid_high (
       .prf_div(prf_div_high),
       .pulse_width(pulse_width_high),
+      .bin_count(bins_high),
       .valid(config_valid_high)
   );
 
@@ -111,7 +143,8 @@ module drx_timing_engine
   drx_prf_batch_seq #(
       .PrfDivBits(PrfDivBits),
       .PulseWidthBits(PulseWidthBits),
-      .NPulsesBits(NPulsesBits)
+      .NPulsesBits(NPulsesBits),
+      .BinsBits(BinsBits)
   ) u_batch_seq (
       .clk(clk),
       .rst_n(rst_n),
@@ -124,9 +157,13 @@ module drx_timing_engine
       .pulse_width_high(pulse_width_high),
       .n_pulses_high(n_pulses_high),
 
+      .bins_low(bins_low),
+      .bins_high(bins_high),
+
       .pulse_trig(pulse_trig),
       .batch_sel(batch_sel),
       .pulse_width(pulse_width),
+      .bin_count(bin_count),
       .tx_gate(tx_gate),
       .radial_done(radial_done)
   );

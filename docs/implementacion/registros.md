@@ -1,14 +1,16 @@
-# Mapa de registros AXI-Lite — v4 (Z1 + Z2)
+# Mapa de registros AXI-Lite — v5 (Z1 + Z2)
 
 Hasta el 19-sep-2026 este entregable de Z1 no existía en absoluto — ni RTL ni documento. Esta
-página describe el mapa **v4** (22-sep-2026, más tarde): lo que `drx_top` controla y observa hoy vía
+página describe el mapa **v5** (25-sep-2026): lo que `drx_top` controla y observa hoy vía
 `drx_axil_regs`, y lo que deliberadamente queda fuera todavía. La sección de más abajo explica por
 qué "vía AXI-Lite" no significa todavía "alcanzable desde firmware real".
 
 **v3** añade el bloque de Z2 (`drx_timing_engine`, [D-13](../alcance/decisiones.md#d-13)) — ver
 [El mapa](#el-mapa) y [Z2 en v3](#z2-en-v3) más abajo. **v4** usa 2 de los bits que v3 dejaba
 reservados de TIMING_STATUS para los checks autocontenidos de D-09 — ver [Z2 en v4](#z2-en-v4).
-v1/v2 (Z1, 19/20-sep-2026) siguen descritas tal cual en la sección [Historial](#historial-v1v2).
+**v5** añade BINS_LOW/BINS_HIGH (conteo de bins de range-gate por lote, [D-15](../alcance/decisiones.md#d-15))
+y con eso cierra D-09 del todo — ver [Z2 en v5](#z2-en-v5). v1/v2 (Z1, 19/20-sep-2026) siguen
+descritas tal cual en la sección [Historial](#historial-v1v2).
 
 Fuente única de verdad: `config/registers.toml`. `tools/gen_registers.py` genera
 `rtl/generated/drx_regs_pkg.sv` (RTL) y `fw/include/drx_regs.h` (firmware) desde ese fichero —
@@ -72,19 +74,21 @@ palabras — subió de 6/16 en v3 porque el bloque de Z2 no cabía). Implementad
 
 | Offset | Nombre   | Acceso            | Bits usados   | Significado |
 |--------|----------|-------------------|---------------|-------------|
-| `0x00` | VERSION  | RO                | `[31:0]`      | Versión de este mapa de registros (`schema_version` de `config/registers.toml`, hoy 3). Permite a firmware confirmar que habla con el mapa que espera antes de tocar el resto. |
-| `0x04` | CTRL     | RW                | `[0]`         | `mode_coarse`: 0 = fino (valor de reset, el mismo comportamiento que el `localparam` fijo anterior), 1 = grueso. Compartido por los `N_CH` canales de `drx_top` — no hay control por canal, igual que antes. Bits `[31:1]` reservados: leen 0, una escritura ahí no tiene efecto. |
+| `0x00` | VERSION  | RO                | `[31:0]`      | Versión de este mapa de registros (`schema_version` de `config/registers.toml`, hoy 5). Permite a firmware confirmar que habla con el mapa que espera antes de tocar el resto. |
+| `0x04` | CTRL     | RW                | `[0]`         | `mode_coarse`: 0 = fino (valor de reset), 1 = grueso. Compartido por los `N_CH` canales de `drx_ddc_quad_top` (decimación/tamaño de celda). Desde v5 (D-15) ya NO llega a `drx_range_gate` — el conteo de bins de range-gate es BINS_LOW/BINS_HIGH, no una elección fino/grueso fija. Bits `[31:1]` reservados: leen 0, una escritura ahí no tiene efecto. |
 | `0x08` | STATUS   | RO + write-1-to-clear | `[N_CH-1:0]` | Bit `c` = `overrun` sticky del canal `c` de range-gate (`drx_range_gate_quad_top.overrun[c]`). El latch sticky vive en `drx_range_gate` (puerto `clear` nuevo — ver más abajo); este bloque solo lo lee y pulsa la limpieza en origen. Si hay un overrun genuino el mismo ciclo que la limpieza, gana el set. |
 | `0x0C` | OVERFLOW | RO + write-1-to-clear | `[N_CH-1:0]` | Bit `c` = overflow de saturación del DDC del canal `c` (`drx_ddc_quad_top.overflow[c]`, combinación de las ramas I/Q de `drx_ddc_top`). A diferencia de STATUS, el latch sticky vive **dentro de `drx_axil_regs`**, no en la fuente: `drx_saturate` es deliberadamente combinacional y sin estado (ver su cabecera), así que añadir un latch ahí habría tocado más de lo necesario en un núcleo ya verificado bit a bit. Misma prioridad set-sobre-clear que STATUS. |
 | `0x10` | TIMING_CTRL | RW | `[0]` | `enable` de `drx_prf_batch_seq` (arranca/detiene el secuenciador de 2 lotes, D-13). Reset: 0 (detenido). |
-| `0x14` | TIMING_STATUS | RO + write-1-to-clear | `[2:0]` | Bit 0 = `radial_done` sticky de `drx_prf_batch_seq` (radial completo: lote bajo + lote alto). Bits 1/2 (v4, D-09) = `config_invalid` del lote bajo/alto — mientras estén en 1, `drx_timing_engine` mantiene el secuenciador sin correr, sin importar TIMING_CTRL. Los tres bits comparten el mismo patrón set-sobre-clear que OVERFLOW. Bits `[31:3]` reservados: leen 0. |
-| `0x18` | PRF_DIV_LOW | RW | `[31:0]` | `prf_div` del lote bajo (vigilancia/PRF baja), ciclos de `FS_HZ` por PRI. PRF × rango no ambiguo sigue sin validarse en RTL (contra el modelo dorado antes de escribir); "cabe en su propio PRI" sí, desde v4 — ver PULSE_WIDTH. |
+| `0x14` | TIMING_STATUS | RO + write-1-to-clear | `[2:0]` | Bit 0 = `radial_done` sticky de `drx_prf_batch_seq` (radial completo: lote bajo + lote alto). Bits 1/2 (v4, D-09; ampliado en v5/D-15) = `config_invalid` del lote bajo/alto — cubre pulse_width fuera de tabla, no cabe en su PRI, prf_div bajo el piso de rango, o bins sobre el techo de BRAM; mientras cualquiera esté en 1, `drx_timing_engine` mantiene el secuenciador sin correr, sin importar TIMING_CTRL. Los tres bits comparten el mismo patrón set-sobre-clear que OVERFLOW. Bits `[31:3]` reservados: leen 0. |
+| `0x18` | PRF_DIV_LOW | RW | `[31:0]` | `prf_div` del lote bajo (vigilancia/PRF baja), ciclos de `FS_HZ` por PRI. Validado en RTL desde v5 (D-09 completo): junto con "cabe en su propio PRI" (desde v4, ver PULSE_WIDTH), un `prf_div` que dé un rango no ambiguo por debajo de 460 km (piso fijo) también deja el lote inválido — ver [Z2 en v5](#z2-en-v5). |
 | `0x1C` | PRF_DIV_HIGH | RW | `[31:0]` | `prf_div` del lote alto (Doppler/PRF alta). Mismas condiciones que PRF_DIV_LOW. |
 | `0x20` | PULSE_WIDTH | RW | `[15:0]`/`[31:16]` | Bits 15:0 = ancho de pulso (ciclos) del lote bajo; bits 31:16 = del lote alto. Empaquetados: cada uno cabe en 16 bits (`PulseWidthBits` de `drx_prf_batch_seq.sv`). Validado en RTL desde v4 (D-09, checks autocontenidos): tiene que estar en la tabla de `config/params.toml` **y** caber en el `prf_div` de su propio lote, o el lote queda inválido — ver TIMING_STATUS y [Z2 en v4](#z2-en-v4). |
 | `0x24` | N_PULSES | RW | `[15:0]`/`[31:16]` | Bits 15:0 = pulsos del lote bajo antes de pasar al alto; bits 31:16 = pulsos del lote alto antes de `radial_done`. Mismo empaquetado que PULSE_WIDTH. |
 | `0x28`–`0x34` | TRIG_DELAY_0..3 | RW | `[31:0]` | Retardo (ciclos desde `pulse_trig`) de cada uno de los `N_TRIGGERS=4` canales de `drx_trigger_gen`. Un registro por canal, no un array — ver [Z2 en v3](#z2-en-v3). |
 | `0x38`–`0x44` | TRIG_WIDTH_0..3 | RW | `[31:0]` | Ancho del pulso de cada canal. Tiene que ser ≥ 1 (sin validar en RTL, ver la cabecera de `drx_trigger_one_shot.sv`). |
-| `0x48`… | — | — | — | Reservado, sin implementar. Lee 0, escribir no tiene efecto. |
+| `0x48` | BINS_LOW | RW | `[31:0]` | Conteo de bins de range-gate del lote bajo (D-15, v5): cuántas muestras decimadas entran en un rayo de este lote. Configurable en runtime — viene de DSP, que a su vez lo recibe de RCP según el VCP. Validado en RTL: tiene que ser ≥ 1 y no superar `BINS_MODE_FINE` (3689, la profundidad física real de la BRAM de `drx_range_gate`), o el lote queda inválido — ver TIMING_STATUS y [Z2 en v5](#z2-en-v5). |
+| `0x4C` | BINS_HIGH | RW | `[31:0]` | Conteo de bins de range-gate del lote alto (Doppler). Mismas condiciones que BINS_LOW. |
+| `0x50`… | — | — | — | Reservado, sin implementar. Lee 0, escribir no tiene efecto. |
 
 `N_CH` es el mismo generic que ya usa `drx_top` (3 hoy, Config A/B de
 [P-12](../alcance/pendientes.md#p-12); sería `N_RX_CH` en la ZU9). El ancho de STATUS/OVERFLOW se
@@ -114,6 +118,12 @@ ningún otro sitio las fija:
   Ninguna decisión documentada dice cómo debe sincronizarse el trigger con el inicio del gating —
   uno de los puntos abiertos de [`fases.md#z2`](fases.md#z2) — y resolverlo tocaría
   `drx_range_gate.sv`, ya cerrado y verificado bit a bit bajo D-12 en Z1.
+
+  **Actualización, 22-sep-2026 (más tarde, mismo día): resuelto por D-14.** `ray_start` conecta
+  `pulse_trig` con `drx_range_gate_quad_top` — ver [D-14](../alcance/decisiones.md#d-14). El lado
+  de `vector_source`/Tx sigue sin conectar (D-14 lo deja explícitamente abierto). El conteo de bins
+  por lote que este mismo párrafo no mencionaba se resolvió después, en v5 —
+  ver [Z2 en v5](#z2-en-v5).
 - **`trig_out` es un puerto físico real de `drx_top` (y de `drx_top_tieoff`/`drx_zynq_top`, que lo
   pasan a través) pero sin pines XDC.** `tcl/xdc/zedboard.xdc` no tiene mapeado ningún Pmod de la
   ZedBoard y no hay en este repo una referencia de pinout físico verificada para inventar una
@@ -184,6 +194,55 @@ la de v3, sin este cambio — la lógica añadida es pequeña y puramente combin
 no se ha medido) y no toca `contract/schema/drx_dsp_v0_1.toml` (P-15 sigue abierto del lado del
 contrato, sin relación con este cambio).
 
+### Z2 en v5 { #z2-en-v5 }
+
+**25-sep-2026.** Cierra D-09 del todo: PRF × rango no ambiguo (ver la actualización dentro de
+[Z2 en v4](#z2-en-v4)) y ahora también el conteo de bins de range-gate por lote
+([D-15](../alcance/decisiones.md#d-15)). Hasta esta sesión, `BINS_MODE_FINE`/`BINS_MODE_COARSE`
+(3689/1844, `config/params.toml`) eran los únicos conteos de bins posibles, elegidos por
+`mode_coarse` — una elección fino/grueso, no un registro por lote. Batch mode (D-13) pide algo
+distinto: el lote de vigilancia necesita ver más lejos que el de Doppler, y esa proporción la fija
+el VCP, vía RCP → DSP → DRx — no es un valor fijo de `config/params.toml`.
+
+Decisiones de esta sesión:
+
+- **`mode_coarse` deja de llegar a `drx_range_gate`.** Sigue existiendo (CTRL bit 0), pero solo para
+  `drx_ddc_quad_top` (decimación/tamaño de celda) — un eje distinto e independiente del conteo de
+  bins. `drx_range_gate`/`drx_range_gate_quad_top` ganan un puerto `bin_count` (no `bins`:
+  SystemVerilog reserva esa palabra para coverpoints/randomize) que reemplaza `mode_coarse` por
+  completo en ese módulo.
+- **El conteo activo lo compone `drx_timing_engine`, no `drx_axil_regs`.** `drx_prf_batch_seq` gana
+  `bins_low`/`bins_high` como entradas y `bin_count` como salida, con el mismo mux combinacional que
+  ya usaba para `pulse_width` (seleccionado por `batch_sel`) — ningún registro nuevo de "cuál está
+  activo", el mux ya existía para otra señal.
+- **El techo (D-09) es un PARÁMETRO, no un registro, igual que el piso de PRF de v4.**
+  `drx_timing_config_valid.sv` gana un cuarto check (`bin_count >= 1 && bin_count <= BinsMax`);
+  `BinsMax` por defecto es `BINS_MODE_FINE` para los dos lotes — a diferencia del piso de PRF (que sí
+  difiere por lote), el techo es el mismo requisito físico (una sola BRAM real) para los dos.
+- **`schema_version` sube a 5** por el mismo criterio que v1→v2/v2→v3/v3→v4: dos registros nuevos
+  (BINS_LOW/BINS_HIGH) y un cambio de semántica de CTRL bit 0 (ya no llega a range-gate) que
+  firmware necesita poder detectar.
+
+Verificación: `model/drx_model/timing.py::batch_config_valid` gana `bins`/`bins_max` (D-03).
+`sim/tb/tb_drx_timing_config_valid.py` añade `bin_count` al sweep. `sim/tb/tb_drx_prf_batch_seq.py`
+gana un caso que confirma el mux de `bin_count`. `sim/tb/tb_drx_timing_engine.py` gana un caso con
+los pisos reales de producción (BinsMaxLow/High = BINS_MODE_FINE sin override) que confirma que el
+motor completo propaga el techo hasta el gateo de `enable`. `sim/tb/tb_drx_range_gate.py` reemplaza
+`mode_coarse` por `bin_count` en los 8 tests existentes (D-14 no se re-verifica desde cero: los
+mismos casos de `ray_start` ya cubrían el framing, solo cambió cómo se fija la profundidad del rayo).
+`sim/tb_sv/tb_l1_ddc_range_tri.sv` (xsim real, corrida completa contra Vivado) se reconfirmó con
+`bin_count` derivado del mismo `+mode=` de siempre — fine: 288/288/288 muestras en tolerancia D-12 y
+TLAST bit a bit en los tres canales; coarse: 144/144/144 — las mismas cifras que ya medía D-14,
+confirmando que el puerto nuevo no cambia ni un bit del comportamiento ya verificado bajo D-12.
+`sim/tb/tb_drx_axil_regs.py` gana el mismo RW de 32 bits
+completos que ya cubre PRF_DIV_LOW/HIGH, aplicado a BINS_LOW/HIGH, y su test de "dirección reservada"
+se corrigió a `0x50` (0x48 ya no es reservado). `make check` en verde (108 tests).
+
+Lo que esto NO hace, deliberadamente: no se corrió P&R con este cambio (lógica combinacional
+adicional dentro de un módulo ya cerrado, de bajo costo — una comparación de 32 bits más por
+instancia — la última cifra medida sigue siendo la de v4/D-09) y no toca el código de error del
+contrato hacia el DSP (sigue siendo alcance de Z4, P-15).
+
 ### Semántica del slave
 
 `drx_axil_regs.sv` es un slave AXI4-Lite mínimo a propósito: sin bursts (AXI-Lite no los tiene),
@@ -205,28 +264,27 @@ sitios distintos:
 
 ## Deliberadamente fuera de v3
 
-- **Validación de D-09/D-13 al nivel del registro — completa desde el 22-sep-2026 (más tarde,
-  tercera sesión), sin subir el mapa.** Ver [Z2 en v4](#z2-en-v4) y la actualización de ahí mismo.
-  `PULSE_WIDTH` fuera de tabla, que no quepa en su PRI, y ahora también un `PRF_DIV_LOW`/
-  `PRF_DIV_HIGH` que dé un rango no ambiguo ilegal (el corazón real de D-09) — los tres se rechazan
-  en RTL (`drx_timing_engine` no corre el secuenciador de lotes mientras cualquiera sea cierto, y lo
-  reporta en TIMING_STATUS bits 1/2). El piso de rango es un PARÁMETRO de `drx_timing_config_valid.
-  sv`/`drx_timing_engine.sv` (460 km / 115 km, invariante de `config/params.toml`), no un registro
-  AXI-Lite: es un requisito fijo de producto, no algo que el DSP negocie en runtime — por eso el
-  mapa de registros no sube a v5. Lo único que sigue sin decidirse: qué código de error del contrato
-  reportar hacia el DSP — eso sigue siendo alcance de Z4 (firmware, ver P-15).
-- **Sincronización entre `drx_timing_engine` y `drx_range_gate`/`vector_source`.** Ver
-  [Z2 en v3](#z2-en-v3): ninguna decisión documentada fija cómo debe hacerse, y tocaría RTL de Z1 ya
-  cerrado.
+- **Validación de D-09/D-13 al nivel del registro — completa desde el 25-sep-2026 (D-15), sin subir
+  el mapa por el check de PRF, pero SÍ por el techo de bins.** Ver [Z2 en v4](#z2-en-v4)/
+  [Z2 en v5](#z2-en-v5). `PULSE_WIDTH` fuera de tabla, que no quepa en su PRI, un `PRF_DIV_LOW`/
+  `PRF_DIV_HIGH` que dé un rango no ambiguo ilegal, y un `BINS_LOW`/`BINS_HIGH` que supere la
+  profundidad física de BRAM — los cuatro se rechazan en RTL (`drx_timing_engine` no corre el
+  secuenciador de lotes mientras cualquiera sea cierto, y lo reporta en TIMING_STATUS bits 1/2). El
+  piso de rango sigue siendo un PARÁMETRO (no registro) de `drx_timing_config_valid.sv` (460 km /
+  115 km, invariante de `config/params.toml`) — por eso ESE check no subió el mapa. El conteo de
+  bins en sí SÍ es un registro nuevo (BINS_LOW/HIGH, v5): a diferencia del piso de PRF, es un valor
+  configurable en runtime (viene de DSP/RCP según el VCP), no un requisito fijo. Lo único que sigue
+  sin decidirse: qué código de error del contrato reportar hacia el DSP — eso sigue siendo alcance
+  de Z4 (firmware, ver P-15).
 - **Pines XDC / P&R real para `trig_out`.** Ver [Z2 en v3](#z2-en-v3).
 - **El lado del contrato de [P-15](../alcance/pendientes.md#p-15).** `contract/schema/
   drx_dsp_v0_1.toml` sigue con un solo `prf_div`/`pulse_width_idx`, sin campos para 2 lotes.
 - **Conmutación en caliente fino/grueso** — cerrado como no-requisito, 21-sep-2026, no diferido:
-  `mode_coarse` sigue siendo estático durante una corrida a nivel de RTL (`drx_ddc_top`/
-  `drx_range_gate`), aunque ahora se pueda escribir en tiempo de ejecución. Confirmado por
-  vladimir que esto no hace falta — la resolución de celda solo cambia entre rayos distintos, nunca
-  a mitad de uno, así que el mux estático que ya existe cubre el caso de uso real sin necesitar
-  continuidad de fase. Detalle en `fases.md#z1`, entrada del 21-sep.
+  `mode_coarse` sigue siendo estático durante una corrida a nivel de RTL (`drx_ddc_top`, único
+  consumidor desde v5/D-15 — ya no llega a `drx_range_gate`), aunque se pueda escribir en tiempo de
+  ejecución. Confirmado por vladimir que esto no hace falta — la resolución de celda solo cambia
+  entre rayos distintos, nunca a mitad de uno, así que el mux estático que ya existe cubre el caso
+  de uso real sin necesitar continuidad de fase. Detalle en `fases.md#z1`, entrada del 21-sep.
 
 ## Verificación
 

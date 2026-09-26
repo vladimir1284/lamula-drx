@@ -50,12 +50,18 @@
 // empaquetado hacia el array de entrada de `drx_timing_engine` (que sí
 // acepta arrays sin empaquetar como entrada, sin ese problema).
 //
-// TIMING_STATUS bits 1/2 (v4, D-09) — `config_invalid_low`/`_high` de
-// `drx_timing_engine` (D-09, checks autocontenidos: pulse_width fuera de
-// tabla o que no cabe en su propio PRI) son NIVELES combinacionales, no
-// pulsos: mismo motivo que OVERFLOW para latchearlos aquí (la fuente,
-// `drx_timing_config_valid.sv`, es deliberadamente combinacional y sin
-// estado), misma prioridad set-sobre-clear-concurrente.
+// TIMING_STATUS bits 1/2 (v4, luego D-09 completo desde v5) —
+// `config_invalid_low`/`_high` de `drx_timing_engine` (D-09 completo: tabla,
+// cabe en su propio PRI, PRF x rango, y desde D-15 también el techo de bins)
+// son NIVELES combinacionales, no pulsos: mismo motivo que OVERFLOW para
+// latchearlos aquí (la fuente, `drx_timing_config_valid.sv`, es
+// deliberadamente combinacional y sin estado), misma prioridad
+// set-sobre-clear-concurrente.
+//
+// BINS_LOW/BINS_HIGH (v5, D-15) — mismo patrón RW de paso directo que
+// PRF_DIV_LOW/HIGH: el conteo de bins de range-gate por lote, configurable en
+// runtime (viene de DSP/RCP según el VCP), sin validar aquí -- se valida en
+// `drx_timing_config_valid.sv` contra el techo físico de BRAM.
 
 `ifndef DRX_AXIL_REGS_SV
 `define DRX_AXIL_REGS_SV
@@ -117,6 +123,8 @@ module drx_axil_regs
     output logic [15:0] pulse_width_high,
     output logic [15:0] n_pulses_low,
     output logic [15:0] n_pulses_high,
+    output logic [31:0] bins_low,
+    output logic [31:0] bins_high,
     output logic [31:0] trig_delay_0,
     output logic [31:0] trig_delay_1,
     output logic [31:0] trig_delay_2,
@@ -224,19 +232,19 @@ module drx_axil_regs
   end
 
   // -----------------------------------------------------------------------
-  // Z2 (v3, D-13): registros de configuración de drx_timing_engine, todos
-  // RW de paso directo salvo TIMING_STATUS (sticky, ver más abajo). Este
-  // módulo NO valida nada él mismo -- PRF_DIV_*/PULSE_WIDTH se escriben tal
-  // cual -- pero desde v4 drx_timing_engine SÍ valida los checks
-  // autocontenidos de D-09 (pulse_width en tabla + cabe en su propio PRI) y
-  // se niega a correr si no se cumplen, reportándolo en TIMING_STATUS bits
-  // 1/2 (ver más abajo). PRF x rango no ambiguo sigue sin validar en ningún
-  // sitio de RTL -- ver docs/implementacion/registros.md#deliberadamente-fuera-de-v3.
+  // Z2 (v3, D-13; BINS_LOW/HIGH desde v5, D-15): registros de configuración
+  // de drx_timing_engine, todos RW de paso directo salvo TIMING_STATUS
+  // (sticky, ver más abajo). Este módulo NO valida nada él mismo --
+  // PRF_DIV_*/PULSE_WIDTH/BINS_* se escriben tal cual -- pero drx_timing_engine
+  // SÍ valida D-09 completo (tabla, cabe en su propio PRI, PRF x rango, y
+  // desde D-15 el techo de bins) y se niega a correr si no se cumple,
+  // reportándolo en TIMING_STATUS bits 1/2 (ver más abajo).
   // -----------------------------------------------------------------------
   logic        timing_enable_r;
   logic [31:0] prf_div_low_r, prf_div_high_r;
   logic [15:0] pulse_width_low_r, pulse_width_high_r;
   logic [15:0] n_pulses_low_r, n_pulses_high_r;
+  logic [31:0] bins_low_r, bins_high_r;
   logic [31:0] trig_delay_r[4];
   logic [31:0] trig_width_r[4];
 
@@ -247,6 +255,8 @@ module drx_axil_regs
   assign pulse_width_high = pulse_width_high_r;
   assign n_pulses_low     = n_pulses_low_r;
   assign n_pulses_high    = n_pulses_high_r;
+  assign bins_low         = bins_low_r;
+  assign bins_high        = bins_high_r;
   assign trig_delay_0     = trig_delay_r[0];
   assign trig_delay_1     = trig_delay_r[1];
   assign trig_delay_2     = trig_delay_r[2];
@@ -265,6 +275,8 @@ module drx_axil_regs
       pulse_width_high_r  <= '0;
       n_pulses_low_r      <= '0;
       n_pulses_high_r     <= '0;
+      bins_low_r          <= '0;
+      bins_high_r         <= '0;
       for (int t = 0; t < 4; t++) begin
         trig_delay_r[t] <= '0;
         trig_width_r[t] <= '0;
@@ -282,6 +294,8 @@ module drx_axil_regs
           n_pulses_low_r  <= wdata_r[15:0];
           n_pulses_high_r <= wdata_r[31:16];
         end
+        REG_BINS_LOW_ADDR: bins_low_r <= wdata_r;
+        REG_BINS_HIGH_ADDR: bins_high_r <= wdata_r;
         REG_TRIG_DELAY_0_ADDR: trig_delay_r[0] <= wdata_r;
         REG_TRIG_DELAY_1_ADDR: trig_delay_r[1] <= wdata_r;
         REG_TRIG_DELAY_2_ADDR: trig_delay_r[2] <= wdata_r;
@@ -392,6 +406,8 @@ module drx_axil_regs
       REG_PRF_DIV_HIGH_ADDR: rdata_next = prf_div_high_r;
       REG_PULSE_WIDTH_ADDR: rdata_next = {pulse_width_high_r, pulse_width_low_r};
       REG_N_PULSES_ADDR: rdata_next = {n_pulses_high_r, n_pulses_low_r};
+      REG_BINS_LOW_ADDR: rdata_next = bins_low_r;
+      REG_BINS_HIGH_ADDR: rdata_next = bins_high_r;
       REG_TRIG_DELAY_0_ADDR: rdata_next = trig_delay_r[0];
       REG_TRIG_DELAY_1_ADDR: rdata_next = trig_delay_r[1];
       REG_TRIG_DELAY_2_ADDR: rdata_next = trig_delay_r[2];

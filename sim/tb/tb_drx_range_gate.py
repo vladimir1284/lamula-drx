@@ -1,16 +1,19 @@
 """L0 — `drx_range_gate`.
 
-`BINS_FINE`/`BINS_COARSE` los pasa el runner pequeños (8 y 4, ver
-`sim/tests/test_l0_range_gate.py`) para poder correr muchos rayos sin simular
-los 3689/1844 reales — mismo motivo que `DIV` en `tb_drx_heartbeat.py`. 8 se
-eligió a propósito potencia de dos: es el caso que rompía una primera versión
-de este módulo, que confundía el CONTEO de bins con el ÍNDICE máximo y no
-cabía en `$clog2(8) = 3` bits (ver el comentario de `last_idx` en el RTL).
+`BINS_MAX` lo pasa el runner pequeño (8, ver `sim/tests/test_l0_range_gate.py`)
+para poder correr muchos rayos sin simular los 3689 reales — mismo motivo que
+`DIV` en `tb_drx_heartbeat.py`. 8 se eligió a propósito potencia de dos: es el
+caso que rompía una primera versión de este módulo, que confundía el CONTEO de
+bins con el ÍNDICE máximo y no cabía en `$clog2(8) = 3` bits (ver el
+comentario de `last_idx` en el RTL). `bin_count` (D-15, registro de entrada,
+reemplaza `mode_coarse`) se conduce con dos profundidades distintas dentro de
+ese mismo techo (8 y 4) -- ya no hay una elección binaria "fino/grueso", así
+que estos dos valores son solo dos puntos del sweep, no dos modos.
 
 El módulo no tiene un oráculo de valores propio — no hace aritmética, solo
 reordena en el tiempo — así que el criterio de corrección es estructural: la
 secuencia de `(i, q)` que sale, en orden, tiene que ser exactamente la que
-entró, con `m_last` cayendo en la muestra `bins-1` de cada rayo. Eso es
+entró, con `m_last` cayendo en la muestra `bin_count-1` de cada rayo. Eso es
 literalmente `model/drx_model/gating.py::tlast_mask` trasladado a hardware.
 """
 
@@ -33,7 +36,7 @@ async def _reset(dut) -> None:
     dut.s_valid.value = 0
     dut.s_i.value = 0
     dut.s_q.value = 0
-    dut.mode_coarse.value = 0
+    dut.bin_count.value = BINS_FINE
     dut.m_ready.value = 1
     dut.clear.value = 0
     dut.ray_start.value = 0
@@ -44,7 +47,7 @@ async def _reset(dut) -> None:
 
 
 async def _feed_and_collect(
-    dut, n_samples: int, mode_coarse: bool, ready_sequence=None, write_period: int = 1
+    dut, n_samples: int, bin_count: int, ready_sequence=None, write_period: int = 1
 ):
     """Envía `n_samples` muestras crecientes y recoge lo que sale por `m_*`.
 
@@ -62,7 +65,7 @@ async def _feed_and_collect(
     ciclos de `FS_HZ` (208/416, muy por encima de 1), así que espaciar aquí no
     es relajar el test: es el caso realista.
     """
-    dut.mode_coarse.value = 1 if mode_coarse else 0
+    dut.bin_count.value = bin_count
 
     sent = []
     received = []
@@ -122,30 +125,31 @@ async def _feed_and_collect(
 
 
 @cocotb.test()
-async def test_orden_y_tlast_modo_fino(dut):
-    """En modo fino, `m_last` cae cada `BINS_FINE` muestras y el orden se conserva."""
+async def test_orden_y_tlast_bins_fine(dut):
+    """`m_last` cae cada `BINS_FINE` muestras y el orden se conserva."""
     cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
     await _reset(dut)
 
     n_rays = 5
-    sent, received = await _feed_and_collect(dut, BINS_FINE * n_rays, mode_coarse=False)
+    sent, received = await _feed_and_collect(dut, BINS_FINE * n_rays, bin_count=BINS_FINE)
 
     assert len(received) == len(sent), f"se perdieron muestras: {len(received)} de {len(sent)}"
     assert [(i, q) for i, q, _ in received] == sent, "el orden de (i, q) no coincide con lo enviado"
 
     last_flags = [last for _, _, last in received]
     expected_last = [(idx % BINS_FINE) == (BINS_FINE - 1) for idx in range(len(sent))]
-    assert last_flags == expected_last, "m_last no cae en la muestra bins-1 de cada rayo"
+    assert last_flags == expected_last, "m_last no cae en la muestra bin_count-1 de cada rayo"
 
 
 @cocotb.test()
-async def test_orden_y_tlast_modo_grueso(dut):
-    """Mismo criterio que en fino, con `BINS_COARSE`."""
+async def test_orden_y_tlast_bins_coarse(dut):
+    """Mismo criterio, con una profundidad de rayo distinta (`BINS_COARSE`) --
+    D-15: `bin_count` es un registro por lote, no una elección fino/grueso."""
     cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
     await _reset(dut)
 
     n_rays = 6
-    sent, received = await _feed_and_collect(dut, BINS_COARSE * n_rays, mode_coarse=True)
+    sent, received = await _feed_and_collect(dut, BINS_COARSE * n_rays, bin_count=BINS_COARSE)
 
     assert len(received) == len(sent), f"se perdieron muestras: {len(received)} de {len(sent)}"
     assert [(i, q) for i, q, _ in received] == sent
@@ -168,7 +172,7 @@ async def test_backpressure_intermitente_no_pierde_muestras(dut):
 
     n_rays = 4
     sent, received = await _feed_and_collect(
-        dut, BINS_FINE * n_rays, mode_coarse=False, ready_sequence=ready_sequence, write_period=2
+        dut, BINS_FINE * n_rays, bin_count=BINS_FINE, ready_sequence=ready_sequence, write_period=2
     )
 
     assert len(received) == len(sent), (
@@ -189,7 +193,7 @@ async def test_overrun_se_dispara_si_el_lector_no_vacia_a_tiempo(dut):
     cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
     await _reset(dut)
 
-    dut.mode_coarse.value = 0
+    dut.bin_count.value = BINS_FINE
     dut.m_ready.value = 0
 
     assert int(dut.overrun.value) == 0, "overrun arranca en alto sin haber corrido nada"
@@ -224,7 +228,7 @@ async def test_clear_limpia_overrun_y_permite_un_segundo_disparo(dut):
     cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
     await _reset(dut)
 
-    dut.mode_coarse.value = 0
+    dut.bin_count.value = BINS_FINE
     dut.m_ready.value = 0
 
     async def _run_one_ray() -> None:
@@ -334,7 +338,7 @@ async def test_ray_start_alineado_con_wrap_natural_es_no_op(dut):
     """D-14: `ray_start` a la vez que el wrap natural (PRI bien calibrado) no cambia nada."""
     cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
     await _reset(dut)
-    dut.mode_coarse.value = 0
+    dut.bin_count.value = BINS_FINE
 
     n_rays = 3
     actions = []
@@ -362,7 +366,7 @@ async def test_ray_start_temprano_descarta_el_banco_en_curso(dut):
     """D-14: `ray_start` a mitad de rayo descarta ese banco entero, no lo emite truncado."""
     cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
     await _reset(dut)
-    dut.mode_coarse.value = 0
+    dut.bin_count.value = BINS_FINE
 
     actions = (
         [("sample", 100 + n) for n in range(3)]  # menos de BINS_FINE: rayo a medias
@@ -383,7 +387,7 @@ async def test_ray_start_con_tiempo_muerto_descarta_muestras_extra(dut):
     """D-14: muestras que llegan en el tiempo muerto tras un rayo completo se descartan."""
     cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
     await _reset(dut)
-    dut.mode_coarse.value = 0
+    dut.bin_count.value = BINS_FINE
 
     actions = (
         [("sample", 300 + n) for n in range(BINS_FINE)]  # rayo 1, completo por wrap natural
