@@ -1,7 +1,7 @@
-# Mapa de registros AXI-Lite — v6 (Z1 + Z2)
+# Mapa de registros AXI-Lite — v7 (Z1 + Z2 + Z4.1)
 
 Hasta el 19-sep-2026 este entregable de Z1 no existía en absoluto — ni RTL ni documento. Esta
-página describe el mapa **v6** (25-sep-2026): lo que `drx_top` controla y observa hoy vía
+página describe el mapa **v7** (26-sep-2026): lo que `drx_top` controla y observa hoy vía
 `drx_axil_regs`, y lo que deliberadamente queda fuera todavía. La sección de más abajo explica por
 qué "vía AXI-Lite" no significa todavía "alcanzable desde firmware real".
 
@@ -10,8 +10,10 @@ qué "vía AXI-Lite" no significa todavía "alcanzable desde firmware real".
 reservados de TIMING_STATUS para los checks autocontenidos de D-09 — ver [Z2 en v4](#z2-en-v4).
 **v5** añade BINS_LOW/BINS_HIGH (conteo de bins de range-gate por lote, [D-15](../alcance/decisiones.md#d-15))
 y con eso cierra D-09 del todo — ver [Z2 en v5](#z2-en-v5). **v6** añade GATE_TRUNCATED, el BITE de
-tiempo muerto que D-14 dejaba explícitamente abierto — ver [Z2 en v6](#z2-en-v6). v1/v2 (Z1,
-19/20-sep-2026) siguen descritas tal cual en la sección [Historial](#historial-v1v2).
+tiempo muerto que D-14 dejaba explícitamente abierto — ver [Z2 en v6](#z2-en-v6). **v7** añade
+TRIG_COUNT, el contador de trigger que el firmware de ensamblado de rayos (Z4.4) necesitará como
+metadato — ver [Z4 en v7](#z4-en-v7). v1/v2 (Z1, 19/20-sep-2026) siguen descritas tal cual en la
+sección [Historial](#historial-v1v2).
 
 Fuente única de verdad: `config/registers.toml`. `tools/gen_registers.py` genera
 `rtl/generated/drx_regs_pkg.sv` (RTL) y `fw/include/drx_regs.h` (firmware) desde ese fichero —
@@ -89,7 +91,9 @@ palabras — subió de 6/16 en v3 porque el bloque de Z2 no cabía). Implementad
 | `0x38`–`0x44` | TRIG_WIDTH_0..3 | RW | `[31:0]` | Ancho del pulso de cada canal. Tiene que ser ≥ 1 (sin validar en RTL, ver la cabecera de `drx_trigger_one_shot.sv`). |
 | `0x48` | BINS_LOW | RW | `[31:0]` | Conteo de bins de range-gate del lote bajo (D-15, v5): cuántas muestras decimadas entran en un rayo de este lote. Configurable en runtime — viene de DSP, que a su vez lo recibe de RCP según el VCP. Validado en RTL: tiene que ser ≥ 1 y no superar `BINS_MODE_FINE` (3689, la profundidad física real de la BRAM de `drx_range_gate`), o el lote queda inválido — ver TIMING_STATUS y [Z2 en v5](#z2-en-v5). |
 | `0x4C` | BINS_HIGH | RW | `[31:0]` | Conteo de bins de range-gate del lote alto (Doppler). Mismas condiciones que BINS_LOW. |
-| `0x50`… | — | — | — | Reservado, sin implementar. Lee 0, escribir no tiene efecto. |
+| `0x50` | GATE_TRUNCATED | RO + write-1-to-clear | `[N_CH-1:0]` | Bit `c` = `ray_truncated` sticky del canal `c` de range-gate (BITE de D-14, v6) — ver [Z2 en v6](#z2-en-v6). |
+| `0x54` | TRIG_COUNT | RO | `[31:0]` | Contador libre de 32 bits: incrementa un pulso de `pulse_trig` de `drx_timing_engine` (el mismo que ya dispara `ray_start`, D-14) por ciclo. Sin write-1-to-clear — es un conteo monótono, no un diagnóstico sticky; envuelve en 2^32 pulsos. Ver [Z4 en v7](#z4-en-v7). |
+| `0x58`… | — | — | — | Reservado, sin implementar. Lee 0, escribir no tiene efecto. |
 
 `N_CH` es el mismo generic que ya usa `drx_top` (3 hoy, Config A/B de
 [P-12](../alcance/pendientes.md#p-12); sería `N_RX_CH` en la ZU9). El ancho de STATUS/OVERFLOW se
@@ -296,6 +300,32 @@ lógica de bajo costo dentro de un módulo ya cerrado) y no toca el código de e
 el DSP (Z4, P-15). La instrumentación de jitter en fabric y los pines XDC de `trig_out` se
 resolvieron aparte, la misma sesión, más tarde — ver [Deliberadamente fuera de v3](#deliberadamente-fuera-de-v3)
 y `fases.md#z2`.
+
+### Z4 en v7 { #z4-en-v7 }
+
+**26-sep-2026, Z4.1.** Primera pieza de firmware/datapath planeada después de Z4.0 (empaquetador de
+rayo + AXI DMA S2MM, ver `fases.md#z4`). `fases.md#z4` ya listaba "contador de trigger" como uno de
+los metadatos que el firmware de ensamblado de rayos (Z4.4) tiene que adjuntar a cada rayo junto con
+az/el, PRF, modo de pulso, ancho y timestamps — este registro es la fuente de hardware para ese dato,
+antes de que exista el firmware que lo lea.
+
+- **RO puro, sin sticky ni write-1-to-clear — a propósito, distinto de STATUS/OVERFLOW/
+  GATE_TRUNCATED.** Los otros tres son diagnósticos (algo salió mal, y firmware necesita poder
+  rearmarlos para ver el próximo evento). TRIG_COUNT no es un diagnóstico: es un contador monótono
+  que firmware lee, no un latch que firmware limpia. Envuelve en 2^32 pulsos en vez de saturar.
+- **Cuenta `pulse_trig`, no un pulso nuevo.** `drx_timing_engine.pulse_trig` ya es la señal que
+  D-14 conecta a `ray_start` de `drx_range_gate_quad_top` — el mismo evento que arranca un rayo
+  nuevo es el que este registro cuenta, así que el valor de TRIG_COUNT en el momento en que un rayo
+  termina de escribirse en DDR (interrupción de fin de descriptor del AXI DMA, Z4.0) es directamente
+  el índice de ese rayo. No hace falta ninguna señal nueva de `drx_timing_engine`.
+- **`schema_version` sube a 7** por el mismo criterio que las subidas anteriores.
+
+Verificación: `sim/tb/tb_drx_axil_regs.py` gana `test_trig_count_incrementa_por_pulso_y_es_solo_
+lectura` — incrementa exactamente un pulso de `pulse_trig_in` por ciclo, no se mueve solo sin
+pulsos, y una escritura no cambia nada (a diferencia de los registros W1C, ninguna dirección de
+escritura tiene efecto sobre él). `make check` en verde. No se corrió P&R con este cambio — mismo
+argumento que v5/v6: lógica de bajo costo (un sumador de 32 bits) dentro de un módulo ya cerrado, sin
+tocar ningún camino crítico.
 
 ### Semántica del slave
 

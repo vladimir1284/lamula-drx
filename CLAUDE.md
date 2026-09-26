@@ -135,9 +135,14 @@ interrupción de fabric, ambos deshabilitados hasta ahora). P&R de `-top zynq` c
 integrado: **WNS = 1,706 ns** (sube desde 1,295 ns, la ruta crítica sigue siendo
 PS7↔interconnect↔`drx_axil_regs`, sin tocar por este cambio). Detalle completo, con los dos hallazgos
 reales de Vivado que hicieron falta corregir (pin de reloj del stream de entrada del DMA, `HAS_TLAST`
-del puerto AXI4-Stream externo), en `fases.md#z4`, entrada del 26-sep. Sigue sin existir firmware
-real (`drx_app.elf` sigue siendo el *Hello World* de Vitis) y nada de esto se probó en una ZedBoard
-física — próximo paso planeado, **Z4.1** (registro `TRIG_COUNT`, mapa de registros v7).
+del puerto AXI4-Stream externo), en `fases.md#z4`, entrada del 26-sep. **Z4.1 cerrada** el mismo
+día: mapa de registros **v7**, registro `TRIG_COUNT` (RO, contador libre de 32 bits que incrementa
+con el mismo `pulse_trig` de `drx_timing_engine` que ya dispara `ray_start`, D-14) — el "contador de
+trigger" que `fases.md#z4` ya listaba como metadato de rayo para el firmware de ensamblado (Z4.4).
+Sin P&R nuevo (mismo criterio que v5/v6: lógica de bajo costo dentro de un módulo ya cerrado).
+Sigue sin existir firmware real (`drx_app.elf` sigue siendo el *Hello World* de Vitis) y nada de
+esto se probó en una ZedBoard física — próximo paso planeado, **Z4.2** (FreeRTOS real + driver de
+registros + lwIP sobre GEM0, primer bring-up físico del proyecto).
 
 Lo que sí está hecho y verificado, además de lo de arriba:
 

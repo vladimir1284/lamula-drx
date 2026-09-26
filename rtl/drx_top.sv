@@ -287,7 +287,11 @@ module drx_top
       .radial_done_in(timing_radial_done),
 
       .config_invalid_low_in (timing_config_invalid_low),
-      .config_invalid_high_in(timing_config_invalid_high)
+      .config_invalid_high_in(timing_config_invalid_high),
+
+      // Z4.1: TRIG_COUNT -- mismo pulse_trig que ya dispara ray_start (D-14),
+      // ver la cabecera de drx_axil_regs.sv.
+      .pulse_trig_in(timing_pulse_trig)
   );
 
   // `pulse_trig` SÍ tiene consumidor real ahora (D-14: `ray_start` de

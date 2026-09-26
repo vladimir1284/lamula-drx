@@ -55,12 +55,22 @@
 # bits nuevos de STATUS/TIMING_STATUS) porque es un diagnóstico distinto con
 # su propia fuente y su propio clear en RTL (`clear_truncated`, no comparte
 # `clear` con `overrun`).
-schema_version = 6
+#
+# v7 (26-sep-2026, Z4.1) añade TRIG_COUNT: contador libre de 32 bits que
+# incrementa una vez por cada pulso de `pulse_trig` de drx_timing_engine (el
+# mismo pulso que ya dispara `ray_start` en drx_range_gate_quad_top, D-14) --
+# el "contador de trigger" que fases.md#z4 ya listaba como parte de los
+# metadatos que el firmware de ensamblado de rayos (Z4.4) tiene que adjuntar a
+# cada rayo. Solo lectura, sin write-1-to-clear: es un contador monótono desde
+# reset, no un diagnóstico sticky -- envuelve en 2^32 pulsos, muy por encima
+# de cualquier sesión real. `mode_coarse`/BINS_*/etc no cambian de semántica;
+# este registro es puramente aditivo.
+schema_version = 7
 
 # Bytes direccionables: 2^addr_width = 128 B = 32 palabras de 32 bits. Las
-# primeras 21 palabras (0x00-0x50) están implementadas (Z1 + Z2 v3/v5/v6); el
-# resto (0x54 en adelante) queda reservado sin implementar (lee 0, escritura
-# sin efecto), sin diseñarlo ahora.
+# primeras 22 palabras (0x00-0x54) están implementadas (Z1 + Z2 v3/v5/v6 +
+# Z4.1 v7); el resto (0x58 en adelante) queda reservado sin implementar (lee
+# 0, escritura sin efecto), sin diseñarlo ahora.
 addr_width = 7
 
 [[register]]
@@ -192,3 +202,11 @@ name = "gate_truncated"
 offset = 0x50
 access = "w1c"
 doc = "Bit c: ray_truncated sticky del canal c de range-gate (drx_range_gate_quad_top.ray_truncated) -- BITE de D-14 (v6): se pone en 1 cuando un ray_start (D-14) llega con el puntero de escritura del canal c a mitad de rayo (tiempo muerto acumulado, o un PRI configurado más corto que bin_count) y descarta ese banco en curso sin emitirlo. Un ray_start que coincide con el wrap natural (el banco se completa por cuenta propia ese mismo ciclo) NO lo activa -- eso es operación normal, no un fallo. Mismo patrón W1C que status: escribir 1 en el bit c pulsa clear_truncated hacia el canal c de drx_range_gate; un truncamiento genuino el mismo ciclo que el clear gana. Registro propio, no bits nuevos de status/timing_status: es un diagnóstico distinto, con su propia fuente en RTL y su propio clear (no comparte clear con overrun). Bits >= N_CH leen 0."
+
+# --- Z4.1 (26-sep-2026): contador de trigger, metadato de rayo --------------
+
+[[register]]
+name = "trig_count"
+offset = 0x54
+access = "ro"
+doc = "Contador libre de 32 bits: incrementa una vez por cada pulso de pulse_trig de drx_timing_engine (el mismo pulso que ya dispara ray_start en drx_range_gate_quad_top, D-14). No es sticky ni write-1-to-clear -- es un conteo monótono desde el último reset, el 'contador de trigger' que fases.md#z4 ya listaba como metadato de rayo para el firmware de ensamblado (Z4.4). Envuelve en 2^32 pulsos."

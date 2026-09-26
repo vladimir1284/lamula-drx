@@ -70,6 +70,13 @@
 // no bits nuevos de STATUS: es un diagnóstico distinto, con su propia fuente
 // y su propio clear en RTL (`drx_range_gate.clear_truncated`, no comparte
 // `clear`/`overrun`).
+//
+// TRIG_COUNT (offset REG_TRIG_COUNT_ADDR, v7, Z4.1) — contador libre de 32
+// bits, incrementa un pulso de `pulse_trig_in` (el mismo `pulse_trig` de
+// `drx_timing_engine` que ya dispara `ray_start`, D-14) por ciclo. A
+// diferencia de STATUS/OVERFLOW/GATE_TRUNCATED, NO es sticky-con-W1C: es RO
+// puro, un conteo monótono sin ningún puerto de limpieza — envuelve en 2^32
+// pulsos en vez de saturar o requerir que firmware lo rearme.
 
 `ifndef DRX_AXIL_REGS_SV
 `define DRX_AXIL_REGS_SV
@@ -153,7 +160,11 @@ module drx_axil_regs
     // Planta -> registro (ver cabecera: niveles combinacionales, latcheados
     // aquí igual que OVERFLOW). D-09, checks autocontenidos.
     input logic config_invalid_low_in,
-    input logic config_invalid_high_in
+    input logic config_invalid_high_in,
+
+    // Z4.1: pulso de un ciclo de drx_timing_engine.pulse_trig -- ver la
+    // cabecera de TRIG_COUNT.
+    input logic pulse_trig_in
 );
 
   // `s_axi_wstrb` no se usa a propósito (ver cabecera); se silencia en vez de
@@ -371,6 +382,20 @@ module drx_axil_regs
     end
   end
 
+  // TRIG_COUNT (v7, Z4.1): contador libre, sin W1C -- ver cabecera del
+  // módulo. Ningún `write_commit` lo toca (RO puro); el `unique case` del
+  // canal de escritura ya tiene un `default: ;` que cubre esta dirección sin
+  // hacer nada.
+  logic [31:0] trig_count_r;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      trig_count_r <= '0;
+    end else if (pulse_trig_in) begin
+      trig_count_r <= trig_count_r + 32'd1;
+    end
+  end
+
   assign s_axi_bresp = 2'b00;  // OKAY siempre, ver cabecera
 
   always_ff @(posedge clk or negedge rst_n) begin
@@ -419,6 +444,7 @@ module drx_axil_regs
       REG_GATE_TRUNCATED_ADDR: begin
         for (int c = 0; c < N_CH; c++) rdata_next[c] = ray_truncated_in[c];
       end
+      REG_TRIG_COUNT_ADDR: rdata_next = trig_count_r;
       REG_OVERFLOW_ADDR: begin
         for (int c = 0; c < N_CH; c++) rdata_next[c] = overflow_sticky_r[c];
       end

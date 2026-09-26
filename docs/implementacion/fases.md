@@ -1209,6 +1209,33 @@ Trabajo:
       "validado" a secas. Siguiente paso planeado: **Z4.1**, registro `TRIG_COUNT` (mapa de
       registros v7).
 
+!!! success "26-sep-2026 (más tarde): Z4.1 — registro TRIG_COUNT, mapa de registros v7"
+    `fases.md#z4` (arriba, "Trabajo") ya listaba "contador de trigger" como uno de los metadatos que
+    el firmware de ensamblado de rayos (Z4.4) tiene que adjuntar a cada rayo, junto con az/el, PRF,
+    modo de pulso, ancho y timestamps. Este registro es la fuente de hardware para ese dato, antes de
+    que exista el firmware que lo lea.
+
+    - **`config/registers.toml` v7**: `TRIG_COUNT` (offset 0x54, RO, 32 bits) — contador libre que
+      incrementa un pulso de `pulse_trig` de `drx_timing_engine` por ciclo. `pulse_trig` es el mismo
+      pulso que D-14 ya conecta a `ray_start` de `drx_range_gate_quad_top`, así que no hace falta
+      ninguna señal nueva de `drx_timing_engine` — el valor de TRIG_COUNT en el momento en que un
+      rayo termina de escribirse en DDR (interrupción de fin de descriptor del AXI DMA, Z4.0) es
+      directamente el índice de ese rayo.
+    - **RO puro, sin sticky ni write-1-to-clear** — a propósito, distinto de STATUS/OVERFLOW/
+      GATE_TRUNCATED: esos tres son diagnósticos que firmware rearma; TRIG_COUNT es un conteo
+      monótono que firmware solo lee. Envuelve en 2^32 pulsos.
+    - **`rtl/drx_axil_regs.sv`**: nuevo puerto `pulse_trig_in`, un sumador de 32 bits sin reset más
+      que a 0. `rtl/drx_top.sv` lo alimenta con `timing_pulse_trig` (la misma señal que ya alimenta
+      `ray_start` vía `u_gate`).
+    - **Verificado en L0**: `sim/tb/tb_drx_axil_regs.py` gana un caso nuevo — incrementa
+      exactamente un pulso por ciclo, no se mueve sin pulsos, y una escritura no tiene ningún efecto.
+      `make check` en verde (109 tests, mismo número que tras Z4.0 — es un sub-test de cocotb dentro
+      de una entrada de pytest ya existente, no suma una entrada nueva).
+    - **Sin P&R nuevo** — mismo criterio que v5/v6: lógica de bajo costo dentro de un módulo ya
+      cerrado, sin tocar ningún camino crítico.
+    - Siguiente paso planeado: **Z4.2**, FreeRTOS real (reemplaza el *Hello World* de Vitis) + driver
+      de registros AXI-Lite + lwIP raw sobre GEM0 — primer bring-up físico de todo el proyecto.
+
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
 Trabajo:

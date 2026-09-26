@@ -40,9 +40,10 @@ REG_TRIG_WIDTH_ADDR = [0x38, 0x3C, 0x40, 0x44]
 REG_BINS_LOW_ADDR = 0x48
 REG_BINS_HIGH_ADDR = 0x4C
 REG_GATE_TRUNCATED_ADDR = 0x50
-REG_RESERVED_ADDR = 0x54  # primera palabra sin implementar desde v6 (BITE de D-14)
+REG_TRIG_COUNT_ADDR = 0x54  # v7, Z4.1
+REG_RESERVED_ADDR = 0x58  # primera palabra sin implementar desde v7
 
-REGS_VERSION = 6
+REGS_VERSION = 7
 
 
 async def _reset(dut) -> None:
@@ -62,6 +63,7 @@ async def _reset(dut) -> None:
     dut.radial_done_in.value = 0
     dut.config_invalid_low_in.value = 0
     dut.config_invalid_high_in.value = 0
+    dut.pulse_trig_in.value = 0
     for _ in range(3):
         await RisingEdge(dut.clk)
     dut.rst_n.value = 1
@@ -260,6 +262,33 @@ async def test_gate_truncated_write_1_to_clear_pulsa_ray_truncated_clear(dut):
 
     await RisingEdge(dut.clk)
     assert int(dut.ray_truncated_clear.value) == 0, "el pulso de clear dura un solo ciclo"
+
+
+@cocotb.test()
+async def test_trig_count_incrementa_por_pulso_y_es_solo_lectura(dut):
+    """TRIG_COUNT (v7, Z4.1) incrementa un pulso de `pulse_trig_in` por ciclo,
+    sin sticky ni W1C -- a diferencia de STATUS/OVERFLOW/GATE_TRUNCATED, no
+    tiene ningún puerto de limpieza: escribir ahí no debe cambiar nada."""
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    assert await axil_read(dut, REG_TRIG_COUNT_ADDR) == 0
+
+    for expected in range(1, 4):
+        dut.pulse_trig_in.value = 1
+        await RisingEdge(dut.clk)
+        dut.pulse_trig_in.value = 0
+        assert await axil_read(dut, REG_TRIG_COUNT_ADDR) == expected
+
+    await axil_write(dut, REG_TRIG_COUNT_ADDR, 0xFFFF_FFFF)
+    assert await axil_read(dut, REG_TRIG_COUNT_ADDR) == 3, (
+        "TRIG_COUNT es RO -- escribir ahí no debe tener ningún efecto"
+    )
+
+    # Varios ciclos sin pulso: el contador no se mueve solo.
+    for _ in range(5):
+        await RisingEdge(dut.clk)
+    assert await axil_read(dut, REG_TRIG_COUNT_ADDR) == 3
 
 
 @cocotb.test()
