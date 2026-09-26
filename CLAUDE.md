@@ -14,21 +14,25 @@ con el RCP ni con ORPG.
   16 bits, 250 MSPS, JESD204B). **Aún no comprada.**
 - **Plataforma de desarrollo actual:** Digilent ZedBoard, XC7Z020-CLG484-1.
 
-## Estado, a 21 de septiembre de 2026
+## Estado, a 26 de septiembre de 2026
 
-**Z0 — substrato: cerrada.** `make check` sigue en verde (79 tests hoy, Verilator + gcc + NumPy +
+**Z0 — substrato: cerrada.** `make check` sigue en verde (108 tests hoy, Verilator + gcc + NumPy +
 lint). Detalle en el tutorial de `docs/tutorial/` e inventario en `docs/implementacion/substrato.md`.
 El runner de CI con Vivado (`[self-hosted, vivado]`) **se montó el 21-sep-2026** — la propia máquina
 de desarrollo, registrada como runner, `HAS_VIVADO_RUNNER=true`. El job `gateware` ya corre de verdad
 en CI, no solo a mano: `substrato` y la síntesis+bitstream de `zedboard` cierran verdes (WNS = 2,489
-ns). ZM0 tal como lo define `docs/implementacion/fases.md` («`git push` produce un `BOOT.BIN` byte a
-byte sin intervención humana») **sigue sin cumplirse**, pero ya no por falta de runner: el paso
-`BOOT.BIN reproducible` de CI llega hasta el límite real y ya documentado de Z4 — falta `fsbl.elf`/
-`drx_app.elf`. De paso se encontraron y corrigieron tres bugs reales de infraestructura que nadie
-había ejercitado antes (lint de HDL desincronizado del Makefile, DRC de bitstream bloqueando
-`debug_probe`, nombre de archivo equivocado en `make_boot.sh`) y se sacó `zu9` de la matriz de CI:
-este Vivado no tiene el device pack de Zynq UltraScale+ instalado. Ver A7/A8/A11 en
-`docs/alcance/pendientes.md` y `fases.md#z1`, entrada del 21-sep (más tarde).
+ns). El bloqueador que dejaba ZM0 sin cumplir —`fsbl.elf`/`drx_app.elf` inexistentes— se cerró a
+mano el 26-sep-2026 (BSP/FSBL vía Vitis, detalle en «Lo primero que hay que hacer» más abajo):
+`tools/make_boot.sh` ya no falla y `BOOT.BIN` salió reproducible byte a byte. **ZM0 tal como lo
+define `docs/implementacion/fases.md`** («`git push` produce un `BOOT.BIN` byte a byte sin
+intervención humana») **todavía no está confirmado**: `.github/workflows/ci.yml` ya tiene los pasos
+de Vitis añadidos (26-sep), pero nadie ha visto un `git push` real completar ese camino en el runner
+de CI todavía — es la única verificación que falta, no diseño pendiente. De paso se encontraron y
+corrigieron tres bugs reales de infraestructura que nadie había ejercitado antes (lint de HDL
+desincronizado del Makefile, DRC de bitstream bloqueando `debug_probe`, nombre de archivo equivocado
+en `make_boot.sh`) y se sacó `zu9` de la matriz de CI: este Vivado no tiene el device pack de Zynq
+UltraScale+ instalado. Ver A7/A8/A11 en `docs/alcance/pendientes.md` y `fases.md#z1`, entrada del
+21-sep (más tarde) y del 26-sep.
 
 **Z1 — DDC + range gating: en curso, avanzada, no cerrada.** `rtl/drx_ddc_top.sv` existe, corre
 contra IP real de Xilinx (DDS Compiler, CIC Compiler, FIR Compiler ×2) y está verificado con la
@@ -100,6 +104,24 @@ fases.md#z1` es la fuente viva:
   varianza de los estimadores de momento bajo el residuo aceptado por D-12, contra Doviak & Zrnic
   cap. 6. Deuda de validación sobre una decisión ya tomada, no una condición de cierre de Z1.
 
+**Z2 — motor de timing, triggers y PRF: cerrada, 25-sep-2026.** Las seis piezas de la lista de
+trabajo de Z2 (`docs/implementacion/fases.md#z2`) resueltas y verificadas: generador de 4 triggers
+configurables (`rtl/drx_trigger_gen.sv`), secuenciador de 2 lotes de PRF/ancho de pulso por radial —
+Batch mode de NEXRAD, no *pie-slice* — (`rtl/drx_prf_batch_seq.sv`,
+[D-13](docs/alcance/decisiones.md#d-13), cierra P-04), validador PRF × rango no ambiguo completo en
+fabric (`rtl/drx_timing_config_valid.sv`, [D-09](docs/alcance/decisiones.md#d-09)), sincronización
+determinista trigger↔gating (`ray_start`, [D-14](docs/alcance/decisiones.md#d-14)), conteo de bins
+de range-gate por lote configurable en runtime ([D-15](docs/alcance/decisiones.md#d-15)) y BITE de
+tiempo muerto (`ray_truncated`, mapa de registros v6). Instrumentación de jitter en fabric cerrada
+como no-requisito, mismo criterio que la conmutación fino/grueso de Z1 — el camino de `trig_out`
+(pines XDC reales sobre Pmod JA) + osciloscopio ya cubre lo que pide ZM2. P&R re-confirmado en cada
+paso; la última cifra, con los pines de `trig_out` ya fijados, es **WNS = 1,295 ns** (`-top zynq`) —
+bajando de forma sostenida desde los 2,528 ns previos a Z2 (cada pieza nueva se apila sobre el mismo
+camino crítico PS7↔interconnect↔`drx_axil_regs`), vale la pena vigilar antes de seguir sumando
+registros o pines a este mapa. Lo único que le falta al hito ZM2 tal como está escrito es la medida
+«en placa» con osciloscopio — trabajo físico sobre hardware real, fuera de lo que un agente puede
+hacer sin acceso a la placa.
+
 Lo que sí está hecho y verificado, además de lo de arriba:
 
 - El sitio de documentación se construye y se despliega solo a
@@ -125,16 +147,30 @@ de ZedBoard y el project plan original de 34 semanas para la ZU9.
 
 ## Lo primero que hay que hacer
 
-Para cerrar Z1 de verdad, en orden:
-
-1. BSP/FSBL vía Vitis desde el XSA que ya exporta `-top zynq -step xsa` (ver el punto 2) — Z4 real,
-   `fw/Makefile` ya lo dice explícitamente. `tools/make_boot.sh` ya corre de verdad en CI (21-sep) y
-   llega hasta aquí exacto: sigue fallando (`exit 2`, "falta fsbl.elf/drx_app.elf") hasta que este
-   punto produzca esos ELF.
+1. Confirmar ZM0 con un `git push` real: `.github/workflows/ci.yml` ya tiene los pasos de XSA +
+   `tools/build_vitis.sh` + `tools/make_boot.sh` (26-sep-2026, ver el cierre de BSP/FSBL más abajo),
+   pero nadie ha visto ese camino completo correr en el runner de CI todavía — solo a mano en esta
+   máquina. Es verificación, no diseño pendiente.
 2. Puente equivalente para la ZU9 (`zynq_ultra_ps_e`, IP distinta de `processing_system7`) — sin
    diseñar, se hace cuando haga falta. Cuando se retome: este Vivado 2022.2 tampoco tiene el device
    pack de Zynq UltraScale+ instalado (ver A11 en `pendientes.md`), así que instalarlo es requisito
    previo a cualquier síntesis contra `xczu9eg-ffvb1156-2-e`, no solo al diseño del puente.
+
+**BSP/FSBL vía Vitis** ya **no** está en esta lista: cerrado a mano el 26-sep-2026.
+`tcl/gen_bsp.tcl` + `tools/build_vitis.sh` (nuevos) generan BSP/FSBL/`drx_app` con `xsct` desde el
+XSA de `-top zynq -step xsa`; `tools/make_boot.sh` ya no falla y `BOOT.BIN` salió reproducible byte a
+byte (mismo SHA-256 en dos corridas de `bootgen`). `drx_app.elf` es la plantilla *Hello World* de
+Vitis, un placeholder deliberado — no lee ni un registro del mapa AXI-Lite, no corre FreeRTOS; el
+firmware real (FreeRTOS, ensamblado de rayos, lwIP) sigue siendo el resto de Z4, sin empezar, y nada
+de esto se probó en una ZedBoard física. Dos bloqueos de entorno nuevos en esta máquina, mismo patrón
+que el Pi-hole del 21-sep (de sistema, no arquitectónicos): `xsct` necesita `Xvfb` y, aparte,
+`libtinfo.so.5` (Ubuntu 22.04 solo trae `libtinfo6`; el paquete `libtinfo5` vive en `universe`) —
+ninguno estaba instalado, los dos resueltos con `apt-get install`. Hallazgo real sin investigar
+todavía: `bootgen` avisa de solapamiento de rangos entre `fsbl.elf`/`drx_top.bin`/`drx_app.elf` — la
+imagen se genera igual y la reproducibilidad byte a byte se cumple, pero no está confirmado si es el
+falso positivo conocido de bootgen para particiones de bitstream (sin dirección de carga real, se
+cargan por PCAP) o un problema real de mapa de memoria; si aparece un fallo de arranque en placa,
+empezar por aquí. Detalle completo en `fases.md#z1`, entrada del 26-sep.
 
 **Montar el runner de CI `[self-hosted, vivado]`** ya **no** está en esta lista: cerrado el
 21-sep-2026. El bloqueo de `gh auth login` era de credenciales (necesitaba `--web` o un PAT, no
