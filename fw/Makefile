@@ -1,12 +1,12 @@
 # Build del firmware del PS.
 #
-# FASE Z0: aquí solo se construye la auto-comprobación del paquete de parámetros,
-# y se construye PARA EL HOST. El firmware de verdad —FreeRTOS sobre el Cortex-A9,
-# ensamblado de rayos, lwIP sobre GEM0— es Z4 y necesita Vitis y un BSP generado
-# desde el XSA, que este repositorio todavía no produce.
-#
-# Cuando llegue Z4, `CROSS_COMPILE` y `BSP_DIR` son los dos únicos puntos de
-# entrada que hay que rellenar; el resto de la estructura ya vale.
+# Aquí solo se construye la auto-comprobación del paquete de parámetros, y se
+# construye PARA EL HOST -- esto no cambia con Z4. El firmware de verdad
+# —FreeRTOS sobre el Cortex-A9, ensamblado de rayos, lwIP sobre GEM0— vive en
+# fw/src/app/ desde Z4.2 y se compila cruzado dentro del flujo de Vitis/xsct
+# (tcl/gen_bsp.tcl), no con este Makefile: el toolchain de Vitis no es un
+# `$(CC)` de línea de comandos independiente, así que `CROSS_COMPILE`/
+# `BSP_DIR` de abajo nunca llegaron a rellenarse ni hace falta que lo hagan.
 #
 #   make            construye y ejecuta la auto-comprobación
 #   make check      solo la ejecuta

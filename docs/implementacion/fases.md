@@ -1236,6 +1236,64 @@ Trabajo:
     - Siguiente paso planeado: **Z4.2**, FreeRTOS real (reemplaza el *Hello World* de Vitis) + driver
       de registros AXI-Lite + lwIP raw sobre GEM0 — primer bring-up físico de todo el proyecto.
 
+!!! warning "26-sep-2026 (más tarde): Z4.2 — FreeRTOS + lwIP + driver de registros, compilado y empaquetado; **el bring-up físico sigue sin hacerse**"
+    `drx_app` deja de ser el *Hello World* de Vitis (`fw/src/app/`, nuevo, versionado — no dentro de
+    `build/`, que sigue sin trackearse). `tcl/gen_bsp.tcl` pasa de un único dominio `standalone`
+    compartido a **dos dominios** sobre la misma plataforma: `standalone_domain` para `fsbl` (el FSBL
+    de Xilinx no admite FreeRTOS, la propia plantilla "Zynq FSBL" lo confirma) y un
+    `freertos_domain` nuevo (`-os freertos10_xilinx`) para `drx_app`, con la librería `lwip211` y la
+    plantilla de Vitis "FreeRTOS lwIP Echo Server" (Xilinx-IP-first, igual criterio que
+    `AGENTS.md`: no reinventar la pila de red) como base.
+
+    - **Hallazgo real, no cosmético:** `app create -template {...}` NO aplica los parámetros de la
+      librería que trae el `.mss` de referencia de esa plantilla
+      (`freertos_lwip_echo_server.mss`: `api_mode=SOCKET_API`, `lwip_dhcp=true`,
+      `dhcp_does_arp_check=true`, `pbuf_pool_size=2048`) — confirmado leyendo el `.tcl` de la
+      plantilla (ninguna llamada a `bsp config`) y confirmado de nuevo corriendo `bsp listparams -lib
+      lwip211` después de `bsp setlib`: `api_mode` por defecto es `RAW_API` y `lwip_dhcp` por defecto
+      es `false`. `echo.c` de la propia plantilla usa `lwip_socket`/`accept`/`read`/`write` — con
+      `RAW_API` no habría compilado. `tcl/gen_bsp.tcl` fija los cinco parámetros a mano con `bsp
+      config` explícitos, no supone que el `app create` los trae solo.
+    - **`fw/include/drx_regs_hw.h` + `fw/src/app/drx_regs_hw.c` (nuevo):** primer driver real sobre
+      el mapa de registros generado (`fw/include/drx_regs.h`, v7). Envuelve `Xil_In32`/`Xil_Out32`
+      sobre `XPAR_M_AXI_REGS_BASEADDR` — el nombre lo fija `tcl/gen_zynq_bd.tcl` (`m_axi_regs`, el
+      puerto externo del BD), determinista, no una dirección adivinada. Sin estado propio: los
+      latches sticky (STATUS/OVERFLOW/GATE_TRUNCATED/TIMING_STATUS) siguen viviendo en
+      `drx_axil_regs.sv` (write-1-to-clear), este driver solo los lee/limpia.
+    - **`fw/include/drx_status_task.h` + `fw/src/app/drx_status_task.c` (nuevo):** tarea de FreeRTOS
+      de bring-up, primer consumidor real del driver de arriba — confirma `VERSION` contra
+      `DRX_REGS_VERSION` al arrancar (detecta un firmware corriendo contra un bitstream con otro mapa
+      de registros) y luego sondea/limpia los diagnósticos sticky cada segundo por UART. Se arranca
+      **antes** de `lwip_init()` en `main_thread()` (`fw/src/app/main.c`, adaptado de la plantilla de
+      Xilinx con ese único cambio funcional) — el bring-up de registros no depende de que el enlace
+      Ethernet esté arriba. No escribe ninguna configuración de timing (`TIMING_CTRL`/PRF/etc.):
+      eso es ensamblado de rayos, Z4.4, no bring-up.
+    - **Verificado con una recompilación real de punta a punta, no solo lectura de código:** el XSA
+      existente (`build/gw/zedboard_zynq/drx_zynq_top.xsa`) era de **antes** de Z4.1 (`TRIG_COUNT`,
+      mapa v7) — comparado el timestamp del XSA contra el de `rtl/drx_axil_regs.sv`/
+      `config/registers.toml`, el XSA era más viejo. Se re-corrió `-top zynq -step xsa` completo
+      (synth+impl+bitstream+XSA) antes de generar el BSP: **WNS = 1,711 ns** (bajando un poco de los
+      1,706 ns de Z4.0/Z4.1 — mismo camino crítico PS7↔interconnect↔`drx_axil_regs`, sin cambiar).
+      Con el XSA fresco, `tools/build_vitis.sh zedboard` corrió `tcl/gen_bsp.tcl` de punta a punta:
+      `drx_app.elf` compila limpio (`drx_regs_hw.c`, `drx_status_task.c`, `main.c` propios + `echo.c`/
+      `iic_phyreset.c` de la plantilla, únicos warnings los de `contrib/ports/xilinx/netif/xadapter.c`
+      de lwIP, no de código propio) y enlaza sin símbolos sin resolver. `tools/make_boot.sh zedboard`
+      empaqueta `BOOT.BIN` con el `drx_app.elf` nuevo — reproducible byte a byte en dos corridas
+      (mismo SHA-256), con el mismo aviso de solapamiento de rangos de `bootgen` ya conocido desde el
+      cierre de BSP/FSBL (26-sep, más arriba) — no es una regresión de esta sesión. `make check` sigue
+      en 109/109: el firmware de `fw/src/app/` no lo toca (compila solo dentro del flujo de Vitis/
+      xsct, `fw/Makefile` sigue siendo exclusivamente la auto-comprobación de parámetros para host).
+    - **Lo que esto NO demuestra, y es la brecha real de Z4.2 tal como la define
+      `z4-firmware-plan-order` (memoria del agente):** nada de esto corrió en una ZedBoard física.
+      No hay UART conectado, no hay confirmación de que `DrxStatusTask_Create` de verdad imprime la
+      versión del mapa contra hardware real, no hay enlace Ethernet levantado, ni ping ni conexión al
+      puerto 7 del echo server. Este entorno no tiene acceso a la placa (ver la advertencia de
+      siempre: "no escribas «validado» donde corresponde «validado en ZedBoard»" — aquí ni siquiera
+      hay ZedBoard de por medio). **Z4.2 no cierra con esta sesión**: cierra software/toolchain
+      (dominio FreeRTOS, driver, tarea, tres compilaciones reales de punta a punta) pero el "primer
+      bring-up físico" que el propio nombre de la fase promete sigue pendiente de alguien con acceso
+      a la placa y un cable serie/Ethernet.
+
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
 Trabajo:

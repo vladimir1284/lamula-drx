@@ -140,9 +140,27 @@ día: mapa de registros **v7**, registro `TRIG_COUNT` (RO, contador libre de 32 
 con el mismo `pulse_trig` de `drx_timing_engine` que ya dispara `ray_start`, D-14) — el "contador de
 trigger" que `fases.md#z4` ya listaba como metadato de rayo para el firmware de ensamblado (Z4.4).
 Sin P&R nuevo (mismo criterio que v5/v6: lógica de bajo costo dentro de un módulo ya cerrado).
-Sigue sin existir firmware real (`drx_app.elf` sigue siendo el *Hello World* de Vitis) y nada de
-esto se probó en una ZedBoard física — próximo paso planeado, **Z4.2** (FreeRTOS real + driver de
-registros + lwIP sobre GEM0, primer bring-up físico del proyecto).
+**Z4.2, mismo día (más tarde): `drx_app.elf` deja de ser el *Hello World* de Vitis.**
+`tcl/gen_bsp.tcl` genera ahora dos dominios (antes uno solo): `standalone_domain` para `fsbl` (sin
+cambios — el FSBL de Xilinx no admite FreeRTOS) y un `freertos_domain` nuevo
+(`-os freertos10_xilinx` + librería `lwip211`) para `drx_app`, arrancado desde la plantilla de Vitis
+"FreeRTOS lwIP Echo Server". `fw/src/app/` (nuevo, versionado — no dentro de `build/`) trae el
+firmware real: `drx_regs_hw.c` (primer driver sobre el mapa de registros v7, `Xil_In32`/`Xil_Out32`
+sobre `XPAR_M_AXI_REGS_BASEADDR`) y `drx_status_task.c` (tarea de FreeRTOS que confirma `VERSION`
+contra `DRX_REGS_VERSION` y sondea/limpia los diagnósticos sticky por UART, arrancada antes de
+`lwip_init()` — no depende de que el enlace Ethernet esté arriba), más `main.c` (adaptado de la
+plantilla con ese único cambio). Hallazgo real: `app create -template` no aplica los parámetros de
+librería del `.mss` de referencia de la plantilla (`api_mode`, `lwip_dhcp`, etc.) — confirmado
+corriendo `bsp listparams -lib lwip211` (`api_mode` por defecto es `RAW_API`, no `SOCKET_API`, y
+`echo.c` no habría compilado); `tcl/gen_bsp.tcl` los fija a mano con `bsp config`. Verificado con una
+recompilación real de punta a punta: el XSA existente era de antes de Z4.1 (`TRIG_COUNT`), así que se
+re-corrió `-top zynq -step xsa` completo primero (**WNS = 1,711 ns**), y con ese XSA fresco
+`tools/build_vitis.sh` + `tools/make_boot.sh` corrieron limpios — `drx_app.elf` compila y enlaza sin
+símbolos sin resolver, `BOOT.BIN` reproducible byte a byte (mismo aviso de solapamiento de `bootgen`
+ya conocido, no una regresión), `make check` sigue en 109/109. **Lo que esto NO demuestra: nada
+corrió en una ZedBoard física** — sin UART ni Ethernet conectados no hay forma de confirmar el
+"primer bring-up físico" que Z4.2 promete; ese paso sigue pendiente de alguien con acceso a la placa.
+Detalle completo en `fases.md#z4`, entrada del 26-sep (más tarde).
 
 Lo que sí está hecho y verificado, además de lo de arriba:
 
