@@ -98,6 +98,18 @@ jobs:
             -platform ${{ matrix.platform }} -step bitstream \
             -outdir build/gw/${{ matrix.platform }}
 
+      # XSA solo tiene sentido con `-top zynq` (PS7 real), y `-top zynq` solo
+      # existe hoy para zedboard -- ver tcl/build.tcl.
+      - name: Exportar XSA (PS7)
+        if: matrix.platform == 'zedboard'
+        run: |
+          vivado -mode batch -source tcl/build.tcl -tclargs \
+            -platform zedboard -top zynq -step xsa
+
+      - name: BSP/FSBL/app (Vitis)
+        if: matrix.platform == 'zedboard'
+        run: tools/build_vitis.sh zedboard
+
       - name: BOOT.BIN reproducible
         if: matrix.platform == 'zedboard'
         run: tools/make_boot.sh zedboard

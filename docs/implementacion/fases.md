@@ -602,6 +602,55 @@ original, menos JESD y menos DMA.
     hoy — es un hueco nuevo, real, que solo se hizo visible al intentar correrlo por primera vez. Ver
     [pendientes.md](../alcance/pendientes.md).
 
+!!! success "26-sep-2026: BSP/FSBL vía Vitis — `tools/make_boot.sh` deja de fallar, `BOOT.BIN` reproducible confirmado a mano"
+    El punto que `CLAUDE.md` marcaba como "lo primero que hay que hacer" para cerrar ZM0. Flujo
+    completo, corrido de punta a punta en esta máquina de desarrollo:
+
+    1. `vivado -tclargs -platform zedboard -top zynq -step xsa` — reconfirma P&R sin cambios de RTL
+       desde el 25-sep (**WNS = 1,295 ns**, misma cifra) y escribe
+       `build/gw/zedboard_zynq/drx_zynq_top.xsa`.
+    2. `tcl/gen_bsp.tcl` (nuevo) + `tools/build_vitis.sh` (nuevo): `xsct` crea una plataforma
+       standalone sobre `ps7_cortexa9_0` desde ese XSA y compila dos apps — `fsbl` (plantilla *Zynq
+       FSBL* de Vitis) y `drx_app` (plantilla *Hello World* de Vitis, **placeholder deliberado, no
+       el firmware real de Z4** — FreeRTOS, ensamblado de rayos y lwIP siguen sin empezar). Los
+       `.elf` quedan en `build/fw/zedboard/`.
+    3. `tools/make_boot.sh` ahora copia esos dos ELF desde `build/fw/$platform` antes de
+       comprobar que existen (antes solo copiaba el `.bin` de `build/gw/$platform`) — deja de fallar
+       con `exit 2`.
+
+    **`BOOT.BIN` se empaquetó y se confirmó reproducible byte a byte**: mismo SHA-256 en dos
+    corridas de `bootgen` seguidas.
+
+    Dos bloqueos de sistema nuevos en esta máquina, mismo patrón que el Pi-hole del 21-sep (no
+    arquitectónicos, de entorno): `xsct` necesita `Xvfb` (no estaba instalado) y, aparte,
+    `libtinfo.so.5` (Ubuntu 22.04 solo trae la versión 6; el paquete `libtinfo5` vive en `universe`).
+    Los dos, resueltos con `apt-get install`. Wrapper `xsct` añadido a `~/.local/bin`, mismo patrón
+    que `vivado`/`bootgen`.
+
+    **Hallazgo real de esta sesión, sin investigar todavía:** `bootgen` avisa
+    `Partition fsbl.elf.0 range is overlapped with partition drx_top.bin.0 memory range` (y lo mismo
+    entre `drx_top.bin` y `drx_app.elf`) — genera la imagen igual, y la reproducibilidad byte a byte
+    se cumple, pero no está confirmado si es el falso positivo conocido de bootgen para particiones
+    de bitstream (que no tienen una dirección de carga real, se cargan por PCAP) o un problema real
+    de mapa de memoria. No bloquea el cierre de este punto; si aparece un fallo real de arranque en
+    placa, empezar por aquí.
+
+    **Primera vez que la plantilla FSBL de Vitis se generó de verdad**: el primer intento falló —
+    `Zynq FSBL` no es una plantilla válida sin `xilffs` en el BSP del dominio standalone. Corregido
+    con `bsp setlib -name xilffs` antes de `platform generate` en `tcl/gen_bsp.tcl`.
+
+    **`.github/workflows/ci.yml` gana los pasos que faltaban** (export de XSA + `build_vitis.sh`,
+    antes de `make_boot.sh`, mismo gate `HAS_VIVADO_RUNNER`/`matrix.platform == 'zedboard'`) — sin
+    esto, `git push` seguiría fallando en CI aunque el flujo ya corra limpio a mano. **No verificado
+    todavía con un `git push` real**: el runner es esta misma máquina, así que debería heredar los
+    mismos wrappers de PATH que ya usa para `bootgen`, pero eso es inferencia, no una corrida de CI
+    confirmada en esta sesión.
+
+    Lo que esto NO hace, a propósito: `drx_app.elf` sigue siendo el placeholder de Vitis, no lee ni
+    un registro del mapa AXI-Lite ni corre FreeRTOS — eso es el resto de Z4, sin empezar. Tampoco
+    hay ningún bring-up en placa física (`BOOT.BIN` nunca se escribió en una SD ni se arrancó una
+    ZedBoard real) — eso sigue fuera del alcance de este repositorio tal como está definido.
+
 ## Z2 — Motor de timing, triggers y PRF (semanas 9–13) { #z2 }
 
 Trabajo:

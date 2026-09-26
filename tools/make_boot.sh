@@ -20,6 +20,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 platform="${1:-zedboard}"
 outdir="${2:-$repo_root/build/boot/$platform}"
 gwdir="$repo_root/build/gw/$platform"
+fwdir="$repo_root/build/fw/$platform"
 
 for tool in bootgen; do
   command -v "$tool" >/dev/null || { echo "falta $tool en el PATH" >&2; exit 1; }
@@ -28,6 +29,9 @@ done
 mkdir -p "$outdir"
 cp "$repo_root/tcl/boot/boot.bif" "$outdir/boot.bif"
 cp "$gwdir/drx_top_tieoff.bin" "$outdir/drx_top.bin"
+for artefact in fsbl.elf drx_app.elf; do
+  [[ -f "$fwdir/$artefact" ]] && cp "$fwdir/$artefact" "$outdir/$artefact"
+done
 
 missing=0
 for artefact in fsbl.elf drx_app.elf; do
