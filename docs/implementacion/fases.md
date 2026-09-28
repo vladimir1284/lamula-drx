@@ -1153,9 +1153,20 @@ Trabajo:
 íntegra desde el par remoto y el lazo AFC cerrado. Equivalente en ZedBoard de M2 + M3.
 
 !!! warning "El stub de DSP de este hito no es el banco de pruebas extremo a extremo"
-    Ningún plan de los tres proyectos apunta hoy la salida real de la ZedBoard (`vector_source`,
-    datos generados en el PL) contra el DSP y el RCP reales — ver
-    [P-13](../alcance/pendientes.md#p-13). Cerrar ZM4 contra el stub no cierra ese hueco.
+    Cerrar ZM4 contra un stub no cierra el hueco de [P-13](../alcance/pendientes.md#p-13): la
+    salida real de esta placa (`vector_source`, datos generados en el PL) seguiría sin haber
+    tocado nunca el DSP ni el RCP reales.
+
+    Desde el **28-sep-2026** ese hueco es más pequeño y más concreto: los binarios reales del DSP
+    y del RCP ya hablan entre sí (fase C0 de P-13), alimentados por un emisor sintético. Lo que
+    falta es exactamente sustituir ese emisor por esta placa. Dos consecuencias para el firmware
+    de aquí, las dos de C0 y ninguna opinable:
+
+    - **El DRx conecta, no escucha** (regla "el productor conecta"). El DSP escucha en
+      `LAMULA_DSP_DRX_ADDR`; el cliente TCP es este proyecto, en Z4.2.
+    - **El azimut tiene que avanzar dentro del radial** cuando Z3 ponga az/el reales. El consumidor
+      usa el azimut del primer y del último pulso para reconstruir el sector, y un radial de ancho
+      cero no es archivable como Level-II ni aceptable para ORPG.
 
 !!! success "26-sep-2026: Z4.0 — empaquetador de rayo + AXI DMA S2MM real, P&R cierra"
     Primera pieza de Z4, planeada explícitamente antes de escribir código (fases Z4.0–Z4.6, orden

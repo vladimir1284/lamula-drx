@@ -1748,10 +1748,36 @@ es el **techo**, no un promedio.
 
 ### P-13 · Ningún plan conecta la ZedBoard real con DSP y RCP reales { #p-13 }
 
-**Estado:** abierto, identificado 2026-09-17 · **Dueño:** los tres equipos (DRx + DSP + RCP), no
-tiene dueño único hoy · **Bloquea:** poder ejercitar con `vector_source` (datos generados en el PL,
-sin ADC ni JESD204B — ver [P-03](#p-03), que este pendiente no sustituye ni mitiga) todo lo que la
-ZedBoard sí permite probar, contra los otros dos proyectos reales en vez de contra un stub.
+**Estado:** abierto, **fase C0 cerrada el 28-sep-2026** · identificado 2026-09-17 · **Dueño:** los
+tres equipos (DRx + DSP + RCP), no tiene dueño único hoy · **Bloquea:** poder ejercitar con
+`vector_source` (datos generados en el PL, sin ADC ni JESD204B — ver [P-03](#p-03), que este
+pendiente no sustituye ni mitiga) todo lo que la ZedBoard sí permite probar, contra los otros dos
+proyectos reales en vez de contra un stub.
+
+!!! success "28-sep-2026: C0 — el DSP real y el RCP real ya hablan entre sí"
+    El plan de fases de más abajo gana una fase C0 **antes** de la B, porque la mitad de la
+    integración no necesita esta placa y estaba bloqueando a la otra mitad sin motivo: los binarios
+    reales del DSP y del RCP nunca se habían conectado entre sí. Ahora sí, con un emisor sintético
+    en lugar de la ZedBoard (`drx_faker`, un ejemplo del repo del DSP que habla el contrato
+    `DRx↔DSP` por TCP de verdad). Banco: `tools/hil/run-c0.sh` del repo `lamula-rcp`, documentado en
+    su [página de banco C0](https://lamula-rcp-docs.pages.dev/implementacion/banco-c0/).
+
+    **A este proyecto no le tocó nada** — C0 no toca el contrato `drx_dsp`, ni el RTL, ni el
+    firmware. Pero sí importa lo que encontró, porque son fallos que estaban esperando a la Fase B
+    y que habrían aparecido con la placa delante, que es el peor momento para depurarlos:
+
+    - **Los dos extremos del enlace `DSP↔RCP` escuchaban.** Nadie conectaba: ese enlace nunca se
+      había levantado entre los binarios reales. Se fijó la regla **"el productor conecta"** para
+      los dos enlaces de la cadena, así que **el firmware de Z4.2 de este proyecto tiene que
+      conectar al DSP, no escuchar**. El DSP ya escucha en `LAMULA_DSP_DRX_ADDR` y no cambia.
+    - **Todos los radiales salían con ancho de azimut cero.** El DSP se quedaba con el azimut del
+      primer pulso del radial y publicaba `az_end_deg = az_start_deg`. Corregido allí. Lo que le
+      toca a este proyecto: cuando Z3 ponga az/el reales en cada rayo, **el azimut tiene que
+      avanzar dentro del radial** — es lo que el consumidor usa para reconstruir el sector, y un
+      radial de ancho cero no es archivable como Level-II ni aceptable para ORPG.
+
+    Lo que C0 **no** prueba, y sigue igual: nada de hardware. Ni cadencia, ni jitter, ni
+    contrapresión reales. Eso es la Fase B, y sigue esperando al firmware de Z4.
 
 Revisión de integración cruzada (2026-09-17) encontró que **cada proyecto para su cadena de
 pruebas en su propia frontera**, y ninguno de los tres planes la cruza:
@@ -1793,12 +1819,17 @@ está agendada en ningún calendario todavía — esto es la propuesta, no un co
 
 - **Fase A — cadena DRx sola, en hardware real.** Z1→Z2→Z3 tal como ya están planeados (P-10/11/12
   en marcha). Sin diseño nuevo.
+- **Fase C0 — DSP real contra RCP real, fuente sintética (sin hardware). HECHA, 28-sep-2026.**
+  No estaba en el plan original del 17-sep; se intercaló al ver que no dependía de esta placa. Ver
+  la entrada de arriba.
 - **Fase B — DSP real contra tráfico real de esta placa, selección de vector local/manual.**
   Completar Z4 apuntado al binario real de DSP (no al stub); `crates/ingest` de ese proyecto
   validado contra cadencia/jitter/contrapresión reales en vez de su simulador sintético. Selección
   de qué vector reproduce `vector_source`: recarga de DDR/SD + rearranque, o registro AXI-Lite por
   JTAG — sin RCP ni contrato nuevo todavía.
-- **Fase C — RCP real contra ese DSP real.** `adapters/dsp/wire.py`/`moment_stream_receiver.py` del
+- **Fase C (ahora C1) — RCP real contra ese DSP real, alimentado por esta placa.** Con C0 hecha,
+  lo que queda de esta fase es exactamente sustituir el emisor sintético por la ZedBoard.
+  Literalmente: apuntar el DSP a la placa en vez de al `drx_faker`. `adapters/dsp/wire.py`/`moment_stream_receiver.py` del
   RCP contra el DSP real (cierra el resto de PEND-RCP-05); Level-II y feed RDA/ORPG del RCP
   ejercitados con radiales de cadencia/jitter reales, no sintéticos (estresa PEND-RCP-12). Ver
   PEND-RCP-14 del RCP: el `status`/`bite_event` de este contrato no llega hoy a ningún sitio del
