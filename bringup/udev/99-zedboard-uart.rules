@@ -1,0 +1,17 @@
+# Que ModemManager no sondee el USB-UART de la ZedBoard.
+#
+# Sin esto, ModemManager abre /dev/ttyACM0 al enumerarse y le manda comandos AT,
+# lo que ensucia la salida de arranque del PS justo cuando más falta hace leerla.
+#
+# 04b4:0008 es el Cypress CY7C64225 de la placa (el `Cypress-USB2UART-0123456`
+# que reporta udevadm), no un dispositivo genérico.
+#
+# TIENE que ser una sola línea. Partida en dos, udev descarta la primera
+# ("The line takes no effect, ignoring") y aplica la segunda a TODOS los
+# dispositivos del sistema, porque queda como asignación sin condiciones.
+#
+# Instalación:
+#   sudo cp bringup/udev/99-zedboard-uart.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+# y después un desenchufe físico del USB.
+ATTRS{idVendor}=="04b4", ATTRS{idProduct}=="0008", ENV{ID_MM_DEVICE_IGNORE}="1"
