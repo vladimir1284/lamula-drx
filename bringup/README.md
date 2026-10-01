@@ -294,6 +294,22 @@ Dos cosas que esperar y no confundir con un fallo:
 Esto cierra el «bring-up físico pendiente» que Z4.2 dejó abierto, y evita por
 completo el camino de `BOOT.BIN` (ver más abajo).
 
+Lo que se vio el 1-oct-2026, y lo que **no** significa: la línea
+`drx_status: mapa de registros v7 confirmado por AXI-Lite` prueba el camino
+PS↔PL y el mapa de registros, nada más. Los diagnósticos que llegaron con ella
+—`TIMING_STATUS = 0x6`, `STATUS (overrun) = 0x7`— no son fallos: el firmware
+todavía no escribe ni un registro de configuración de timing, así que `prf_div`,
+`pulse_width` y `bins` siguen en su valor de reset (0), D-09 los marca inválidos
+en los dos lotes (bits 1 y 2) y el secuenciador se mantiene parado a propósito.
+Con el secuenciador parado no hay `ray_start`, los tres canales de range-gate se
+desbordan y `STATUS` enciende sus tres bits. `TRIG_COUNT` vale 0, coherente con
+todo lo anterior. Configurar el motor de timing desde el firmware es Z4.3, sin
+empezar.
+
+Trampa de método, aprendida aquí: **un solo lector de `/dev/ttyACM0` a la vez**.
+Dos procesos leyendo el mismo puerto se reparten los bytes al azar y la salida
+sale ilegible, con el aspecto exacto de un baud rate mal puesto.
+
 ---
 
 ## La DDR de esta ZedBoard: un parámetro del preset, no un fallo de hardware
@@ -399,28 +415,37 @@ calibración de DCI converge a otro sitio. Era síntoma, no causa.
 
 ## Hallazgos abiertos, fuera del alcance de este directorio
 
-### 1. `tcl/gen_zynq_bd.tcl` genera un PS7 con la DDR inservible
+### 1. `tcl/gen_zynq_bd.tcl` generaba un PS7 con la DDR inservible — corregido y verificado en placa
 
 Mismo defecto que se arregló en `bringup/tcl/gen_bringup_bd.tcl`: el PS7 del DRx
-se configura con `apply_board_preset` y nada más, así que
-`PCW_UIPARAM_DDR_USE_INTERNAL_VREF` se queda en 0 y la DDR3 no retiene datos.
+se configuraba con `apply_board_preset` y nada más, así que
+`PCW_UIPARAM_DDR_USE_INTERNAL_VREF` se quedaba en 0 y la DDR3 no retenía datos.
 Verificado en placa el 1-oct-2026; detalle completo en la sección de la DDR, más
 arriba.
 
-Consecuencia directa: **todo lo que el repositorio ha producido hasta hoy para
-ZedBoard —XSA, BSP, FSBL, `drx_app.elf`, `BOOT.BIN`— arranca sobre una DDR que
-no funciona.** Nunca se detectó porque nada de eso se había ejecutado en silicio.
+Consecuencia directa: **todo lo que el repositorio produjo para ZedBoard antes
+del 1-oct-2026 —XSA, BSP, FSBL, `drx_app.elf`, `BOOT.BIN`— arranca sobre una DDR
+que no funciona.** Nunca se detectó porque nada de eso se había ejecutado en
+silicio.
 
-El arreglo es una línea en `tcl/gen_zynq_bd.tcl`, después de
-`apply_bd_automation`:
+`tcl/gen_zynq_bd.tcl` ya lleva la línea, en el mismo `set_property -dict` donde
+se habilita GP0:
 
 ```tcl
 CONFIG.PCW_UIPARAM_DDR_USE_INTERNAL_VREF {1} \
 ```
 
-Después hay que regenerar el XSA (`-top zynq -step xsa`) y, con él, BSP y
-firmware. Queda fuera de este directorio por el alcance acordado; merece su
-propio commit.
+El XSA se regeneró el 1-oct-2026 (`-top zynq -step xsa`), y con él BSP, FSBL y
+`drx_app.elf`. La temporización no cambió —**WNS = 1,711 ns**, igual que antes:
+el VREF no toca la lógica programable—, y dentro del XSA nuevo `ps7_init.tcl`
+escribe `mask_write 0XF8000B6C 0x00007FFF 0x00000209` donde antes escribía
+`0x00000260`. Con esos artefactos, el escalón 5 corrió en placa y
+`DrxReg_SelfTest()` leyó `VERSION` correcto por AXI-Lite: el arreglo está
+verificado en silicio también para el BD del DRx, no solo para el de `bringup/`.
+
+Queda, eso sí, el aviso de siempre: **todo artefacto de `build/` anterior al
+1-oct-2026 sigue siendo defectuoso**, y cualquier copia que se haya distribuido
+hay que reconstruirla.
 
 ### 2. `tools/make_boot.sh` empaqueta el bitstream equivocado
 
@@ -456,9 +481,9 @@ Rellénala según pasen los escalones. Lo que no se escribió aquí no pasó.
 | 1 — placa visible por JTAG | 2026-10-01 | PASA | `Digilent Zed 210248452965`, `arm_dap` idcode `4ba00477`, `xc7z020` idcode `03727093`, APU + 2× Cortex-A9 (Running). La primera corrida salió vacía: `ftdi_sio` tenía el cable. |
 | 2 — blinker de PL | 2026-10-01 | PASA | `blink.bit` cargado, `End of startup status: HIGH`, `DONE = 1`, WNS = 7,235 ns. Confirmado a ojo: los ocho LEDs cuentan en binario. Primer bitstream de este repositorio que corre sobre silicio. |
 | 3 — Hello World del PS | 2026-10-01 | PASA | Cabecera y `tick N` por `/dev/ttyACM0`, con el ELF **enlazado a DDR** y la sonda de DDR 5/5 OK ejecutada por la CPU, `0x1F000000` incluido. UART1 confirmada aparte escribiendo bytes a pelo en `0xE0001030`: llegó `JTAG\r\n` a 115200. Dos trampas de `xsct` resueltas (`loadhw` no define `ps7_init`; `rst -system` tumba el DAP). La primera corrida fue con el ELF en OCM porque la DDR parecía muerta; resultó ser `PCW_UIPARAM_DDR_USE_INTERNAL_VREF` sin fijar — sección propia más arriba. |
-| 4 — contador → LEDs | | | |
-| 4b — switches → terminal | | | |
-| 5 — `drx_app` real | | | Desbloqueado el 1-oct-2026 al arreglar la DDR. Requisito previo: `tcl/gen_zynq_bd.tcl` necesita `PCW_UIPARAM_DDR_USE_INTERNAL_VREF {1}` y un XSA nuevo, o `drx_app` no tendrá memoria donde correr. |
+| 4 — contador → LEDs | 2026-10-01 | PASA | `counter_leds.elf` sobre `bringup_bd_wrapper.bit`. Por `/dev/ttyACM0`: `count=  0  led=0x00` … `count=244  led=0xF4`, sin huecos ni cuelgues. Confirmado a ojo: los ocho LEDs cuentan en binario y siguen al contador del terminal. Primera escritura AXI-Lite del PS a un registro de la PL en este proyecto. |
+| 4b — switches → terminal | 2026-10-01 | PASA | La columna `sw=` siguió a los switches físicos: `0xFE` con una posición, `0xB7` tras moverlos. Valores plausibles y distintos entre sí, no `0x00` ni `0xFF` pegados — el camino de lectura PL→PS funciona. Trampa del método, no de la placa: dos `cat /dev/ttyACM0` a la vez se reparten los bytes al azar y la salida sale ilegible. Un solo lector del puerto. |
+| 5 — `drx_app` real | 2026-10-01 | PASA | `drx_zynq_top.bit` + `drx_app.elf` por JTAG, con el XSA regenerado tras arreglar `tcl/gen_zynq_bd.tcl`. Criterio cumplido: **`drx_status: mapa de registros v7 confirmado por AXI-Lite`** — `VERSION` leído del silicio coincide con `DRX_REGS_VERSION`. FreeRTOS arranca, lwIP levanta, DHCP agota el plazo y cae a `192.168.1.10/24` como está diseñado. Diagnósticos sticky en su valor esperado para un motor de timing sin configurar: `TIMING_STATUS = 0x6` (bits 1 y 2, `config_invalid` de los dos lotes — los registros de PRF/ancho/bins están en su valor de reset, 0, que D-09 rechaza; bit 0 `radial_done` = 0) y `STATUS (overrun) = 0x7` (los tres canales de range-gate). `OVERFLOW`, `GATE_TRUNCATED` y `TRIG_COUNT` no se imprimen: valen 0. En la placa queda un solo LED encendido, LD0, parpadeando con periodo ~1 s: es `drx_heartbeat` con `DIV = FS_HZ/2`, y `tcl/xdc/zedboard_zynq.xdc:10` declara solo `led_heartbeat` en `T22`. El periodo deriva de `FS_HZ`, así que verlo en 1 s a ojo confirma de paso que FCLK0 corre a 62,5 MHz. Desbloqueado al arreglar la DDR; requisito previo era `PCW_UIPARAM_DDR_USE_INTERNAL_VREF {1}` en `tcl/gen_zynq_bd.tcl` y un XSA nuevo. |
 
 ## Alcance
 

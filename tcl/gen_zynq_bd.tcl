@@ -48,8 +48,24 @@ apply_bd_automation -rule xilinx.com:bd_rule:processing_system7 \
                 Master "Disable" Slave "Disable"] \
   [get_bd_cells $ps7]
 
+# `PCW_UIPARAM_DDR_USE_INTERNAL_VREF` no lo fija `apply_board_preset`: el board
+# file de Digilent (`zedboard/1.3`) no menciona VREF ni en `board.xml` ni en
+# `preset.xml`, así que el parámetro cae al default del IP, que es 0 (VREF
+# externo). En la ZedBoard eso deja la DDR3 inservible: el controlador llega a
+# "normal operation" (`0xF8006054` = 0x121), `ps7_init` no reporta ningún error,
+# y toda lectura devuelve basura porque el PHY muestrea contra una referencia
+# que no llega. Verificado en placa el 1-oct-2026, aislado hasta un único
+# registro: con `DDRIOB_DDR_CTRL` (`0xF8000B6C`) = 0x260 la sonda de DDR falla
+# 6/6; con 0xE09 -- `VREF_INT_EN=1`, `VREF_SEL=4` -- pasa 6/6 en todo el mapa.
+#
+# El preset propio de Xilinx para esta placa sí lo pone
+# (`processing_system7_v5_5/preset/ZedBoard.tcl:218`); el de Digilent, no. Todo
+# XSA, BSP, FSBL, `drx_app.elf` y `BOOT.BIN` generado por este repositorio antes
+# de esta línea lleva un `ps7_init` que no entrena la DDR de verdad. Detalle del
+# diagnóstico y de las hipótesis descartadas en `bringup/README.md`.
 set fclk_mhz [expr {1000.0 / $period_ns}]
 set_property -dict [list \
+  CONFIG.PCW_UIPARAM_DDR_USE_INTERNAL_VREF {1} \
   CONFIG.PCW_USE_M_AXI_GP0 {1} \
   CONFIG.PCW_USE_S_AXI_HP0 {1} \
   CONFIG.PCW_S_AXI_HP0_DATA_WIDTH {32} \
