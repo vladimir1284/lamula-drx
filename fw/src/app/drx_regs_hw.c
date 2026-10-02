@@ -29,6 +29,16 @@ uint32_t DrxReg_TrigCount(void)
     return DrxReg_Read(DRX_REG_TRIG_COUNT_OFFSET);
 }
 
+uint32_t DrxReg_ReadNcoPinc(void)
+{
+    return DrxReg_Read(DRX_REG_NCO_PINC_OFFSET);
+}
+
+void DrxReg_WriteNcoPinc(uint32_t pinc)
+{
+    DrxReg_Write(DRX_REG_NCO_PINC_OFFSET, pinc);
+}
+
 uint32_t DrxReg_ReadStatus(void)
 {
     return DrxReg_Read(DRX_REG_STATUS_OFFSET);

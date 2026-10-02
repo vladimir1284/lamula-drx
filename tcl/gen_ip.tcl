@@ -49,6 +49,27 @@ set part   [::drx::get PART $opt(platform)]
 set ip_dir [file join $repo_root ip]
 file mkdir $ip_dir
 
+# HALLAZGO (2-oct-2026, Z4.5): `create_ip -module_name X` con `ip/X/` ya
+# presente NO reconfigura esa IP -- crea `ip/X_1/` en silencio y sigue, así que
+# el `.veo` que lee la parte de abajo de este script sería el VIEJO y el XCI
+# versionado se quedaría como estaba. Este script se había corrido una sola vez
+# (Z1) y nadie lo había vuelto a ejecutar hasta Z4.5, que es la primera vez que
+# hace falta CAMBIAR la personalización de un core ya creado.
+#
+# `ensure_ip` lo hace idempotente sin borrar nada: si el XCI ya existe lo abre
+# con `read_ip` y los `set_property` de abajo lo reescriben en su sitio; si no
+# existe, lo crea como la primera vez. En los dos casos el objeto que devuelve
+# `get_ips` es el mismo y el resto del script no cambia.
+proc ensure_ip {core_name version module_name} {
+  set xci [file join $::ip_dir $module_name $module_name.xci]
+  if {[file exists $xci]} {
+    read_ip $xci
+  } else {
+    create_ip -name $core_name -vendor xilinx.com -library ip -version $version \
+        -module_name $module_name -dir $::ip_dir
+  }
+}
+
 create_project -in_memory -part $part
 
 # --- coeficientes: una sola fuente, config/coeffs/*.txt ---------------------
@@ -159,8 +180,7 @@ proc veo_port_width {veo_path port_name} {
 set NCO_LUT_OFFSET_K 655
 set NCO_POFF [expr {($NCO_LUT_OFFSET_K % 65536) << 16}]
 
-create_ip -name dds_compiler -vendor xilinx.com -library ip -version 6.0 \
-    -module_name dds_compiler_nco -dir $ip_dir
+ensure_ip dds_compiler 6.0 dds_compiler_nco
 
 # HALLAZGO, primera ejecución real contra IP de verdad: con `Has_TREADY
 # {true}` (el valor de esta pasada hasta ahora), pg141 (v6.0), "Latency
@@ -187,13 +207,31 @@ create_ip -name dds_compiler -vendor xilinx.com -library ip -version 6.0 \
 # `NCO_LUT_OFFSET_K` (ver el comentario de arriba). Coste: +3 DSP48 / +1
 # RAMB18 (0,5 tile) por canal, ya dentro del presupuesto de 3 canales de
 # ZedBoard (P-12).
+# `Phase_Increment {Programmable}` (Z4.5, 2-oct-2026), en vez del `{Fixed}` que
+# tuvo este core desde Z1: la actuación AFC necesita reescribir la palabra de
+# fase en tiempo de ejecución y con `{Fixed}` el incremento queda congelado en
+# la personalización de la IP -- no hay ningún puerto por el que cambiarlo.
+# Medido sobre la IP generada de verdad, no supuesto: el cambio añade
+# `s_axis_config_tvalid` + `s_axis_config_tdata[31:0]` (un canal AXI4-Stream de
+# configuración, sin TREADY porque `Has_TREADY {false}` sigue valiendo para
+# todas las interfaces del core) y NO mueve nada más -- `Latency` sigue en 9,
+# `Phase_offset` sigue `{Fixed}` con el mismo POFF1, `Noise_Shaping` igual. Por
+# eso `NCO_LUT_OFFSET_K` (arriba) no se recalibra: la matriz de 16 corridas de
+# D-12 es la que tiene la última palabra, y se vuelve a correr entera tras este
+# cambio.
+#
+# PINC1 deja de ser "el" incremento y pasa a ser el VALOR INICIAL tras
+# `aresetn`, hasta que alguien escriba por `s_axis_config`. Eso es lo que hace
+# que el camino sin AFC siga siendo bit a bit el de siempre: `drx_ddc_top` no
+# escribe ninguna configuración al arrancar, solo cuando el mapa de registros
+# se lo pide.
 set_property -dict [list \
   CONFIG.Parameter_Entry  {Hardware_Parameters} \
   CONFIG.Output_Selection {Sine_and_Cosine} \
   CONFIG.Amplitude_Mode   {Full_Range} \
   CONFIG.Phase_Width      $::drx::NCO_PHASE_BITS \
   CONFIG.Output_Width     $::drx::NCO_OUT_BITS \
-  CONFIG.Phase_Increment  {Fixed} \
+  CONFIG.Phase_Increment  {Programmable} \
   CONFIG.PINC1            [to_binary $::drx::NCO_PHASE_INC $::drx::NCO_PHASE_BITS] \
   CONFIG.Has_Phase_Out    {false} \
   CONFIG.Has_ARESETn      {true} \
@@ -224,8 +262,7 @@ set_property -dict [list \
 #   configuración de frecuencia le dice que tiene que haber, y ese hueco
 #   nunca llega porque el mezclador entrega cada ciclo. `RateSpecification
 #   {Sample_Period}` + `SamplePeriod {1}` se lo dice explícitamente.
-create_ip -name cic_compiler -vendor xilinx.com -library ip -version 4.0 \
-    -module_name cic_compiler_ddc -dir $ip_dir
+ensure_ip cic_compiler 4.0 cic_compiler_ddc
 
 set_property -dict [list \
   CONFIG.Filter_Type           {Decimation} \
@@ -241,8 +278,7 @@ set_property -dict [list \
 ] [get_ips cic_compiler_ddc]
 
 # --- FIR Compiler: droop + ÷4, precisión completa a la salida ---------------
-create_ip -name fir_compiler -vendor xilinx.com -library ip -version 7.2 \
-    -module_name fir_compiler_droop -dir $ip_dir
+ensure_ip fir_compiler 7.2 fir_compiler_droop
 
 set_property -dict [list \
   CONFIG.Filter_Type          {Decimation} \
@@ -265,8 +301,7 @@ set_property -dict [list \
 set halfband_in_width [expr {$::drx::SAMPLE_BITS + $::drx::FIR_COEFF_BITS + \
     int(ceil(log($::drx::FIR_TAPS) / log(2))) - $::drx::FIR_GROWTH_BITS}]
 
-create_ip -name fir_compiler -vendor xilinx.com -library ip -version 7.2 \
-    -module_name fir_compiler_halfband -dir $ip_dir
+ensure_ip fir_compiler 7.2 fir_compiler_halfband
 
 set_property -dict [list \
   CONFIG.Filter_Type          {Decimation} \
@@ -293,6 +328,7 @@ set droop_veo    [file join $ip_dir fir_compiler_droop fir_compiler_droop.veo]
 set halfband_veo [file join $ip_dir fir_compiler_halfband fir_compiler_halfband.veo]
 
 set dds_w      [veo_port_width $dds_veo m_axis_data_tdata]
+set dds_cfg_w  [veo_port_width $dds_veo s_axis_config_tdata]
 set cic_in_w   [veo_port_width $cic_veo s_axis_data_tdata]
 set cic_w      [veo_port_width $cic_veo m_axis_data_tdata]
 set droop_in_w [veo_port_width $droop_veo s_axis_data_tdata]
@@ -302,6 +338,7 @@ set hb_w       [veo_port_width $halfband_veo m_axis_data_tdata]
 
 puts "anchos reales de TDATA (leídos de la IP generada):"
 puts "  DDS m_axis (cos+sin empaquetados)      : $dds_w bits"
+puts "  DDS s_axis_config (PINC programable)   : $dds_cfg_w bits"
 puts "  CIC s_axis / m_axis                    : $cic_in_w / $cic_w bits (precisión: $::drx::CIC_REGISTER_BITS)"
 puts "  FIR droop s_axis / m_axis               : $droop_in_w / $droop_w bits"
 puts "  FIR semibanda s_axis / m_axis           : $hb_in_w / $hb_w bits"
@@ -322,6 +359,7 @@ puts $fh ""
 puts $fh "package drx_ddc_ip_pkg;"
 puts $fh ""
 puts $fh "  localparam int DDS_TDATA_BITS = $dds_w;"
+puts $fh "  localparam int DDS_CONFIG_TDATA_BITS = $dds_cfg_w;"
 puts $fh "  localparam int CIC_IN_BITS = $cic_in_w;"
 puts $fh "  localparam int CIC_TDATA_BITS = $cic_w;"
 puts $fh "  localparam int FIR_DROOP_IN_BITS = $droop_in_w;"

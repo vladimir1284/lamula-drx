@@ -44,7 +44,8 @@ REG_BINS_LOW_ADDR = 0x48
 REG_BINS_HIGH_ADDR = 0x4C
 REG_GATE_TRUNCATED_ADDR = 0x50
 REG_TRIG_COUNT_ADDR = 0x54  # v7, Z4.1
-REG_RESERVED_ADDR = 0x58  # primera palabra sin implementar desde v7
+REG_NCO_PINC_ADDR = 0x58  # v9, Z4.5
+REG_RESERVED_ADDR = 0x5C  # primera palabra sin implementar desde v9
 
 #: Leída de config/registers.toml, no fijada aquí. Los OFFSETS de arriba sí son
 #: literales a propósito -- si alguien mueve un registro, este test tiene que
@@ -124,6 +125,32 @@ async def axil_read(dut, addr: int) -> int:
         await RisingEdge(dut.clk)
         if r_fires:
             return data
+
+
+async def _escribe_contando_strobe(dut, addr: int, data: int) -> int:
+    """Escribe en `addr` y devuelve en cuántos ciclos estuvo alto `nco_pinc_we`.
+
+    Muestrea ANTES del flanco, igual que el resto de este fichero: `nco_pinc_we`
+    es combinacional desde `write_commit`, y leerlo después del `await` vería el
+    valor ya bajado.
+    """
+    pulsos = 0
+    corriendo = True
+
+    async def muestreador() -> None:
+        nonlocal pulsos
+        while corriendo:
+            alto = int(dut.nco_pinc_we.value)
+            await RisingEdge(dut.clk)
+            if alto:
+                pulsos += 1
+
+    tarea = cocotb.start_soon(muestreador())
+    await axil_write(dut, addr, data)
+    await RisingEdge(dut.clk)
+    corriendo = False
+    tarea.kill()
+    return pulsos
 
 
 @cocotb.test()
@@ -407,6 +434,45 @@ async def test_direccion_reservada_lee_cero_y_escritura_sin_efecto(dut):
     await axil_write(dut, REG_RESERVED_ADDR, 0xFFFF_FFFF)
     assert await axil_read(dut, REG_RESERVED_ADDR) == 0
     assert int(dut.mode_coarse.value) == 0
+
+
+@cocotb.test()
+async def test_nco_pinc_arranca_en_nco_phase_inc_y_pulsa_al_escribir(dut):
+    """NCO_PINC (v9, Z4.5): valor de reset, lectura/escritura y strobe.
+
+    Las tres cosas importan por separado. El VALOR DE RESET es lo que mantiene
+    válida la matriz de D-12 como oráculo del camino sin AFC: si no fuera
+    NCO_PHASE_INC, un sistema que nunca escribe aquí mezclaría a otra
+    frecuencia. El STROBE tiene que durar UN ciclo y pulsar en CADA escritura,
+    incluso si el valor no cambia -- el canal S_AXIS_CONFIG del DDS Compiler no
+    tiene TREADY y un pulso largo le metería la misma configuración varias
+    veces.
+    """
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    assert int(dut.nco_pinc.value) == PARAMS.nco_phase_inc, (
+        "NCO_PINC tiene que arrancar en NCO_PHASE_INC, el mismo PINC1 de la IP"
+    )
+    assert await axil_read(dut, REG_NCO_PINC_ADDR) == PARAMS.nco_phase_inc
+    assert int(dut.nco_pinc_we.value) == 0
+
+    nuevo = (PARAMS.nco_phase_inc + 0x0010_0000) & 0xFFFF_FFFF
+    pulsos = await _escribe_contando_strobe(dut, REG_NCO_PINC_ADDR, nuevo)
+
+    assert pulsos == 1, f"nco_pinc_we tiene que pulsar un solo ciclo, pulsó {pulsos}"
+    assert int(dut.nco_pinc.value) == nuevo
+    assert await axil_read(dut, REG_NCO_PINC_ADDR) == nuevo
+
+    # Reescribir el MISMO valor también pulsa: quien decide si reprogramar es el
+    # par remoto (mensaje `afc`), no este módulo.
+    pulsos = await _escribe_contando_strobe(dut, REG_NCO_PINC_ADDR, nuevo)
+    assert pulsos == 1, "una escritura del mismo valor también tiene que pulsar"
+
+    # Y ninguna otra dirección lo mueve.
+    pulsos = await _escribe_contando_strobe(dut, REG_CTRL_ADDR, 0x1)
+    assert pulsos == 0, "solo NCO_PINC genera el strobe"
+    assert int(dut.nco_pinc.value) == nuevo
 
 
 @cocotb.test()

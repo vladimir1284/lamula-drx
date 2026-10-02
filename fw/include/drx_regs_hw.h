@@ -24,6 +24,13 @@ void DrxReg_Write(uint32_t offset, uint32_t value);
 uint32_t DrxReg_Version(void);
 uint32_t DrxReg_TrigCount(void);
 
+/* NCO_PINC (v9, Z4.5): palabra de incremento de fase del NCO. Cada escritura
+ * dispara un pulso hacia el canal S_AXIS_CONFIG del DDS Compiler, asi que
+ * escribir el mismo valor dos veces reprograma dos veces -- quien decide es el
+ * plano de control (fw/include/drx_afc.h), no este driver. */
+uint32_t DrxReg_ReadNcoPinc(void);
+void DrxReg_WriteNcoPinc(uint32_t pinc);
+
 uint32_t DrxReg_ReadStatus(void);
 void DrxReg_ClearStatus(uint32_t mask);
 

@@ -115,10 +115,28 @@ class NcoTaylor:
     out_bits: int
     lut_addr_bits: int = 16
     delta_bits: int = 9
+    #: Actuación AFC (Z4.5): a partir de la muestra `retune_at` el acumulador
+    #: avanza con `retune_inc` en vez de con `phase_inc`. `None` (el valor por
+    #: defecto) deja el NCO exactamente como antes -- esta clase es el oráculo
+    #: de D-12 y no puede cambiar de comportamiento por añadir una opción.
+    #:
+    #: NO hay continuidad de fase en el salto, igual que en el hardware: el
+    #: acumulador sigue desde donde estaba con el incremento nuevo. Esa es la
+    #: razón de que el índice importe y de que `retune_at` no sea siempre 0 --
+    #: el DDS Compiler aplica la configuración unos ciclos después de que se la
+    #: escriban, y el modelo tiene que reproducir ese retardo para que la
+    #: comparación bit a bit de L1 cierre.
+    retune_at: int | None = None
+    retune_inc: int | None = None
 
     @classmethod
     def from_params(
-        cls, params: Params, lut_addr_bits: int = 16, delta_bits: int = 9
+        cls,
+        params: Params,
+        lut_addr_bits: int = 16,
+        delta_bits: int = 9,
+        retune_at: int | None = None,
+        retune_inc: int | None = None,
     ) -> NcoTaylor:
         return cls(
             phase_bits=int(params.invariant["nco_phase_bits"]),
@@ -126,12 +144,25 @@ class NcoTaylor:
             out_bits=int(params.invariant["nco_out_bits"]),
             lut_addr_bits=lut_addr_bits,
             delta_bits=delta_bits,
+            retune_at=retune_at,
+            retune_inc=retune_inc,
         )
 
     def phase(self, n: int, initial: int = 0) -> np.ndarray:
         """Fase del acumulador para `n` muestras, envuelta a `phase_bits`."""
         mask = (1 << self.phase_bits) - 1
-        steps = initial + self.phase_inc * np.arange(n, dtype=np.int64)
+        idx = np.arange(n, dtype=np.int64)
+
+        if self.retune_at is None:
+            steps = initial + self.phase_inc * idx
+        else:
+            if self.retune_inc is None:
+                raise ValueError("retune_at sin retune_inc")
+            k = int(self.retune_at)
+            antes = np.minimum(idx, k)
+            despues = np.maximum(idx - k, 0)
+            steps = initial + self.phase_inc * antes + self.retune_inc * despues
+
         return (steps & mask).astype(np.int64)
 
     def generate(self, n: int, initial: int = 0) -> tuple[np.ndarray, np.ndarray]:

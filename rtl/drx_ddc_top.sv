@@ -73,6 +73,15 @@ module drx_ddc_top
 
     input logic mode_coarse,
 
+    // Actuación AFC (Z4.5): palabra de fase del NCO escribible en tiempo de
+    // ejecución. `nco_pinc_we` es un pulso de UN ciclo (el strobe de escritura
+    // del registro NCO_PINC del mapa AXI-Lite); `nco_pinc` tiene que ser
+    // estable ese ciclo. Mientras nadie escriba, el NCO corre con el PINC1
+    // congelado en la IP (= NCO_PHASE_INC), que es exactamente el
+    // comportamiento bit a bit verificado bajo D-12 desde Z1.
+    input logic [NCO_PHASE_BITS-1:0] nco_pinc,
+    input logic                      nco_pinc_we,
+
     output logic                       m_valid,
     output logic signed [IQ_BITS-1:0] m_i,
     output logic signed [IQ_BITS-1:0] m_q,
@@ -126,9 +135,14 @@ module drx_ddc_top
   end
 
   // ---------------------------------------------------------------------
-  // NCO: DDS Compiler en modo generador de fase libre (incremento fijo,
-  // NCO_PHASE_INC, congelado en la personalización de la IP; sin
-  // S_AXIS_PHASE ni S_AXIS_CONFIG — el retune en caliente de AFC es Z4).
+  // NCO: DDS Compiler en modo generador de fase, con el incremento de fase
+  // PROGRAMABLE por S_AXIS_CONFIG desde Z4.5 (antes `Phase_Increment {Fixed}`,
+  // sin ningún puerto por el que cambiarlo). PINC1 sigue siendo
+  // NCO_PHASE_INC y ahora es el VALOR INICIAL tras `aresetn`: sin ninguna
+  // escritura de configuración el core se comporta exactamente como antes, que
+  // es lo que permite que la matriz de D-12 siga siendo el oráculo del camino
+  // sin AFC. Sigue sin S_AXIS_PHASE (ese es el modo Streaming, una palabra de
+  // fase POR MUESTRA; aquí hace falta una sola palabra que persiste).
   // M_AXIS_DATA_TDATA empaqueta {coseno, seno}, cada uno a NCO_OUT_BITS,
   // coseno en la mitad alta — confirmar contra la plantilla real.
   //
@@ -150,9 +164,42 @@ module drx_ddc_top
   assign nco_cos = nco_data[2*NCO_OUT_BITS-1:NCO_OUT_BITS];
   assign nco_sin = nco_data[NCO_OUT_BITS-1:0];
 
+  // Escritor del canal de configuración. S_AXIS_CONFIG no tiene TREADY
+  // (`Has_TREADY {false}` vale para todas las interfaces del core), así que un
+  // pulso de TVALID de un ciclo basta y no hay handshake que esperar. Lo único
+  // que hay que respetar es el estirador de reset de arriba: una escritura que
+  // llegue con el core todavía en reset se queda PENDIENTE y se emite en
+  // cuanto `ip_rst_n` sube, en vez de perderse en silencio.
+  logic                                nco_cfg_valid;
+  logic                                nco_cfg_pending;
+  logic [        NCO_PHASE_BITS-1:0]   nco_cfg_data;
+  logic [DDS_CONFIG_TDATA_BITS-1:0]    nco_cfg_tdata;
+
+  assign nco_cfg_tdata = DDS_CONFIG_TDATA_BITS'(nco_cfg_data);
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      nco_cfg_valid   <= 1'b0;
+      nco_cfg_pending <= 1'b0;
+      nco_cfg_data    <= NCO_PHASE_BITS'(NCO_PHASE_INC);
+    end else begin
+      nco_cfg_valid <= 1'b0;
+      if (nco_pinc_we) begin
+        nco_cfg_data    <= nco_pinc;
+        nco_cfg_pending <= 1'b1;
+      end else if (nco_cfg_pending && ip_rst_n) begin
+        nco_cfg_valid   <= 1'b1;
+        nco_cfg_pending <= 1'b0;
+      end
+    end
+  end
+
   dds_compiler_nco u_nco (
       .aclk   (clk),
       .aresetn(ip_rst_n),
+
+      .s_axis_config_tvalid(nco_cfg_valid),
+      .s_axis_config_tdata (nco_cfg_tdata),
 
       .m_axis_data_tvalid(nco_valid),
       .m_axis_data_tdata (nco_data)

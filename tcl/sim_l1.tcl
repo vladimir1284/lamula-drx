@@ -82,6 +82,15 @@ set settling   [manifest_get $manifest settling_out_samples]
 set mode       [manifest_get $manifest mode]
 set mode_arg   [expr {$mode eq "coarse" ? 1 : 0}]
 
+# Actuación AFC (Z4.5): sólo el caso `afc_retune` lo trae; en todos los demás
+# vale `null` y no se pasa ningún plusarg, de modo que el testbench deja el NCO
+# con el PINC1 congelado en la IP -- el camino bit a bit de siempre.
+set nco_pinc {}
+if {[regexp "\"nco_pinc\"\\s*:\\s*(\[^,\\n\]+)" $manifest -> nco_pinc_raw]} {
+  set nco_pinc_raw [string trim $nco_pinc_raw]
+  if {$nco_pinc_raw ne "null"} { set nco_pinc $nco_pinc_raw }
+}
+
 set params_sha [manifest_get $manifest params_sha256]
 if {$params_sha ne $::drx::PARAMS_SHA256} {
   error "los vectores son de otro config/params.toml ($params_sha != $::drx::PARAMS_SHA256); regenéralos"
@@ -208,6 +217,10 @@ set plusargs [list \
   "expected_count=$n_expected" \
   "settling=$settling" \
   "mode=$mode_arg"]
+if {$nco_pinc ne {}} {
+  lappend plusargs "nco_pinc=$nco_pinc"
+  puts "actuación AFC: se escribirá NCO_PINC = $nco_pinc tras soltar el reset"
+}
 
 # xsim exige el flag -testplusarg delante de cada uno; pasarlos como tokens
 # +clave=valor sueltos rompe su parser de opciones posicionales a partir del

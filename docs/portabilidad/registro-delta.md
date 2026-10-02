@@ -18,6 +18,7 @@ cierra sin una entrada aquí**. Se lee en voz alta en cada demo de sprint, para 
 | D9 | Frontal analógico: ruido, offset, desbalance I/Q, nivel de IF, clipping | Alta | Inyectar estas degradaciones sintéticamente en los vectores desde [Z1](../implementacion/fases.md#z1) |
 | D10 | DDR de 512 MB frente a varios GB, y su ancho de banda | Baja | Dimensionar buffers por parámetro, no por constante |
 | D11 | Throughput no representativo por la dilatación temporal | Media | [Campaña sintética separada](../implementacion/fases.md#throughput) |
+| D12 | Ancho del acumulador de fase del NCO: 32 bits aquí (`NCO_PHASE_BITS`), potencialmente más en la ZU9 | Baja | El mensaje `afc` del contrato manda `nco_phase_inc` como **u64** desde v0.1, así que un acumulador más ancho no toca el formato de cable. Lo que sí es local es el registro `NCO_PINC`, de 32 bits: el firmware rechaza con `afc_out_of_range` (contrato v0.7) lo que no quepa, en vez de truncar. Al portar, el ancho del registro y el de `s_axis_config_tdata` del DDS Compiler tienen que subir juntos |
 
 ## Cómo se usa este registro
 

@@ -96,6 +96,11 @@ module tb_l1_ddc_quad;
 
       .mode_coarse(mode_coarse),
 
+      // Actuación AFC (Z4.5): este testbench no la ejercita -- el NCO queda
+      // con el PINC1 inicial de la IP, el comportamiento verificado bajo D-12.
+      .nco_pinc   (NCO_PHASE_BITS'(NCO_PHASE_INC)),
+      .nco_pinc_we(1'b0),
+
       .m_valid(iq_valid),
       .m_i    (iq_i),
       .m_q    (iq_q)

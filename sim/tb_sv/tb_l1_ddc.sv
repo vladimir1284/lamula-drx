@@ -74,6 +74,29 @@ module tb_l1_ddc;
   end
 
 `ifdef DRX_HAVE_DDC
+  // Actuación AFC (Z4.5). Sin `+nco_pinc=` en la línea de órdenes el NCO se
+  // queda con el PINC1 congelado en la IP (= NCO_PHASE_INC) y `nco_pinc_we` no
+  // pulsa nunca: la cadena es EXACTAMENTE la de antes de Z4.5, que es lo que
+  // mantiene válida la matriz de 16 corridas de D-12 como oráculo del camino
+  // sin AFC. Con el plusarg, se escribe una sola vez justo tras soltar el
+  // reset; `drx_ddc_top` retiene la escritura hasta que su estirador de reset
+  // suelta la IP.
+  logic [NCO_PHASE_BITS-1:0] nco_pinc;
+  logic                      nco_pinc_we = 1'b0;
+  int unsigned               nco_pinc_arg;
+
+  initial begin
+    nco_pinc = NCO_PHASE_BITS'(NCO_PHASE_INC);
+    if ($value$plusargs("nco_pinc=%d", nco_pinc_arg)) begin
+      nco_pinc = NCO_PHASE_BITS'(nco_pinc_arg);
+      @(posedge rst_n);
+      @(posedge clk);
+      nco_pinc_we <= 1'b1;
+      @(posedge clk);
+      nco_pinc_we <= 1'b0;
+    end
+  end
+
   drx_ddc_top u_dut (
       .clk(clk),
       .rst_n(rst_n),
@@ -82,6 +105,9 @@ module tb_l1_ddc;
       .s_data(stim_data),
       .s_last(stim_last),
       .mode_coarse(mode_coarse),
+
+      .nco_pinc   (nco_pinc),
+      .nco_pinc_we(nco_pinc_we),
       .m_valid(iq_valid),
       .m_i(iq_i),
       .m_q(iq_q)

@@ -74,12 +74,22 @@
 # firmware, no solo de RTL interno. Sin registro nuevo porque no hace falta: es
 # un unico bit de modo, del mismo tipo que `mode_coarse` y con la misma regla
 # (solo seguro de cambiar con la cadena parada).
-schema_version = 8
+# v9 (2-oct-2026, Z4.5) anade NCO_PINC: la palabra de incremento de fase del
+# NCO, escribible en tiempo de ejecucion. Es la pieza de hardware que faltaba
+# para la actuacion AFC -- hasta v8 el incremento vivia congelado en la
+# personalizacion de la IP del DDS Compiler (`Phase_Increment {Fixed}`) y NO
+# habia ningun puerto por el que cambiarlo; la IP se regenero con
+# `{Programmable}` (ver tcl/gen_ip.tcl) y este registro es su unico escritor.
+# Lectura/escritura, valor de reset = NCO_PHASE_INC (el mismo PINC1 de la IP),
+# asi que un sistema que nunca escriba aqui se comporta exactamente como v8 --
+# condicion necesaria para que la matriz de 16 corridas de D-12 siga siendo el
+# oraculo del camino sin AFC.
+schema_version = 9
 
 # Bytes direccionables: 2^addr_width = 128 B = 32 palabras de 32 bits. Las
-# primeras 22 palabras (0x00-0x54) están implementadas (Z1 + Z2 v3/v5/v6 +
-# Z4.1 v7); el resto (0x58 en adelante) queda reservado sin implementar (lee
-# 0, escritura sin efecto), sin diseñarlo ahora.
+# primeras 23 palabras (0x00-0x58) están implementadas (Z1 + Z2 v3/v5/v6 +
+# Z4.1 v7 + Z4.5 v9); el resto (0x5C en adelante) queda reservado sin
+# implementar (lee 0, escritura sin efecto), sin diseñarlo ahora.
 addr_width = 7
 
 [[register]]
@@ -219,3 +229,9 @@ name = "trig_count"
 offset = 0x54
 access = "ro"
 doc = "Contador libre de 32 bits: incrementa una vez por cada pulso de pulse_trig de drx_timing_engine (el mismo pulso que ya dispara ray_start en drx_range_gate_quad_top, D-14). No es sticky ni write-1-to-clear -- es un conteo monótono desde el último reset, el 'contador de trigger' que fases.md#z4 ya listaba como metadato de rayo para el firmware de ensamblado (Z4.4). Envuelve en 2^32 pulsos."
+
+[[register]]
+name = "nco_pinc"
+offset = 0x58
+access = "rw"
+doc = "Palabra de incremento de fase del NCO (NCO_PHASE_BITS = 32 bits), compartida por los N_CH canales de drx_ddc_quad_top: los N_CH ven el mismo IF, un retune que moviera solo uno los dejaria desalineados. Valor de reset = NCO_PHASE_INC, el mismo PINC1 que la IP del DDS Compiler lleva congelado como valor inicial, de modo que no escribir aqui deja la cadena bit a bit como antes de v9. CADA escritura genera un pulso de un ciclo hacia el canal S_AXIS_CONFIG del core (sin TREADY: se acepta siempre), incluso si el valor no cambia -- es la via de actuacion del mensaje `afc` del contrato DRx<->DSP. No hay continuidad de fase garantizada en el salto: el acumulador sigue desde donde estaba con el incremento nuevo, igual que `mode_coarse`, y por el mismo motivo (la correccion se aplica entre rayos, nunca dentro de uno; ver `apply_at_seq` del mensaje `afc`)."

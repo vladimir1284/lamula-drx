@@ -188,6 +188,11 @@ module drx_top
   logic [31:0] timing_trig_count;
   logic vector_source_ddr;
 
+  // Actuación AFC (Z4.5): NCO_PINC del mapa v9 hacia el canal S_AXIS_CONFIG de
+  // los N_CH NCO del DDC. Una sola palabra para los N_CH: todos ven el mismo IF.
+  logic [31:0] nco_pinc;
+  logic        nco_pinc_we;
+
   // `drx_axil_regs` recibe/devuelve el overrun por canal como vector
   // empaquetado (STATUS es literalmente eso), mientras que
   // `drx_range_gate_quad_top` usa arrays sin empaquetar (mismo patrón que el
@@ -274,6 +279,8 @@ module drx_top
 
       .mode_coarse(mode_coarse),
       .vector_source_ddr(vector_source_ddr),
+      .nco_pinc(nco_pinc),
+      .nco_pinc_we(nco_pinc_we),
 
       .overrun_in   (gate_overrun_packed),
       .overrun_clear(gate_clear_packed),
@@ -406,6 +413,9 @@ module drx_top
       .s_last (vs_last),
 
       .mode_coarse(mode_coarse),
+
+      .nco_pinc   (nco_pinc),
+      .nco_pinc_we(nco_pinc_we),
 
       .m_valid(ddc_valid),
       .m_i    (ddc_i),

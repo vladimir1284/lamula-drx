@@ -20,6 +20,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "model"))
 
@@ -131,6 +133,48 @@ def _cases(
     }
 
 
+#: Desplazamiento de frecuencia del caso de AFC, en frecuencia normalizada. Es
+#: deliberadamente grande comparado con `tono_desplazado` (0,001): lo que se
+#: comprueba aquí no es la respuesta del filtro sino que el NCO de verdad mezcla
+#: con la palabra de fase NUEVA, y un desplazamiento pequeño se confundiría con
+#: el residuo de cuantización que D-12 ya acepta.
+_AFC_FREQ_OFFSET = 0.01
+
+#: Muestra del NCO a partir de la cual el modelo usa el incremento nuevo.
+#:
+#: HIPÓTESIS, no medida todavía (2-oct-2026): el testbench escribe NCO_PINC
+#: nada más soltar el reset, `drx_ddc_top` retiene la escritura hasta que su
+#: estirador de reset suelta la IP, y el core tarda `Latency` = 9 ciclos en dar
+#: su primera salida -- así que la configuración debería estar aplicada antes de
+#: la muestra 0. Si la primera corrida de este caso falla, el camino es medir el
+#: desfase real barriendo `k` CONTRA LA MISMA salida del RTL (una sola
+#: simulación, barrido offline en Python), exactamente como se calibró
+#: `NCO_LUT_OFFSET_K` en `tcl/gen_ip.tcl`. No se ajusta el modelo para que pase:
+#: se mide el hardware y se escribe el número medido aquí.
+_AFC_RETUNE_AT = 0
+
+
+def _afc_case(
+    params: params_mod.Params, n_samples: int = N_SAMPLES
+) -> tuple[np.ndarray, tuple[int, int]]:
+    """Estímulo y retune del caso de actuación AFC (Z4.5).
+
+    El tono está a `if_norm + _AFC_FREQ_OFFSET` y la palabra de fase es la de
+    ESE tono, así que la salida vuelve a caer en continua. Esa redundancia es a
+    propósito: la comparación bit a bit contra el modelo es el gate, pero "el
+    pico tiene que estar en continua" es una comprobación que también se puede
+    hacer en placa con `tools/dump_ray.py`, sin oráculo de por medio.
+
+    Vive FUERA de `_cases` a propósito: esa lista es también el catálogo de
+    estímulos que el firmware carga por DMA y que el contrato nombra en la
+    enumeración `stimulus_vector`, y añadir un caso ahí cambiaría las dos cosas.
+    """
+    freq = float(params.if_norm) + _AFC_FREQ_OFFSET
+    stimulus = vectors.tone(params, n_samples, freq_norm=freq)
+    pinc = round(freq * (1 << int(params.invariant["nco_phase_bits"])))
+    return stimulus, (_AFC_RETUNE_AT, int(pinc))
+
+
 def generate(platform: str, out_root: Path = OUT_ROOT) -> list[l1_vectors.L1Case]:
     params = params_mod.load(platform)
     out: list[l1_vectors.L1Case] = []
@@ -145,6 +189,17 @@ def generate(platform: str, out_root: Path = OUT_ROOT) -> list[l1_vectors.L1Case
                     mode=mode,
                 )
             )
+        stimulus, retune = _afc_case(params)
+        out.append(
+            l1_vectors.export_case(
+                params=params,
+                name=f"afc_retune__{mode}",
+                stimulus=stimulus,
+                out_root=out_root,
+                mode=mode,
+                nco_retune=retune,
+            )
+        )
     return out
 
 
@@ -153,7 +208,7 @@ def check(platform: str, out_root: Path = OUT_ROOT) -> list[str]:
     problems: list[str] = []
     params = params_mod.load(platform)
     for mode in (chain.MODE_FINE, chain.MODE_COARSE):
-        for name in _cases(params):
+        for name in list(_cases(params)) + ["afc_retune"]:
             directory = out_root / platform / f"{name}__{mode}"
             if not (directory / l1_vectors.MANIFEST_FILE).exists():
                 problems.append(f"falta {directory}")

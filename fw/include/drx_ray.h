@@ -120,6 +120,10 @@ bool DrxRay_Init(void);
  * los rayos LLEGAN, no a donde van. */
 void DrxRay_SetSink(DrxRay_Sink sink, void *user);
 
+/* `ray_index` del ultimo rayo entregado, 0 si todavia no hubo ninguno. Lo usa
+ * la actuacion AFC para decidir si un `apply_at_seq` ya paso (Z4.5). */
+uint32_t DrxRay_LastIndex(void);
+
 /* Crea la tarea que vacia la cola que llena la interrupcion. Hay que crearla:
  * el manejador no toca el sumidero (ver drx_ray.c sobre por que). */
 void DrxRayTask_Create(void);

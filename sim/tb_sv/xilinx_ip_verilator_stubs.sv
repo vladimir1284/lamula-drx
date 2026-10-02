@@ -37,13 +37,20 @@
 module dds_compiler_nco
   import drx_ddc_ip_pkg::*;
 (
-    input  logic                       aclk,
-    input  logic                       aresetn,
-    output logic                       m_axis_data_tvalid,
-    output logic [DDS_TDATA_BITS-1:0]  m_axis_data_tdata
+    input  logic                              aclk,
+    input  logic                              aresetn,
+    // Z4.5: `Phase_Increment {Programmable}` anade este canal de
+    // configuracion. Sin TREADY -- la IP real se genera con
+    // `Has_TREADY {false}`.
+    input  logic                              s_axis_config_tvalid,
+    input  logic [DDS_CONFIG_TDATA_BITS-1:0]  s_axis_config_tdata,
+    output logic                              m_axis_data_tvalid,
+    output logic [DDS_TDATA_BITS-1:0]         m_axis_data_tdata
 );
-  assign m_axis_data_tvalid = ^{aclk, aresetn};
-  assign m_axis_data_tdata  = {DDS_TDATA_BITS{^{aclk, aresetn}}};
+  logic cfg_mix;
+  assign cfg_mix = ^{aclk, aresetn, s_axis_config_tvalid, s_axis_config_tdata};
+  assign m_axis_data_tvalid = cfg_mix;
+  assign m_axis_data_tdata  = {DDS_TDATA_BITS{cfg_mix}};
 endmodule : dds_compiler_nco
 
 module cic_compiler_ddc

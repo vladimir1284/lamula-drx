@@ -1,6 +1,7 @@
 /* Implementacion de fw/include/drx_control_boot.h. */
 #include "drx_control_boot.h"
 
+#include "drx_afc_app.h"
 #include "drx_contract_io.h"
 #include "drx_control.h"
 #include "drx_params.h"
@@ -99,7 +100,7 @@ bool DrxControlBoot_SelfTest(void)
     DrxControlOps ops = {
         .select_stimulus = boot_select_stimulus,
         .apply_config = boot_apply_config,
-        .apply_afc = NULL, /* Z4.5: se contesta `unimplemented`, no `unknown_message` */
+        .apply_afc = DrxAfcApp_Apply, /* Z4.5: ya existe; antes se contestaba `unimplemented` */
         .user = NULL,
     };
     DrxControl control;

@@ -216,6 +216,26 @@ Hallazgo nuevo abierto: **P-16**, Throttled(DDR) y el motor de timing no pueden 
 **Lo que NO hay: transporte.** El framer y el plano de control están, pero nadie abre un socket; el
 DSP real es Z4.6. Detalle en `fases.md#z4`, entrada del 1-oct (noche).
 
+**Z4.5 — actuación AFC y status/BITE: en curso, empezó 2-oct-2026. NO cerrada.** El NCO por fin se
+puede retunear en tiempo de ejecución: la IP del DDS Compiler se regeneró con `Phase_Increment
+{Programmable}` (antes `{Fixed}`, sin ningún puerto por el que cambiar el incremento de fase),
+mapa de registros **v9** (`NCO_PINC`, `0x58`, RW, reset = `NCO_PHASE_INC`), contrato **v0.7**
+(`afc_out_of_range`, porque `nco_phase_inc` viaja como u64 y este receptor tiene 32 bits — truncar
+en silencio convertiría una corrección equivocada en una frecuencia de mezcla equivocada sin
+síntoma), y firmware nuevo con el reparto de siempre: `fw/src/app/drx_afc.c` y `drx_status_frame.c`
+sin dependencias de Xilinx, compilados también para host y contrastados contra el Python generado
+(`fw/tests/test_afc.py`, `fw/tests/test_status_frame.py`); `drx_afc_app.c` escribe el registro.
+`apply_at_seq` se aplica **entre rayos**, en el enganche de `drx_ray.c`. De paso salió un bug real
+de infraestructura: `tcl/gen_ip.tcl` no era idempotente — `create_ip` con la IP ya presente creaba
+`ip/<core>_1/` en silencio y dejaba el XCI versionado intacto; corregido con `ensure_ip`.
+**La matriz de 16 corridas de D-12 contra xsim real cerró 16/16 PASS** — el gate de verdad del
+cambio de IP, corrido entero antes de commitear: el arranque del Phase Generator no se movió y
+`NCO_LUT_OFFSET_K = 655` sigue cancelando. **Lo que falta para cerrar:** el P&R con la IP nueva
+(la última cifra válida sigue siendo la de Z4.4, WNS = 2,045 ns), la verificación del retune contra
+el modelo dorado (que NCO_PINC cambie es un registro; que el NCO mezcle a la frecuencia nueva es
+otra cosa — el caso L1 `afc_retune` está montado y corriendo) y el bring-up en placa. Detalle en
+`fases.md#z4`, entrada del 2-oct.
+
 Lo que sí está hecho y verificado, además de lo de arriba:
 
 - El sitio de documentación se construye y se despliega solo a

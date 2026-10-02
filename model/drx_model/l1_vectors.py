@@ -97,13 +97,14 @@ def export_case(
     stimulus: np.ndarray,
     out_root: Path,
     mode: str = chain.MODE_FINE,
+    nco_retune: tuple[int, int] | None = None,
 ) -> L1Case:
     """Corre el modelo sobre `stimulus` y escribe el caso completo.
 
     `stimulus` tiene que venir ya cuantizado a `sample_bits`, igual que lo
     consume el modelo: la cuantización es parte del oráculo y no se hace aquí.
     """
-    ddc = chain.Ddc(params=params, mode=mode)
+    ddc = chain.Ddc(params=params, mode=mode, nco_retune=nco_retune)
     result = ddc.process(stimulus)
 
     directory = out_root / params.name / name
@@ -138,6 +139,11 @@ def export_case(
         # ventana se pueda leer como «arranque» y no como «aritmética».
         "settling_out_samples": int(np.ceil(_settling_in_samples(ddc) / result.decimation)),
         "overflow_count": int(np.count_nonzero(result.overflow)),
+        # Actuación AFC (Z4.5). Sin retune los dos son null y `tcl/sim_l1.tcl`
+        # no pasa ningún plusarg, así que el testbench deja el NCO con el PINC1
+        # de la IP -- el caso de siempre, bit a bit.
+        "nco_pinc": None if nco_retune is None else int(nco_retune[1]),
+        "nco_retune_at": None if nco_retune is None else int(nco_retune[0]),
         "files": {
             STIMULUS_FILE: stimulus_sha,
             EXPECTED_I_FILE: expected_i_sha,

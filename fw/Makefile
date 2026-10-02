@@ -44,6 +44,8 @@ SELFTEST := $(BUILD_DIR)/drx_params_selftest
 CONTRACT_IO := $(BUILD_DIR)/drx_contract_io_selftest
 CONTROL := $(BUILD_DIR)/drx_control_selftest
 RAY_FRAME := $(BUILD_DIR)/drx_ray_frame_selftest
+AFC := $(BUILD_DIR)/drx_afc_selftest
+STATUS_FRAME := $(BUILD_DIR)/drx_status_frame_selftest
 
 .PHONY: all check clean
 
@@ -70,11 +72,23 @@ $(RAY_FRAME): src/drx_ray_frame_selftest.c src/app/drx_ray_frame.c \
 	$(CC) $(CFLAGS) src/drx_ray_frame_selftest.c src/app/drx_ray_frame.c \
 	      src/app/drx_contract_io.c -o $@
 
-check: $(SELFTEST) $(CONTRACT_IO) $(CONTROL) $(RAY_FRAME)
+$(AFC): src/drx_afc_selftest.c src/app/drx_afc.c include/drx_afc.h \
+        $(CONTRACT_H) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) src/drx_afc_selftest.c src/app/drx_afc.c -o $@
+
+$(STATUS_FRAME): src/drx_status_frame_selftest.c src/app/drx_status_frame.c \
+                 src/app/drx_contract_io.c include/drx_status_frame.h \
+                 include/drx_contract_io.h $(CONTRACT_H) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) src/drx_status_frame_selftest.c src/app/drx_status_frame.c \
+	      src/app/drx_contract_io.c -o $@
+
+check: $(SELFTEST) $(CONTRACT_IO) $(CONTROL) $(RAY_FRAME) $(AFC) $(STATUS_FRAME)
 	@$(SELFTEST) > /dev/null && echo "auto-comprobación de parámetros: OK"
 	@$(CONTRACT_IO) encode > /dev/null && echo "framer del contrato: compila y codifica"
 	@echo | $(CONTROL) 7 > /dev/null && echo "plano de control: compila y despacha"
 	@$(RAY_FRAME) > /dev/null && echo "framer de rayo: compila y codifica"
+	@$(AFC) > /dev/null && echo "actuacion AFC: compila y aplica"
+	@$(STATUS_FRAME) > /dev/null && echo "framer de status/BITE: compila y codifica"
 
 clean:
 	rm -rf $(BUILD_DIR)

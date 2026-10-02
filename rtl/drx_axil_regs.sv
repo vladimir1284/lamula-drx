@@ -85,6 +85,10 @@
 
 module drx_axil_regs
   import drx_regs_pkg::*;
+  // `NCO_PHASE_INC` (valor de reset de NCO_PINC, v9) vive en el paquete de
+  // parametros, no en el del mapa de registros: es un numero del modelo dorado,
+  // no una direccion.
+  import drx_params_pkg::NCO_PHASE_INC;
 #(
     parameter int N_CH = 3
 ) (
@@ -119,6 +123,14 @@ module drx_axil_regs
     output logic mode_coarse,
     // v8 (Z4.3): CTRL bit 1 -- selector de modo de `vector_source`.
     output logic vector_source_ddr,
+
+    // v9 (Z4.5): NCO_PINC -- palabra de incremento de fase del NCO, hacia el
+    // canal S_AXIS_CONFIG del DDS Compiler de cada canal del DDC. `nco_pinc_we`
+    // es un pulso de un ciclo por CADA escritura del registro, incluso si el
+    // valor no cambia: el que decide si reprogramar es el par remoto (mensaje
+    // `afc`), no este modulo.
+    output logic [31:0] nco_pinc,
+    output logic        nco_pinc_we,
 
     // Planta -> registro (ver cabecera: `overrun_in` ya viene latcheado desde
     // `drx_range_gate`, este bloque solo lo expone y pulsa el clear). Vector
@@ -237,6 +249,23 @@ module drx_axil_regs
     end else if (write_commit && awaddr_r == REG_CTRL_ADDR) begin
       mode_coarse_r       <= wdata_r[0];
       vector_source_ddr_r <= wdata_r[1];
+    end
+  end
+
+  // NCO_PINC (v9, Z4.5): valor de reset = NCO_PHASE_INC, el mismo PINC1 que
+  // lleva congelado la IP del DDS Compiler como valor inicial. Sin ninguna
+  // escritura, `nco_pinc_we` nunca pulsa, el core nunca recibe configuracion y
+  // la cadena es bit a bit la de v8 -- que es lo que permite seguir usando la
+  // matriz de D-12 como oraculo del camino sin AFC.
+  logic [31:0] nco_pinc_r;
+  assign nco_pinc = nco_pinc_r;
+  assign nco_pinc_we = write_commit && (awaddr_r == REG_NCO_PINC_ADDR);
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      nco_pinc_r <= 32'(NCO_PHASE_INC);
+    end else if (write_commit && awaddr_r == REG_NCO_PINC_ADDR) begin
+      nco_pinc_r <= wdata_r;
     end
   end
 
@@ -464,6 +493,7 @@ module drx_axil_regs
         for (int c = 0; c < N_CH; c++) rdata_next[c] = ray_truncated_in[c];
       end
       REG_TRIG_COUNT_ADDR: rdata_next = trig_count_r;
+      REG_NCO_PINC_ADDR: rdata_next = nco_pinc_r;
       REG_OVERFLOW_ADDR: begin
         for (int c = 0; c < N_CH; c++) rdata_next[c] = overflow_sticky_r[c];
       end

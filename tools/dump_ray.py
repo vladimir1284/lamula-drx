@@ -144,8 +144,17 @@ def spectrum(i: np.ndarray, q: np.ndarray) -> dict:
     }
 
 
-def model_channel(platform: str, vector: str, bins: int, mode_coarse: bool) -> dict:
-    """Lo que el modelo dorado da para ese vector, con la misma longitud."""
+def model_channel(platform: str, vector: str, bins: int, mode_coarse: bool,
+                  nco_pinc: int | None = None) -> dict:
+    """Lo que el modelo dorado da para ese vector, con la misma longitud.
+
+    `nco_pinc` (Z4.5) es la palabra de fase que el NCO tenga puesta en ese
+    momento, si se hizo una actuación AFC. Aquí entra como un retune en la
+    muestra 0, y eso NO es una aproximación: el rayo que se congela es muy
+    posterior al retune, así que el NCO lleva esa palabra desde mucho antes de
+    la primera muestra del rayo. El transitorio del salto no cae dentro de esta
+    ventana.
+    """
     params = params_mod.load(platform)
     depth = gen_vector_source_init._loop_depth(params)
     cases = gen_l1_vectors._cases(params, depth)
@@ -161,7 +170,10 @@ def model_channel(platform: str, vector: str, bins: int, mode_coarse: bool) -> d
     reps = (needed + warmup + depth - 1) // depth
     stimulus = np.tile(np.asarray(cases[vector]), reps)
 
-    ddc = chain.Ddc(params=params, mode="coarse" if mode_coarse else "fine")
+    retune = None if nco_pinc is None else (0, int(nco_pinc))
+    ddc = chain.Ddc(
+        params=params, mode="coarse" if mode_coarse else "fine", nco_retune=retune
+    )
     out = ddc.process(stimulus)
     i = np.asarray(out.i)[64 : 64 + bins]
     q = np.asarray(out.q)[64 : 64 + bins]
@@ -175,6 +187,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="palabras de 32 bits a leer, cabecera incluida")
     parser.add_argument("--vector", default=None, help="caso del catálogo con el que comparar")
     parser.add_argument("--platform", default="zedboard", choices=["zedboard", "zu9"])
+    parser.add_argument(
+        "--nco-pinc", type=lambda v: int(v, 0), default=None,
+        help="palabra de fase del NCO vigente (registro NCO_PINC, v9) si se "
+             "hizo una actuación AFC; sin esto el modelo mezcla al IF nominal "
+             "y el pico medido no caerá donde el modelo lo pone",
+    )
     parser.add_argument("--out", default=None, help="dónde dejar el binario crudo")
     args = parser.parse_args(argv)
 
@@ -212,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     esperado = model_channel(args.platform, args.vector, header["bin_count"],
-                             header["mode_coarse"])
+                             header["mode_coarse"], args.nco_pinc)
     print(
         f"modelo ({args.vector}): pico en bin {esperado['peak_bin']:+d} "
         f"({esperado['peak_frac']:+.5f}), {esperado['peak_db']:+.2f} dBFS, "

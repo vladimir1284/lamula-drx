@@ -73,12 +73,13 @@ set fw_inc    [file join $repo_root fw include]
 
 foreach f {main.c drx_regs_hw.c drx_status_task.c drx_timing_cfg.c drx_contract_io.c
             drx_control.c drx_stimulus.c drx_dma.c drx_ray.c drx_ray_frame.c
-            drx_control_boot.c} {
+            drx_control_boot.c drx_afc.c drx_afc_app.c drx_status_frame.c} {
   file copy -force [file join $fw_src $f] [file join $app_src $f]
 }
 foreach f {drx_regs_hw.h drx_status_task.h drx_timing_cfg.h drx_contract_io.h
             drx_control.h drx_stimulus.h drx_regs.h drx_params.h drx_dma.h
-            drx_ray.h drx_ray_frame.h drx_control_boot.h} {
+            drx_ray.h drx_ray_frame.h drx_control_boot.h drx_afc.h drx_afc_app.h
+            drx_status_frame.h} {
   file copy -force [file join $fw_inc $f] [file join $app_src $f]
 }
 

@@ -12,6 +12,7 @@
 package drx_ddc_ip_pkg;
 
   localparam int DDS_TDATA_BITS = 32;
+  localparam int DDS_CONFIG_TDATA_BITS = 32;
   localparam int CIC_IN_BITS = 16;
   localparam int CIC_TDATA_BITS = 48;
   localparam int FIR_DROOP_IN_BITS = 16;

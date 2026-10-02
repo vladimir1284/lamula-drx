@@ -17,6 +17,23 @@ void DrxControl_Init(DrxControl *ctl, const DrxControlOps *ops,
     ctl->send_user = send_user;
 }
 
+void DrxControl_ClearLastError(DrxControl *ctl)
+{
+    ctl->last_error = 0u;
+}
+
+/* Ultimo codigo distinto de `ok`, para `last_error` del mensaje `status`. Un
+ * `ok` NO lo borra: lo que el DSP quiere saber es si algo se rechazo desde que
+ * mira, no si el ultimo mensaje concreto salio bien. Lo borra quien emite el
+ * status, con DrxControl_ClearLastError. */
+static void note_error(DrxControl *ctl, drx_dsp_error_t error)
+{
+    if (error != DRX_DSP_ERROR_OK) {
+        ctl->last_error = (uint8_t)error;
+        ctl->rejects++;
+    }
+}
+
 static void reply_config_ack(DrxControl *ctl, uint32_t seq, drx_dsp_error_t error)
 {
     /* Cabecera + el struct mas grande que este fichero llega a emitir. Local y
@@ -68,6 +85,7 @@ void DrxControl_OnMessage(const drx_dsp_header_t *header, const uint8_t *body,
             (ctl->ops.select_stimulus == NULL)
                 ? DRX_DSP_ERROR_UNIMPLEMENTED
                 : ctl->ops.select_stimulus(msg.vector_id, msg.repeat, ctl->ops.user);
+        note_error(ctl, error);
         reply_config_ack(ctl, msg.seq, error);
         return;
     }
@@ -84,6 +102,7 @@ void DrxControl_OnMessage(const drx_dsp_header_t *header, const uint8_t *body,
         drx_dsp_error_t error = (ctl->ops.apply_config == NULL)
                                     ? DRX_DSP_ERROR_UNIMPLEMENTED
                                     : ctl->ops.apply_config(&msg, ctl->ops.user);
+        note_error(ctl, error);
         reply_config_ack(ctl, msg.seq, error);
         return;
     }
@@ -96,9 +115,13 @@ void DrxControl_OnMessage(const drx_dsp_header_t *header, const uint8_t *body,
         }
         memcpy(&msg, body, sizeof(msg));
 
-        if (ctl->ops.apply_afc != NULL) {
-            (void)ctl->ops.apply_afc(&msg, ctl->ops.user);
-        }
+        /* `afc` no se contesta, pero su resultado NO se tira: es el unico
+         * mensaje sin `config_ack`, asi que `last_error` del mensaje `status`
+         * es el unico sitio donde el DSP puede enterarse de que su correccion
+         * se rechazo (Z4.5). */
+        note_error(ctl, (ctl->ops.apply_afc == NULL)
+                            ? DRX_DSP_ERROR_UNIMPLEMENTED
+                            : ctl->ops.apply_afc(&msg, ctl->ops.user));
         return;
     }
 

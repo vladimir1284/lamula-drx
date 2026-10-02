@@ -21,7 +21,7 @@
 [meta]
 name = "drx_dsp"
 version_major = 0
-version_minor = 6
+version_minor = 7
 magic = 0x4C4D4452  # "LMDR" en ASCII, little-endian
 endianness = "little"
 
@@ -221,6 +221,7 @@ values = [
   { name = "not_configured", value = 9, doc = "Llegó un mandato antes de la primera configuración." },
   { name = "vector_unknown", value = 10, doc = "vector_id fuera del catálogo de stimulus_vector." },
   { name = "unimplemented", value = 11, doc = "msg_type conocido y bien formado, pero este receptor todavía no lo aplica. Distinto de unknown_message, que es para un msg_type que el receptor NO conoce: con ese el par remoto sabe que hablan versiones distintas, con este sabe que hablan la misma y que la función aún no está. Nada se aplicó." },
+  { name = "afc_out_of_range", value = 12, doc = "`nco_phase_inc` del mensaje `afc` no cabe en el acumulador de fase del NCO de este receptor. El campo viaja como u64 a proposito --la portadora ZU9 podria tener un acumulador mas ancho sin cambiar el esquema-- asi que un receptor con menos bits tiene que poder decirlo en vez de truncar en silencio, que convertiria una correccion de AFC equivocada en una frecuencia de mezcla equivocada sin ningun sintoma visible. El mensaje `afc` no lleva `seq` y no se contesta: este codigo viaja en `last_error` del mensaje `status`." },
 ]
 
 [[enum]]

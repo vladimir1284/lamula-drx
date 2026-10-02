@@ -1592,6 +1592,95 @@ Trabajo:
     - Siguiente paso: **Z4.5** — status/BITE sobre el contrato y actuación de AFC, que obliga a
       regenerar el IP del DDS Compiler con `S_AXIS_CONFIG` y a repasar la matriz 16/16 de D-12.
 
+!!! warning "2-oct-2026: Z4.5 — actuación AFC y status/BITE; la matriz 16/16 de D-12 **todavía corriendo**"
+    Primera vez que el NCO se puede retunear en tiempo de ejecución. Hasta hoy no era una cuestión
+    de firmware: el incremento de fase vivía **congelado en la personalización de la IP**
+    (`Phase_Increment {Fixed}` en `tcl/gen_ip.tcl`) y el DDS Compiler no exponía ningún puerto por el
+    que cambiarlo. Z4.5 regenera esa IP, añade el registro que la escribe y el firmware que decide
+    cuándo, y monta por fin el mensaje `status` del contrato, que llevaba congelado desde Z0 sin que
+    nadie lo construyera.
+
+    - **IP regenerada con `Phase_Increment {Programmable}`.** Medido sobre la IP generada de verdad,
+      no supuesto: el cambio añade `s_axis_config_tvalid` + `s_axis_config_tdata[31:0]` y no mueve
+      nada más — `Latency` sigue en 9, `Phase_offset` sigue `{Fixed}` con el mismo `POFF1`,
+      `Noise_Shaping` sigue en Taylor. `PINC1` deja de ser *el* incremento y pasa a ser el **valor
+      inicial** tras `aresetn`, que es lo que mantiene el camino sin AFC bit a bit igual que antes.
+    - **Hallazgo real de infraestructura: `tcl/gen_ip.tcl` no era idempotente.** `create_ip
+      -module_name X` con `ip/X/` ya presente **no reconfigura** esa IP: crea `ip/X_1/` en silencio y
+      sigue, así que el `.veo` que el propio script lee después es el viejo y el XCI versionado se
+      queda como estaba. No se había notado porque el script se corrió una sola vez, en Z1, y Z4.5 es
+      la primera vez que hace falta **cambiar** la personalización de un core ya creado. Corregido
+      con `ensure_ip`, que hace `read_ip` si el XCI existe y `create_ip` si no — sin borrar nada. El
+      diff resultante del XCI es mínimo y legible (`Phase_Increment`, `C_HAS_S_CONFIG`,
+      `C_S_CONFIG_TDATA_WIDTH` y los dos puertos nuevos), que es justo lo que se quiere de un
+      artefacto versionado.
+    - **Mapa de registros v9**: `NCO_PINC` (`0x58`, RW, 32 bits), valor de reset `NCO_PHASE_INC`,
+      una sola palabra para los `N_CH` canales. Cada escritura pulsa un ciclo el canal de
+      configuración del core — sin TREADY, se acepta siempre. Detalle y verificación L0 en
+      [`registros.md`](registros.md#z4-en-v9).
+    - **Contrato v0.7**: código de error nuevo `afc_out_of_range` (12). El campo `nco_phase_inc` del
+      mensaje `afc` viaja como u64 a propósito (la ZU9 podría tener un acumulador más ancho sin
+      cambiar el esquema), así que un receptor de 32 bits tiene que poder **decirlo** en vez de
+      truncar: truncar convierte una corrección equivocada en una frecuencia de mezcla equivocada sin
+      ningún síntoma hasta que alguien mire el espectro. `afc` no lleva `seq` y no se contesta, de
+      modo que ese código viaja en `last_error` del mensaje `status` — para lo cual `drx_control.c`
+      deja de tirar el resultado de `apply_afc`.
+    - **Firmware, con el mismo reparto de siempre**: `drx_afc.c` (lógica pura, sin Xilinx ni
+      FreeRTOS, compilada también para el host y cubierta por `fw/tests/test_afc.py`) decide
+      *cuándo*; `drx_afc_app.c` escribe el registro. `apply_at_seq` se respeta de verdad: la
+      corrección se aplica **entre rayos**, en el enganche que `drx_ray.c` llama al entregar cada
+      uno, porque el salto de palabra de fase no conserva la fase del acumulador y aplicarlo a mitad
+      de rayo lo dejaría con dos frecuencias de mezcla. La comparación con `apply_at_seq` es con
+      diferencia **con signo**, no `>=`: `ray_index` envuelve en 2^32 y un `>=` plano dejaría una
+      corrección colgada media eternidad cada vez que el contador diera la vuelta.
+    - **Status y BITE**: `drx_status_frame.c` (otra vez sin Xilinx, contrastado byte a byte contra el
+      Python generado en `fw/tests/test_status_frame.py`) monta el mensaje, y la tarea de diagnóstico
+      acumula los contadores. Los registros sticky son write-1-to-clear, así que leerlos **es**
+      destructivo y sólo puede hacerlo un sitio: por eso acumula la tarea y no el emisor. Tres
+      banderas del catálogo se reportan a cero **y se dice por qué** en vez de rellenarlas en
+      silencio: `ssi_timeout`/`ssi_frame_error` no tienen fuente hasta Z3, `mmcm_unlocked` no llega
+      al mapa de registros (haría falta un bit nuevo en STATUS) y `link_down` lo sabrá lwIP en Z4.6.
+    - **La matriz de 16 corridas de D-12 cerró en verde: 16/16.** Es el gate de verdad de este
+      cambio y por eso se corrió entera antes de commitear nada: si el arranque del Phase Generator
+      se hubiera movido al pasar a `{Programmable}`, el desfase `NCO_LUT_OFFSET_K = 655` dejaría de
+      cancelar y la comparación bit a bit lo diría de inmediato. No se movió. Los ocho casos ×
+      {fine, coarse} dan «dentro de tolerancia (D-12) contra el modelo dorado» —315 muestras en
+      fino, 157 en grueso— sin una sola discrepancia. Coste real, por si alguien la vuelve a correr:
+      ~20-25 minutos de `xsimk` por caso y `tcl/sim_l1.tcl` rehace el proyecto en cada uno, así que
+      la matriz entera son ~3 h con tres casos en paralelo. Cada caso con su `-outdir` nuevo: un
+      directorio de build reutilizado es exactamente lo que causó los dos falsos fallos de
+      [P-09](../alcance/pendientes.md#p-09).
+    - **Lo que falta para cerrar Z4.5, y no es menor:**
+
+        1. **No hay P&R con la IP nueva** en el momento de escribir esto (está corriendo). El canal
+           de configuración añade lógica dentro del core; hasta medirlo, la última cifra válida sigue
+           siendo la de Z4.4 (WNS = 2,045 ns).
+        3. **El retune no está verificado contra el modelo dorado.** Que NCO_PINC cambie es un
+           registro; que el NCO **mezcle** a la frecuencia nueva es otra cosa. Los dos caminos para
+           medirlo están **montados y sin correr**:
+
+            - **L1, bit a bit.** El modelo dorado acepta ahora un retune
+              (`NcoTaylor.retune_at`/`retune_inc`, `Ddc.nco_retune`; sin él, el oráculo de D-12 no
+              se mueve — los 87 tests del modelo siguen en verde, huella SHA-256 incluida), el
+              manifiesto de un caso lleva `nco_pinc`/`nco_retune_at`, `tcl/sim_l1.tcl` los convierte
+              en plusarg y `tb_l1_ddc.sv` escribe el registro tras soltar el reset. El caso nuevo es
+              `afc_retune__{fine,coarse}`: tono a `if_norm + 0,01` y palabra de fase la de **ese**
+              tono, así que la salida vuelve a caer en continua. Queda una **hipótesis sin medir**:
+              `_AFC_RETUNE_AT = 0`, es decir que la configuración está aplicada antes de la primera
+              salida del NCO. Es plausible —el testbench escribe nada más soltar el reset y el core
+              tarda `Latency` = 9 ciclos en dar su primera muestra— pero no está medido. Si la
+              primera corrida falla, el camino es barrer `k` **contra esa misma salida del RTL**
+              (una sola simulación, barrido offline), igual que se calibró `NCO_LUT_OFFSET_K`. No se
+              ajusta el modelo para que pase: se mide el hardware y se escribe el número medido.
+            - **En placa, espectral.** `tools/dump_ray.py --nco-pinc <palabra>` alimenta el modelo
+              con la misma palabra de fase y compara el espectro del rayo congelado, igual que la
+              medida de Z4.4. Aquí **no hay ambigüedad de `k`**: el rayo que se congela es muy
+              posterior al retune, así que el NCO lleva esa palabra desde mucho antes de la primera
+              muestra del rayo y el transitorio del salto no cae dentro de la ventana.
+        4. **Nada de esto corrió en una ZedBoard.** `DrxAfcApp_SelfTest` está escrito y enganchado en
+           `main.c`, pero hace falta recompilar el XSA con el bitstream nuevo y volver a entrar por
+           JTAG.
+
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
 Trabajo:

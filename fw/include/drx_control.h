@@ -48,10 +48,17 @@ typedef struct {
     uint32_t handled;    /* mensajes despachados */
     uint32_t replied;    /* respuestas entregadas */
     uint32_t send_fails; /* respuestas que el transporte no acepto entera */
+    uint32_t rejects;    /* mensajes contestados (o descartados) con error */
+    uint8_t last_error;  /* ultimo codigo distinto de `ok`; ver note_error */
 } DrxControl;
 
 void DrxControl_Init(DrxControl *ctl, const DrxControlOps *ops,
                      DrxControlSend send, void *send_user);
+
+/* Borra `last_error` tras haberlo reportado en un mensaje `status`. `rejects`
+ * NO se borra: es un contador acumulado, y la bandera `config_rejected` del
+ * BITE se queda en alto desde el primer rechazo a proposito. */
+void DrxControl_ClearLastError(DrxControl *ctl);
 
 /* Callback para DrxParser_Push: `user` tiene que ser el DrxControl.
  *

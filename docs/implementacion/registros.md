@@ -93,7 +93,8 @@ palabras — subió de 6/16 en v3 porque el bloque de Z2 no cabía). Implementad
 | `0x4C` | BINS_HIGH | RW | `[31:0]` | Conteo de bins de range-gate del lote alto (Doppler). Mismas condiciones que BINS_LOW. |
 | `0x50` | GATE_TRUNCATED | RO + write-1-to-clear | `[N_CH-1:0]` | Bit `c` = `ray_truncated` sticky del canal `c` de range-gate (BITE de D-14, v6) — ver [Z2 en v6](#z2-en-v6). |
 | `0x54` | TRIG_COUNT | RO | `[31:0]` | Contador libre de 32 bits: incrementa un pulso de `pulse_trig` de `drx_timing_engine` (el mismo que ya dispara `ray_start`, D-14) por ciclo. Sin write-1-to-clear — es un conteo monótono, no un diagnóstico sticky; envuelve en 2^32 pulsos. Ver [Z4 en v7](#z4-en-v7). |
-| `0x58`… | — | — | — | Reservado, sin implementar. Lee 0, escribir no tiene efecto. |
+| `0x58` | NCO_PINC | RW | `[31:0]` | Palabra de incremento de fase del NCO (v9, Z4.5), compartida por los `N_CH` canales: todos ven el mismo IF. Valor de reset = `NCO_PHASE_INC`, el mismo PINC1 que la IP del DDS Compiler lleva como valor inicial, así que no escribir aquí deja la cadena bit a bit como antes de v9. **Cada** escritura pulsa el canal `S_AXIS_CONFIG` del core, incluso si el valor no cambia. Ver [Z4 en v9](#z4-en-v9). |
+| `0x5C`… | — | — | — | Reservado, sin implementar. Lee 0, escribir no tiene efecto. |
 
 `N_CH` es el mismo generic que ya usa `drx_top` (3 hoy, Config A/B de
 [P-12](../alcance/pendientes.md#p-12); sería `N_RX_CH` en la ZU9). El ancho de STATUS/OVERFLOW se
@@ -355,6 +356,43 @@ que no apunta a este registro. De paso, `REGS_VERSION` en ese testbench pasa a l
 mueve un registro, el test tiene que decirlo), pero la VERSIÓN es un contador cuyo valor fijo solo
 hacía que cada bump rompiera el test sin informar de nada. P&R re-corrido con el cambio completo de
 Z4.3 (DMA MM2S incluido): **WNS = 1,634 ns**, bajando desde 1,711 ns.
+
+### Z4 en v9 { #z4-en-v9 }
+
+**2-oct-2026, Z4.5.** `NCO_PINC` (`0x58`, RW, 32 bits): la palabra de incremento de fase del NCO,
+escribible en tiempo de ejecución. Es la actuación AFC, y hasta v8 era **imposible** — no por falta
+de firmware, sino porque el incremento vivía congelado en la personalización de la IP
+(`Phase_Increment {Fixed}` en `tcl/gen_ip.tcl`) y el core no exponía **ningún** puerto por el que
+cambiarlo.
+
+- **La IP se regeneró con `Phase_Increment {Programmable}`.** Medido sobre la IP generada de verdad,
+  no supuesto: el cambio añade `s_axis_config_tvalid` + `s_axis_config_tdata[31:0]` y no mueve nada
+  más — `Latency` sigue en 9, `Phase_offset` sigue `{Fixed}` con el mismo `POFF1`, `Noise_Shaping`
+  sigue en Taylor. Por eso `NCO_LUT_OFFSET_K` (el desfase de arranque de 655 posiciones de LUT que
+  documenta `tcl/gen_ip.tcl`) **no** se recalibra a ciegas: la matriz de 16 corridas de D-12 es la
+  que tiene la última palabra y se vuelve a correr entera tras el cambio.
+- **PINC1 deja de ser "el" incremento y pasa a ser el VALOR INICIAL tras `aresetn`.** Eso es lo que
+  mantiene válido el camino sin AFC: `drx_ddc_top` no escribe ninguna configuración al arrancar,
+  sólo cuando este registro se lo pide, así que un sistema que nunca escriba aquí se comporta
+  exactamente como v8.
+- **El canal de configuración no tiene TREADY** (`Has_TREADY {false}` vale para todas las interfaces
+  del core), así que un pulso de un ciclo basta y no hay handshake que esperar. Lo único que
+  `drx_ddc_top` tiene que respetar es su propio estirador de reset de 512 ciclos: una escritura que
+  llegue con el core todavía en reset queda **pendiente** y se emite en cuanto `ip_rst_n` sube, en
+  vez de perderse en silencio.
+- **Una sola palabra para los `N_CH` canales.** Un retune que moviera sólo uno los dejaría
+  desalineados en frecuencia, y no hay ningún caso de uso que lo pida.
+- **Sin continuidad de fase en el salto.** El acumulador sigue desde donde estaba con el incremento
+  nuevo. Es el mismo criterio que `mode_coarse` y por el mismo motivo: la corrección se aplica
+  **entre rayos** (`apply_at_seq` del mensaje `afc`), nunca dentro de uno, así que la discontinuidad
+  cae en una frontera donde a nadie le importa.
+
+Verificación en L0: `sim/tb/tb_drx_axil_regs.py` gana
+`test_nco_pinc_arranca_en_nco_phase_inc_y_pulsa_al_escribir`, que separa las tres cosas que importan
+—valor de reset, lectura/escritura y strobe— porque fallan por motivos distintos. El strobe se
+comprueba contando ciclos: tiene que durar **uno** y pulsar en **cada** escritura, incluso si el
+valor no cambia. Un pulso largo le metería la misma configuración varias veces al core, que no tiene
+TREADY con el que rechazarlas.
 
 ### Semántica del slave
 

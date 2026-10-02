@@ -18,6 +18,7 @@
  */
 #include "drx_ray.h"
 
+#include "drx_afc_app.h"
 #include "drx_dma.h"
 #include "drx_regs.h"
 #include "drx_regs_hw.h"
@@ -227,6 +228,11 @@ static void deliver(uint32_t index, uint32_t bytes)
             g_status.sink_drops++;
         }
     }
+
+    /* Z4.5: una correccion de AFC con `apply_at_seq` se aplica AQUI, entre dos
+     * rayos, que es la unica frontera en la que el salto de palabra de fase no
+     * parte un rayo en dos frecuencias de mezcla. */
+    DrxAfcApp_OnRay(header.ray_index);
 }
 
 static void reap(void)
@@ -366,6 +372,11 @@ bool DrxRay_Init(void)
     xil_printf("drx_ray: S2MM listo, %lu buffers de %lu B\r\n",
                (unsigned long)DRX_RAY_BUFFERS, (unsigned long)DRX_RAY_MAX_BYTES);
     return true;
+}
+
+uint32_t DrxRay_LastIndex(void)
+{
+    return (g_status.rays == 0u) ? 0u : g_status.last_ray_index;
 }
 
 void DrxRay_SetSink(DrxRay_Sink sink, void *user)

@@ -60,6 +60,12 @@ module drx_ddc_quad_top
 
     input logic mode_coarse,
 
+    // Actuación AFC (Z4.5): una sola palabra de fase para TODOS los canales --
+    // los N_CH ven el mismo IF, así que un retune que solo moviera uno los
+    // dejaría desalineados en frecuencia. Ver `drx_ddc_top.sv`.
+    input logic [NCO_PHASE_BITS-1:0] nco_pinc,
+    input logic                      nco_pinc_we,
+
     output logic                      m_valid[N_CH],
     output logic signed [IQ_BITS-1:0] m_i    [N_CH],
     output logic signed [IQ_BITS-1:0] m_q    [N_CH],
@@ -82,6 +88,9 @@ module drx_ddc_quad_top
           .s_last (s_last[gc]),
 
           .mode_coarse(mode_coarse),
+
+          .nco_pinc   (nco_pinc),
+          .nco_pinc_we(nco_pinc_we),
 
           .m_valid(m_valid[gc]),
           .m_i    (m_i[gc]),

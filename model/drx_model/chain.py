@@ -56,6 +56,9 @@ class Ddc:
 
     params: Params
     mode: str = MODE_FINE
+    #: Actuación AFC (Z4.5): `(muestra, incremento_nuevo)`. `None` deja el NCO
+    #: como siempre -- ver `NcoTaylor.retune_at`.
+    nco_retune: tuple[int, int] | None = None
     nco: NcoTaylor = field(init=False)
     cic: Cic = field(init=False)
     fir: fir_mod.Fir = field(init=False)
@@ -67,7 +70,12 @@ class Ddc:
         if self.mode not in (MODE_FINE, MODE_COARSE):
             raise ValueError(f"modo desconocido: {self.mode!r}")
         chain = self.params.chain
-        self.nco = NcoTaylor.from_params(self.params)
+        retune_at, retune_inc = (
+            self.nco_retune if self.nco_retune is not None else (None, None)
+        )
+        self.nco = NcoTaylor.from_params(
+            self.params, retune_at=retune_at, retune_inc=retune_inc
+        )
         self.cic = Cic(
             stages=int(chain["cic_stages"]),
             rate=int(chain["cic_rate"]),

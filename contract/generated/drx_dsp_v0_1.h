@@ -1,7 +1,7 @@
 /* GENERADO por tools/gen_contract.py a partir de
  * contract/schema/drx_dsp_v0_1.toml. NO EDITAR A MANO.
  *
- * Contrato DRx↔DSP v0.6 — lado DRx.
+ * Contrato DRx↔DSP v0.7 — lado DRx.
  *
  * Little-endian, empaquetado, sin relleno implícito. Los _Static_assert
  * de abajo fallan la compilación si el compilador añade relleno: es el
@@ -15,7 +15,7 @@
 
 #define DRX_DSP_MAGIC 0x4C4D4452u
 #define DRX_DSP_VERSION_MAJOR 0
-#define DRX_DSP_VERSION_MINOR 6
+#define DRX_DSP_VERSION_MINOR 7
 
 /* Cabecera común a todo mensaje. */
 typedef struct __attribute__((packed)) {
@@ -166,6 +166,7 @@ typedef enum {
   DRX_DSP_ERROR_NOT_CONFIGURED = 9,  /* Llegó un mandato antes de la primera configuración. */
   DRX_DSP_ERROR_VECTOR_UNKNOWN = 10,  /* vector_id fuera del catálogo de stimulus_vector. */
   DRX_DSP_ERROR_UNIMPLEMENTED = 11,  /* msg_type conocido y bien formado, pero este receptor todavía no lo aplica. Distinto de unknown_message, que es para un msg_type que el receptor NO conoce: con ese el par remoto sabe que hablan versiones distintas, con este sabe que hablan la misma y que la función aún no está. Nada se aplicó. */
+  DRX_DSP_ERROR_AFC_OUT_OF_RANGE = 12,  /* `nco_phase_inc` del mensaje `afc` no cabe en el acumulador de fase del NCO de este receptor. El campo viaja como u64 a proposito --la portadora ZU9 podria tener un acumulador mas ancho sin cambiar el esquema-- asi que un receptor con menos bits tiene que poder decirlo en vez de truncar en silencio, que convertiria una correccion de AFC equivocada en una frecuencia de mezcla equivocada sin ningun sintoma visible. El mensaje `afc` no lleva `seq` y no se contesta: este codigo viaja en `last_error` del mensaje `status`. */
 } drx_dsp_error_t;
 
 /* Bit por canal físico presente en channel_mask. El orden de channels[] en el payload de ray sigue el orden ascendente de los bits puestos en channel_mask; cada canal aporta los mismos `bins` que el resto del rayo. rx_0..rx_3 son 2 conversores por polarización (H, V): uno a ganancia nominal y otro con la señal atenuada, para extender el rango dinámico (confirmado en sesión, 8-sep-2026). El emparejamiento H/V de arriba está confirmado; el orden concreto rx_0 vs rx_1 (¿cuál es el nominal y cuál el atenuado de cada polarización?) es una CONVENCIÓN asumida aquí, sin confirmar todavía contra el cableado físico — ver docs/alcance/pendientes.md, A10. */

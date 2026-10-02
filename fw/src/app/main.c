@@ -39,6 +39,7 @@
 #include "platform_config.h"
 #include "xil_printf.h"
 
+#include "drx_afc_app.h"
 #include "drx_control_boot.h"
 #include "drx_ray.h"
 #include "drx_status_task.h"
@@ -301,6 +302,15 @@ int main_thread()
 	 * trama que entra por donde entrara el cable acaba cambiando registros
 	 * del motor de timing, sin necesitar enlace Ethernet. */
 	DrxControlBoot_SelfTest();
+
+	/* Z4.5: actuacion AFC. Hasta v8 del mapa de registros esto era imposible
+	 * -- el incremento de fase del NCO estaba congelado en la IP del DDS
+	 * Compiler. Se manda un `afc` sintetico por el mismo parser por el que
+	 * entrara el del DSP y se comprueba que NCO_PINC cambia; lo que esto NO
+	 * prueba es que el NCO mezcle a la frecuencia nueva, que se ve en el
+	 * espectro de un rayo, no en un registro. */
+	DrxAfcApp_Init();
+	(void)DrxAfcApp_SelfTest();
 
 	/* Z4.4: congela un rayo entero para que `tools/dump_ray.py` pueda leerlo
 	 * por JTAG y compararlo contra el modelo dorado. Es la primera medida del

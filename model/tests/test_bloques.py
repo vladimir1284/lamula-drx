@@ -126,6 +126,44 @@ def test_nco_taylor_reproduce_la_ip_real_dentro_de_dos_lsb():
         assert abs(int(sin_w[0]) - sin_ip) <= 2
 
 
+def test_el_retune_de_afc_cambia_el_incremento_sin_reiniciar_la_fase():
+    """`retune_at`/`retune_inc` (Z4.5): el acumulador NO vuelve a cero.
+
+    La propiedad que importa no es que la frecuencia cambie -- eso es trivial--
+    sino que la fase siga desde donde estaba. El hardware hace eso (el DDS
+    Compiler sigue acumulando con el incremento nuevo) y un modelo que
+    reiniciase la fase daría una rotación constante de diferencia contra el
+    RTL, que es justo el error que la comparación bit a bit de L1 no podría
+    explicar.
+    """
+    base = NcoTaylor.from_params(PARAMS)
+    nuevo_inc = base.phase_inc + 1_000_000
+    k = 7
+
+    retune = NcoTaylor.from_params(PARAMS, retune_at=k, retune_inc=nuevo_inc)
+
+    fase_base = base.phase(16)
+    fase_retune = retune.phase(16)
+
+    # Antes del salto, idénticas.
+    assert list(fase_retune[: k + 1]) == list(fase_base[: k + 1])
+
+    # Después, cada paso avanza con el incremento nuevo DESDE la fase que había.
+    mask = (1 << base.phase_bits) - 1
+    for n in range(k + 1, 16):
+        esperado = (int(fase_base[k]) + nuevo_inc * (n - k)) & mask
+        assert int(fase_retune[n]) == esperado
+
+    # Y sin `retune_at` nada cambia: el oráculo de D-12 no se mueve por existir
+    # esta opción.
+    assert list(NcoTaylor.from_params(PARAMS).phase(16)) == list(fase_base)
+
+
+def test_retune_at_sin_incremento_es_un_error():
+    with pytest.raises(ValueError):
+        NcoTaylor.from_params(PARAMS, retune_at=3).phase(8)
+
+
 # --- CIC -------------------------------------------------------------------
 
 
