@@ -153,6 +153,7 @@ package drx_params_pkg;
   localparam int BINS_MODE_COARSE = {inv['bins_mode_coarse']};
 
   localparam int N_RX_CH = {inv['n_rx_ch']};
+  localparam int N_CH_TOP = {inv['n_ch_top']};
   localparam int N_TX_BURST_CH = {inv['n_tx_burst_ch']};
   localparam int N_TRIGGERS = {inv['n_triggers']};
 
@@ -253,6 +254,7 @@ def render_h(platforms: dict[str, Params], sel: Params, derived: dict) -> str:
 #define DRX_BINS_MODE_COARSE {inv['bins_mode_coarse']}
 
 #define DRX_N_RX_CH {inv['n_rx_ch']}
+#define DRX_N_CH_TOP {inv['n_ch_top']}
 #define DRX_N_TX_BURST_CH {inv['n_tx_burst_ch']}
 #define DRX_N_TRIGGERS {inv['n_triggers']}
 

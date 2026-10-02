@@ -55,6 +55,18 @@ bins_mode_coarse = 1844
 n_rx_ch = 4
 n_tx_burst_ch = 1
 
+# Canales que el top-level INSTANCIA hoy (`N_CH` de rtl/drx_top.sv). No es
+# n_rx_ch + n_tx_burst_ch: la ZedBoard corre Config A (Tx + H + V), un
+# subconjunto de los cinco conversores de la plataforma objetivo (P-12).
+#
+# Vive aquí, y no como literal en el RTL, porque desde Z4.3 el firmware
+# también lo necesita: entrelaza el buffer de estímulo con el mismo paso que
+# `vector_source` deshace, y hasta Z4.4 ese número estaba escrito a mano en dos
+# sitios sin nada que los comparara. Si divergían no había ningún error, solo
+# un espectro raro en la placa sin ninguna pista de dónde venía. Desde Z4.4 la
+# cabecera en banda del rayo lo lleva, así que además se comprueba en runtime.
+n_ch_top = 3
+
 # Anchos de datos.
 sample_bits = 16    # muestra de ADC por la SSA
 iq_bits = 16        # I y Q a la salida del DDC, por componente

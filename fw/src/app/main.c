@@ -39,6 +39,8 @@
 #include "platform_config.h"
 #include "xil_printf.h"
 
+#include "drx_control_boot.h"
+#include "drx_ray.h"
 #include "drx_status_task.h"
 #include "drx_timing_cfg.h"
 #include "drx_stimulus.h"
@@ -262,6 +264,37 @@ int main_thread()
 		 * dos corridas es el contenido del buffer. */
 		(void)DrxStimulus_SelfTest(0u);
 		(void)DrxStimulus_SelfTest(DRX_STIMULUS_COUNT - 1u);
+	}
+
+	/* Z4.4: el camino de vuelta. La tarea tiene que existir antes de la
+	 * comprobacion: la interrupcion de fin de descriptor solo suelta un
+	 * semaforo, y es la tarea la que recoge los rayos y los cuenta.
+	 *
+	 * Esto es lo que por fin da un consumidor a `s_axis_ray_tready`. Hasta
+	 * aqui STATUS (overrun) y GATE_TRUNCATED estaban en 0x7 a proposito
+	 * porque nadie programaba descriptores; que caigan a cero es el criterio
+	 * de que el camino entero funciona. */
+	if (DrxRay_Init()) {
+		DrxRayTask_Create();
+		(void)DrxRay_SelfTest(DRX_RAY_SELFTEST_MS);
+	}
+
+	/* Z4.4: framing y plano de control contra el contrato, ejercitados con
+	 * una trama sintetica. No sustituye al DSP real (Z4.6): prueba que una
+	 * trama que entra por donde entrara el cable acaba cambiando registros
+	 * del motor de timing, sin necesitar enlace Ethernet. */
+	DrxControlBoot_SelfTest();
+
+	/* Z4.4: deja un vector conocido en bucle y congela un rayo entero para
+	 * que `tools/dump_ray.py` pueda leerlo por JTAG y compararlo contra el
+	 * modelo dorado. Es la primera medida del DATO en esta cadena: Z4.3 solo
+	 * pudo probar que los BYTES llegaban a la PL. El vector es el primero del
+	 * catalogo (`tono_if`), que es el que el NCO tiene que llevar a continua
+	 * exactamente, asi que la salida esperada no necesita interpretacion. */
+	(void)DrxStimulus_Select(0u, 0u);
+	if (DrxRay_Freeze()) {
+		vTaskDelay(pdMS_TO_TICKS(100));
+		DrxRay_DumpLast(0u);
 	}
 
 	DrxStatusTask_Create();

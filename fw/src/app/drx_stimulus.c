@@ -17,6 +17,7 @@
  */
 #include "drx_stimulus.h"
 
+#include "drx_dma.h"
 #include "drx_regs.h"
 #include "drx_regs_hw.h"
 #include "drx_stimulus_catalog.h"
@@ -62,7 +63,10 @@
  * que el hardware libere la anterior. */
 #define DRX_STIMULUS_BD_RING (DRX_STIMULUS_BD_COUNT * 4u)
 
-static XAxiDma g_dma;
+/* La instancia del DMA es compartida con el camino de rayos (drx_dma.c):
+ * `XAxiDma_CfgInitialize` resetea el periferico entero, asi que una instancia
+ * por canal haria que el segundo en arrancar tirase el anillo del primero. */
+static XAxiDma *g_dma;
 static bool g_ready;
 
 /* El buffer vive en DDR y lo lee el DMA, no la CPU: cada vez que se rellena
@@ -94,32 +98,24 @@ static void fill_buffer(const DrxStimulusVector *vector)
 
 bool DrxStimulus_Init(void)
 {
-    XAxiDma_Config *config = XAxiDma_LookupConfig(XPAR_AXIDMA_0_DEVICE_ID);
-
     memset(&g_status, 0, sizeof(g_status));
     g_ready = false;
     g_in_flight = false;
 
-    if (config == NULL) {
-        xil_printf("drx_stimulus: el XSA no declara el AXI DMA\r\n");
+    if (!DrxDma_Init()) {
         return false;
     }
-    if (XAxiDma_CfgInitialize(&g_dma, config) != XST_SUCCESS) {
-        xil_printf("drx_stimulus: XAxiDma_CfgInitialize fallo\r\n");
-        return false;
-    }
-    if (!XAxiDma_HasSg(&g_dma)) {
-        xil_printf("drx_stimulus: el DMA no es scatter-gather\r\n");
-        return false;
-    }
-    if (config->HasMm2S == 0) {
+    g_dma = DrxDma_Get();
+
+    XAxiDma_Config *config = XAxiDma_LookupConfig(XPAR_AXIDMA_0_DEVICE_ID);
+    if (config == NULL || config->HasMm2S == 0) {
         /* El sintoma sin este aviso seria que todo "funciona" y no sale ni un
          * beat: el bitstream cargado es anterior a Z4.3. */
         xil_printf("drx_stimulus: el bitstream no trae el canal MM2S\r\n");
         return false;
     }
 
-    XAxiDma_BdRing *ring = XAxiDma_GetTxRing(&g_dma);
+    XAxiDma_BdRing *ring = XAxiDma_GetTxRing(g_dma);
     XAxiDma_BdRingIntDisable(ring, XAXIDMA_IRQ_ALL_MASK);
 
     int count = XAxiDma_BdRingCreate(ring, (UINTPTR)&g_bd_space[0],
@@ -155,7 +151,7 @@ bool DrxStimulus_Init(void)
  * de ventana. */
 static bool submit_pass(void)
 {
-    XAxiDma_BdRing *ring = XAxiDma_GetTxRing(&g_dma);
+    XAxiDma_BdRing *ring = XAxiDma_GetTxRing(g_dma);
     XAxiDma_Bd *bd_set = NULL;
 
     if (XAxiDma_BdRingAlloc(ring, DRX_STIMULUS_BD_COUNT, &bd_set) != XST_SUCCESS) {
@@ -199,7 +195,7 @@ static bool submit_pass(void)
  * se completo en esta llamada. */
 static bool reap_pass(void)
 {
-    XAxiDma_BdRing *ring = XAxiDma_GetTxRing(&g_dma);
+    XAxiDma_BdRing *ring = XAxiDma_GetTxRing(g_dma);
     XAxiDma_Bd *bd_set = NULL;
 
     int done = XAxiDma_BdRingFromHw(ring, XAXIDMA_ALL_BDS, &bd_set);
@@ -270,7 +266,7 @@ void DrxStimulus_Stop(void)
     g_status.looping = false;
     g_status.remaining = 0u;
 
-    XAxiDma_BdRing *ring = XAxiDma_GetTxRing(&g_dma);
+    XAxiDma_BdRing *ring = XAxiDma_GetTxRing(g_dma);
     XAxiDma_Pause(&g_dma);
     (void)reap_pass();
     XAxiDma_BdRingStart(ring);

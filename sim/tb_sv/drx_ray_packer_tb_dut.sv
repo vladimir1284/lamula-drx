@@ -35,6 +35,11 @@ module drx_ray_packer_tb_dut
     input  logic        [N_CH-1:0][IQ_BITS-1:0] s_q,
     input  logic [N_CH-1:0]                     s_last,
 
+    input logic [31:0] meta_trig_count,
+    input logic [15:0] meta_bin_count,
+    input logic        meta_batch_high,
+    input logic        meta_mode_coarse,
+
     output logic                 m_valid,
     input  logic                 m_ready,
     output logic [2*IQ_BITS-1:0] m_data,
@@ -69,6 +74,11 @@ module drx_ray_packer_tb_dut
       .s_i    (s_i_arr),
       .s_q    (s_q_arr),
       .s_last (s_last_arr),
+
+      .meta_trig_count (meta_trig_count),
+      .meta_bin_count  (meta_bin_count),
+      .meta_batch_high (meta_batch_high),
+      .meta_mode_coarse(meta_mode_coarse),
 
       .m_valid(m_valid),
       .m_ready(m_ready),

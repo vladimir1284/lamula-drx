@@ -53,6 +53,13 @@
  * ancho: se escalonan a proposito para que una sola punta de prueba pueda
  * identificar cual es cual. El ultimo flanco cae en 30 + 8 = 38 us, muy por
  * dentro del PRI mas corto de los dos lotes. */
+/* Ultima configuracion que entro de verdad. Es lo que se restaura si el RTL
+ * rechaza una nueva: sin esto, un `config` invalido dejaria el motor con los
+ * registros a medio escribir, que es exactamente lo que el esquema prohibe al
+ * declarar el mensaje atomico. Ver DrxTiming_Apply. */
+static DrxTimingConfig g_applied;
+static bool g_have_applied;
+
 static const uint32_t kTrigDelayUs[DRX_N_TRIGGERS] = {0u, 10u, 20u, 30u};
 static const uint32_t kTrigWidthUs[DRX_N_TRIGGERS] = {1u, 2u, 4u, 8u};
 
@@ -243,6 +250,193 @@ bool DrxTiming_Start(void)
      * motor sigue cerrando radiales, no solo que cerro uno al arrancar. */
     DrxReg_ClearTimingStatus(timing_status);
 
+    /* La configuracion de arranque es la primera "ultima aplicada": si un
+     * `config` del contrato se rechaza antes de que haya entrado ninguno, es
+     * esta la que se restaura. */
+    g_applied = cfg;
+    g_have_applied = true;
+
     xil_printf("drx_timing: motor de timing corriendo, trig_out vivo en Pmod JA\r\n");
     return true;
+}
+
+/* ------------------------------------------------------------------------ */
+/* Z4.4: aplicar el `config` del contrato (2 lotes, P-15)                    */
+/* ------------------------------------------------------------------------ */
+
+/* Mascara de canales que el enum `channel` del contrato define: rx_0..rx_3 y
+ * tx_burst_0. Cualquier bit fuera de aqui es un canal que no existe. */
+#define DRX_CHANNEL_MASK_ALL 0x1Fu
+
+/* Modos de barrido del contrato: split cut, batch cut, doppler cut. */
+#define DRX_SCAN_MODE_MAX 2u
+
+/* Ultima configuracion que entro de verdad. Es lo que se restaura si el RTL
+ * rechaza una nueva: sin esto, un `config` invalido dejaria el motor con los
+ * registros a medio escribir, que es exactamente lo que el esquema prohibe al
+ * declarar el mensaje atomico. */
+
+static uint32_t pulse_width_cycles(uint8_t idx, bool *ok)
+{
+    static const uint16_t kPulseWidthCycles[DRX_N_PULSE_WIDTHS] = DRX_PULSE_WIDTH_CYCLES;
+
+    if (idx >= (uint8_t)DRX_N_PULSE_WIDTHS) {
+        *ok = false;
+        return 0u;
+    }
+    *ok = true;
+    return kPulseWidthCycles[idx];
+}
+
+static unsigned popcount8(uint8_t v)
+{
+    unsigned n = 0u;
+
+    while (v != 0u) {
+        n += (unsigned)(v & 1u);
+        v = (uint8_t)(v >> 1);
+    }
+    return n;
+}
+
+/* Un lote entero: PRF dentro del envolvente, ancho de pulso dentro del PRI, y
+ * el rayo cerrando antes del siguiente disparo. `decim` es R1 o R2 segun
+ * `cell_mode`: en modo grueso cada bin cuesta el doble de ciclos, asi que el
+ * mismo bin_count que cabe en fino puede no caber en grueso. */
+static bool batch_ok(uint32_t prf_div, uint32_t width_cycles, uint32_t bins,
+                     uint16_t n_pulses, uint32_t decim)
+{
+    if (n_pulses == 0u) {
+        return false;
+    }
+    if (prf_div < (uint32_t)DRX_PRF_DIV_MIN || prf_div > (uint32_t)DRX_PRF_DIV_MAX) {
+        return false;
+    }
+    if (width_cycles >= prf_div) {
+        return false; /* D-09 */
+    }
+    if (bins == 0u || bins > (uint32_t)DRX_BINS_MODE_FINE) {
+        return false; /* D-09/D-15 */
+    }
+    /* El rayo tiene que terminar antes del siguiente ray_start, o
+     * drx_range_gate marca ray_truncated. 64 bits: bins * decim pasa de 2^31
+     * con BINS_MODE_FINE y R2. */
+    if ((uint64_t)bins * (uint64_t)decim >= (uint64_t)prf_div) {
+        return false;
+    }
+    return true;
+}
+
+drx_dsp_error_t DrxTiming_Apply(const drx_dsp_config_t *config)
+{
+    if (config == NULL) {
+        return DRX_DSP_ERROR_BAD_LENGTH;
+    }
+    if (config->cell_mode > 1u) {
+        return DRX_DSP_ERROR_CELL_MODE_INVALID;
+    }
+    if (config->scan_mode > DRX_SCAN_MODE_MAX) {
+        return DRX_DSP_ERROR_SCAN_MODE_INVALID;
+    }
+    if (config->channel_mask == 0u ||
+        (config->channel_mask & (uint8_t)~DRX_CHANNEL_MASK_ALL) != 0u ||
+        popcount8(config->channel_mask) != (unsigned)DRX_N_CH_TOP) {
+        /* Se exige que la CUENTA case con los canales que el bitstream
+         * instancia, no solo que los bits existan: el empaquetador entrega
+         * siempre DRX_N_CH_TOP canales por rayo, asi que aceptar una mascara
+         * de otra cardinalidad seria prometer un rayo que no se puede
+         * entregar. Cuales sean esos canales fisicos es cableado (A10). */
+        return DRX_DSP_ERROR_CHANNEL_MASK_INVALID;
+    }
+
+    bool ok_low = false;
+    bool ok_high = false;
+    uint32_t width_low = pulse_width_cycles(config->pulse_width_idx_low, &ok_low);
+    uint32_t width_high = pulse_width_cycles(config->pulse_width_idx_high, &ok_high);
+
+    if (!ok_low || !ok_high) {
+        return DRX_DSP_ERROR_PULSE_WIDTH_INVALID;
+    }
+
+    uint32_t decim = (config->cell_mode == 0u) ? (uint32_t)DRX_R1 : (uint32_t)DRX_R2;
+
+    if (!batch_ok(config->prf_div_low, width_low, config->range_bins_low,
+                  config->n_pulses_low, decim) ||
+        !batch_ok(config->prf_div_high, width_high, config->range_bins_high,
+                  config->n_pulses_high, decim)) {
+        return DRX_DSP_ERROR_PRF_RANGE_ILLEGAL;
+    }
+
+    DrxTimingConfig nuevo;
+
+    nuevo.prf_div_low = config->prf_div_low;
+    nuevo.prf_div_high = config->prf_div_high;
+    nuevo.pulse_width_low = (uint16_t)width_low;
+    nuevo.pulse_width_high = (uint16_t)width_high;
+    nuevo.n_pulses_low = config->n_pulses_low;
+    nuevo.n_pulses_high = config->n_pulses_high;
+    nuevo.bins_low = config->range_bins_low;
+    nuevo.bins_high = config->range_bins_high;
+
+    for (unsigned i = 0u; i < DRX_N_TRIGGERS; i++) {
+        uint32_t width = (i == 0u) ? config->trigger_width_0
+                       : (i == 1u) ? config->trigger_width_1
+                       : (i == 2u) ? config->trigger_width_2
+                                   : config->trigger_width_3;
+        uint32_t delay = (i == 0u) ? config->trigger_delay_0
+                       : (i == 1u) ? config->trigger_delay_1
+                       : (i == 2u) ? config->trigger_delay_2
+                                   : config->trigger_delay_3;
+
+        /* drx_trigger_one_shot.sv asume width >= 1 y no lo valida en RTL:
+         * mismo criterio que DrxTiming_DefaultConfig. */
+        nuevo.trig_delay[i] = delay;
+        nuevo.trig_width[i] = (width == 0u) ? 1u : width;
+    }
+
+    /* A partir de aqui ya se toca el hardware. Los registros solo son seguros
+     * de escribir con el motor parado (ver drx_prf_batch_seq.sv). */
+    DrxReg_TimingDisable();
+
+    uint32_t ctrl = DrxReg_Read(DRX_REG_CTRL_OFFSET);
+    if (config->cell_mode == 0u) {
+        ctrl &= ~DRX_REG_CTRL_MODE_COARSE_MASK;
+    } else {
+        ctrl |= DRX_REG_CTRL_MODE_COARSE_MASK;
+    }
+    DrxReg_Write(DRX_REG_CTRL_OFFSET, ctrl);
+
+    DrxReg_WriteTimingConfig(&nuevo);
+
+    if (!DrxReg_VerifyTimingConfig(&nuevo)) {
+        xil_printf("drx_timing: la relectura no coincide al aplicar config\r\n");
+        goto restaurar;
+    }
+
+    DrxReg_ClearTimingStatus(DrxReg_ReadTimingStatus());
+    DrxReg_TimingEnable();
+
+    /* D-09 vive en fabric y se evalua de forma combinacional sobre los
+     * registros, asi que el veredicto ya esta en TIMING_STATUS sin esperar a
+     * ningun pulso. */
+    uint32_t status = DrxReg_ReadTimingStatus();
+    if ((status & ((1u << 1) | (1u << 2))) != 0u) {
+        xil_printf("drx_timing: D-09 rechaza la config del contrato (status=0x%lx)\r\n",
+                   (unsigned long)status);
+        DrxReg_TimingDisable();
+        goto restaurar;
+    }
+
+    g_applied = nuevo;
+    g_have_applied = true;
+    return DRX_DSP_ERROR_OK;
+
+restaurar:
+    if (g_have_applied) {
+        DrxReg_TimingDisable();
+        DrxReg_WriteTimingConfig(&g_applied);
+        DrxReg_ClearTimingStatus(DrxReg_ReadTimingStatus());
+        DrxReg_TimingEnable();
+    }
+    return DRX_DSP_ERROR_PRF_RANGE_ILLEGAL;
 }

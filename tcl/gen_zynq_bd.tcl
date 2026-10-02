@@ -177,11 +177,20 @@ connect_bd_net [get_bd_pins $rst_ic/peripheral_aresetn] [get_bd_ports pl_resetn0
 # nada que importe y a cambio el buffer de DDR que prepara el firmware es
 # exactamente un array de int16 entrelazado por canal, sin reglas de
 # alineación ni relleno. El lado de memoria sigue siendo 32 bits en los dos.
+# `c_sg_length_width` 23 (Z4.4, sube desde el 14 por defecto): el campo de
+# longitud de un descriptor pasa de 16383 B a 8 MiB - 1. Un rayo completo en
+# modo fino son 16 B de cabecera en banda + 3689 bins x 3 canales x 4 B =
+# 44284 B, que con 14 bits habria obligado a trocear cada rayo en tres
+# descriptores encadenados y a reensamblarlos en el manejador. Con 23 bits
+# cabe uno por descriptor y el fin de rayo (RXEOF, puesto por el hardware a
+# partir de TLAST) coincide con el fin de descriptor, que es justo la
+# equivalencia de la que depende el manejador de Z4.4.
 set dma [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_dma:7.1 dma]
 set_property -dict [list \
   CONFIG.c_include_mm2s          {1} \
   CONFIG.c_include_s2mm          {1} \
   CONFIG.c_include_sg            {1} \
+  CONFIG.c_sg_length_width       {23} \
   CONFIG.c_sg_include_stscntrl_strm {0} \
   CONFIG.c_s_axis_s2mm_tdata_width  {32} \
   CONFIG.c_m_axi_s2mm_data_width    {32} \

@@ -168,7 +168,14 @@ module drx_axil_regs
 
     // Z4.1: pulso de un ciclo de drx_timing_engine.pulse_trig -- ver la
     // cabecera de TRIG_COUNT.
-    input logic pulse_trig_in
+    input logic pulse_trig_in,
+
+    // Z4.4: el MISMO contador que TRIG_COUNT expone por AXI-Lite, sacado
+    // tambien a fabric para la cabecera en banda de `drx_ray_packer`. Se
+    // exporta en vez de replicarlo alli porque dos contadores sobre el mismo
+    // pulso pueden divergir tras un reset parcial y no habria forma de saber
+    // cual de los dos miente.
+    output logic [31:0] trig_count_out
 );
 
   // `s_axi_wstrb` no se usa a propósito (ver cabecera); se silencia en vez de
@@ -395,6 +402,7 @@ module drx_axil_regs
   // canal de escritura ya tiene un `default: ;` que cubre esta dirección sin
   // hacer nada.
   logic [31:0] trig_count_r;
+  assign trig_count_out = trig_count_r;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin

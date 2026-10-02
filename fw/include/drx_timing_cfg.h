@@ -22,6 +22,7 @@
 
 #include <stdbool.h>
 
+#include "drx_dsp_v0_1.h"
 #include "drx_regs_hw.h"
 
 /* Rellena `cfg` con la configuracion de arranque de bring-up. Todos los
@@ -48,5 +49,23 @@ void DrxTiming_DefaultConfig(DrxTimingConfig *cfg);
  * Devuelve true solo si los seis pasos salen bien. Imprime por UART lo que
  * vio en cada paso, para que un fallo se pueda atribuir sin depurador. */
 bool DrxTiming_Start(void);
+
+/* Aplica el mensaje `config` del contrato (v0.6, 2 lotes -- P-15). Devuelve el
+ * codigo con el que contestar el `config_ack`.
+ *
+ * Atomico, como exige el esquema: TODA la validacion ocurre antes de escribir
+ * ni un registro, y si el RTL rechaza la configuracion ya escrita (D-09, que
+ * valida cosas que esta funcion no puede comprobar sola) se restaura la
+ * ultima configuracion que si entro. Un `config` rechazado no deja el motor
+ * parado ni a medio configurar.
+ *
+ * Lo que comprueba aqui y no en el RTL: que los indices de ancho de pulso
+ * esten en la tabla, que `cell_mode` y `scan_mode` esten en rango, que la
+ * mascara de canales case con los que el bitstream instancia, que `prf_div`
+ * respete PRF_DIV_MIN/MAX (el techo de PRF del sistema, que
+ * drx_timing_config_valid.sv NO mira) y que el rayo quepa en el PRI. Lo
+ * ultimo es el bin de guarda: D-09 valida `bin_count <= BinsMax`, no que
+ * `bin_count * R` entre en `prf_div`. */
+drx_dsp_error_t DrxTiming_Apply(const drx_dsp_config_t *config);
 
 #endif /* DRX_TIMING_CFG_H */

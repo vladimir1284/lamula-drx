@@ -109,6 +109,11 @@ class Params:
         return int(self.invariant["n_rx_ch"])
 
     @property
+    def n_ch_top(self) -> int:
+        """Canales que instancia `rtl/drx_top.sv` (Config A: Tx + H + V)."""
+        return int(self.invariant["n_ch_top"])
+
+    @property
     def sample_bits(self) -> int:
         return int(self.invariant["sample_bits"])
 

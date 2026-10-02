@@ -11,7 +11,7 @@
 package drx_params_pkg;
 
   localparam int SCHEMA_VERSION = 1;
-  localparam string PARAMS_SHA256 = "b73326945d41cd84cf5ee1c90ea5c49c8cea59f1736d7852a4a62c2759d9b582";
+  localparam string PARAMS_SHA256 = "1fba80a42d0be1a4cd8bf42c15280452cb7453f7ac01742921908221ba11b955";
 
   // -------------------------------------------------------------------------
   // Plataforma seleccionada. Se sobreescribe en la línea de comandos de síntesis
@@ -51,6 +51,7 @@ package drx_params_pkg;
   localparam int BINS_MODE_COARSE = 1844;
 
   localparam int N_RX_CH = 4;
+  localparam int N_CH_TOP = 3;
   localparam int N_TX_BURST_CH = 1;
   localparam int N_TRIGGERS = 4;
 

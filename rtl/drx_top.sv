@@ -106,7 +106,7 @@ module drx_top
   import drx_regs_pkg::*;
 #(
     parameter int HEARTBEAT_DIV = int'(FS_HZ / 2),
-    parameter int N_CH = 3
+    parameter int N_CH = N_CH_TOP
 ) (
     input  logic clk,
     input  logic rst_n,
@@ -183,6 +183,9 @@ module drx_top
   );
 
   logic mode_coarse;
+
+  // Z4.4: TRIG_COUNT sacado a fabric para la cabecera en banda del rayo.
+  logic [31:0] timing_trig_count;
   logic vector_source_ddr;
 
   // `drx_axil_regs` recibe/devuelve el overrun por canal como vector
@@ -305,7 +308,8 @@ module drx_top
 
       // Z4.1: TRIG_COUNT -- mismo pulse_trig que ya dispara ray_start (D-14),
       // ver la cabecera de drx_axil_regs.sv.
-      .pulse_trig_in(timing_pulse_trig)
+      .pulse_trig_in(timing_pulse_trig),
+      .trig_count_out(timing_trig_count)
   );
 
   // `pulse_trig` SÍ tiene consumidor real ahora (D-14: `ray_start` de
@@ -489,6 +493,15 @@ module drx_top
       .s_i    (gate_i),
       .s_q    (gate_q),
       .s_last (gate_last),
+
+      // Z4.4: metadato en banda. `timing_trig_count` sale del MISMO contador
+      // que TRIG_COUNT expone por AXI-Lite (no una copia: un segundo contador
+      // podria divergir del primero y no habria forma de saber cual miente).
+      // `timing_batch_sel` deja de ser una salida sin consumidor con esto.
+      .meta_trig_count (timing_trig_count),
+      .meta_bin_count  (16'(timing_bins)),
+      .meta_batch_high (timing_batch_sel),
+      .meta_mode_coarse(mode_coarse),
 
       .m_valid(m_ray_valid),
       .m_ready(m_ray_ready),

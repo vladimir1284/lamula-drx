@@ -23,19 +23,16 @@
 #include <stdint.h>
 
 #include "drx_dsp_v0_1.h"
+#include "drx_params.h"
 
-/* Canales que `drx_top` instancia (`parameter int N_CH = 3`, Config A/B de
- * P-12: Tx burst + dos Rx).
+/* Canales que `drx_top` instancia (Config A/B de P-12: Tx burst + dos Rx).
  *
- * ESTE NUMERO NO SALE DEL PAQUETE DE PARAMETROS, y es la unica constante de
- * este fichero que no sale de `drx_params.h`. `N_CH` vive hoy solo como valor
- * por defecto de un `parameter` de SystemVerilog en `rtl/drx_top.sv`, no en
- * `config/params.toml`. Si los dos divergen no hay ningun error: el buffer se
- * entrelaza con un paso distinto del que `vector_source` deshace, cada canal
- * recibe muestras del vector corridas respecto de las suyas, y en la placa eso
- * se ve como un espectro raro sin ninguna pista de donde viene. Cambiar `N_CH`
- * en el RTL obliga a cambiarlo aqui. */
-#define DRX_STIMULUS_N_CH 3u
+ * Z4.3 lo tenia escrito a mano aqui y en `rtl/drx_top.sv`, sin nada que
+ * comparara los dos; si divergian no habia ningun error, solo un espectro raro
+ * en la placa. Desde Z4.4 el numero sale de `config/params.toml` (`n_ch_top`)
+ * para los dos lados, y ademas la cabecera en banda del rayo lo lleva, asi que
+ * `drx_ray.c` lo comprueba contra el bitstream cargado en runtime. */
+#define DRX_STIMULUS_N_CH ((uint32_t)DRX_N_CH_TOP)
 
 /* Arranca el driver del DMA y construye el anillo de descriptores. Una vez, al
  * arrancar el firmware. Devuelve false y lo explica por UART si el DMA no esta
