@@ -118,6 +118,13 @@ static void ray_isr(void *ref)
 
     if ((irq & XAXIDMA_IRQ_ERROR_MASK) != 0u) {
         g_status.dma_errors++;
+        /* Y se desarma la interrupcion de error. Una condicion de error del
+         * DMA puede quedarse asertada: reconocerla no la borra, asi que el
+         * manejador volveria a entrar sin parar y el sistema se quedaria sin
+         * avanzar, con la UART muda -- un sintoma que en esta placa solo
+         * arregla el interruptor SW8. El contador ya registro el fallo; el
+         * siguiente DrxRay_Init() la vuelve a armar. */
+        XAxiDma_BdRingIntDisable(ring, XAXIDMA_IRQ_ERROR_MASK);
     }
     if ((irq & (XAXIDMA_IRQ_IOC_MASK | XAXIDMA_IRQ_DELAY_MASK)) != 0u) {
         BaseType_t woken = pdFALSE;

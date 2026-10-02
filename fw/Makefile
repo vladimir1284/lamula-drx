@@ -43,6 +43,7 @@ SELFTEST := $(BUILD_DIR)/drx_params_selftest
 # esa dependencia — que es exactamente el aviso que se quiere.
 CONTRACT_IO := $(BUILD_DIR)/drx_contract_io_selftest
 CONTROL := $(BUILD_DIR)/drx_control_selftest
+RAY_FRAME := $(BUILD_DIR)/drx_ray_frame_selftest
 
 .PHONY: all check clean
 
@@ -63,10 +64,17 @@ $(CONTROL): src/drx_control_selftest.c src/app/drx_control.c src/app/drx_contrac
 	$(CC) $(CFLAGS) src/drx_control_selftest.c src/app/drx_control.c \
 	      src/app/drx_contract_io.c -o $@
 
-check: $(SELFTEST) $(CONTRACT_IO) $(CONTROL)
+$(RAY_FRAME): src/drx_ray_frame_selftest.c src/app/drx_ray_frame.c \
+              src/app/drx_contract_io.c include/drx_ray_frame.h \
+              include/drx_ray.h include/drx_contract_io.h $(CONTRACT_H) | $(BUILD_DIR)
+	$(CC) $(CFLAGS) src/drx_ray_frame_selftest.c src/app/drx_ray_frame.c \
+	      src/app/drx_contract_io.c -o $@
+
+check: $(SELFTEST) $(CONTRACT_IO) $(CONTROL) $(RAY_FRAME)
 	@$(SELFTEST) > /dev/null && echo "auto-comprobación de parámetros: OK"
 	@$(CONTRACT_IO) encode > /dev/null && echo "framer del contrato: compila y codifica"
 	@echo | $(CONTROL) 7 > /dev/null && echo "plano de control: compila y despacha"
+	@$(RAY_FRAME) > /dev/null && echo "framer de rayo: compila y codifica"
 
 clean:
 	rm -rf $(BUILD_DIR)
