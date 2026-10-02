@@ -100,6 +100,8 @@ if {$opt(top) eq "zynq"} {
 # `create_ip -dir` crea un subdirectorio por core (`ip/<module_name>/*.xci`),
 # no `ip/*.xci` directamente — confirmado generando IP de verdad con
 # tcl/gen_ip.tcl (ver el hallazgo en tcl/sim_l1.tcl).
+# AVISO (2-oct-2026, Z4.5): ver la nota equivalente en tcl/sim_l1.tcl -- los dos
+# flujos escriben en `ip/<core>/` y no se pueden correr en paralelo.
 set xci_files [glob -nocomplain [file join $repo_root ip * *.xci]]
 if {[llength $xci_files]} {
   read_ip $xci_files

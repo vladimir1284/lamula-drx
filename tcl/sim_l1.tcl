@@ -150,6 +150,11 @@ create_project sim_l1 -part $part -force
 # `ip/*.xci` (sin el subdirectorio) nunca encontraba nada; no se notó antes
 # porque en Z0 `ip/` estaba vacío y daba lo mismo. El mismo fallo está en
 # tcl/build.tcl y tcl/ip.tcl.
+# AVISO (2-oct-2026, Z4.5): esto escribe en `ip/<core>/`, el MISMO directorio en
+# el que tcl/build.tcl deja los productos de síntesis. No corras los dos flujos a
+# la vez: se pisan en caliente y el síntoma no apunta a la causa -- `synth_ip`
+# termina bien y genera el `.dcp`, y la elaboración posterior falla con
+# «module '<core>' not found», que parece un problema del RTL y no lo es.
 set xci_files [glob -nocomplain [file join $repo_root ip * *.xci]]
 if {[llength $xci_files]} {
   read_ip $xci_files

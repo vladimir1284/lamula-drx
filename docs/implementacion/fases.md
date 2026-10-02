@@ -1592,7 +1592,7 @@ Trabajo:
     - Siguiente paso: **Z4.5** — status/BITE sobre el contrato y actuación de AFC, que obliga a
       regenerar el IP del DDS Compiler con `S_AXIS_CONFIG` y a repasar la matriz 16/16 de D-12.
 
-!!! warning "2-oct-2026: Z4.5 — actuación AFC y status/BITE; la matriz 16/16 de D-12 **todavía corriendo**"
+!!! warning "2-oct-2026: Z4.5 — actuación AFC y status/BITE; verificada en simulación, sin bring-up en placa"
     Primera vez que el NCO se puede retunear en tiempo de ejecución. Hasta hoy no era una cuestión
     de firmware: el incremento de fase vivía **congelado en la personalización de la IP**
     (`Phase_Increment {Fixed}` en `tcl/gen_ip.tcl`) y el DDS Compiler no exponía ningún puerto por el
@@ -1652,12 +1652,28 @@ Trabajo:
       [P-09](../alcance/pendientes.md#p-09).
     - **Lo que falta para cerrar Z4.5, y no es menor:**
 
-        1. **No hay P&R con la IP nueva** en el momento de escribir esto (está corriendo). El canal
-           de configuración añade lógica dentro del core; hasta medirlo, la última cifra válida sigue
-           siendo la de Z4.4 (WNS = 2,045 ns).
-        3. **El retune no está verificado contra el modelo dorado.** Que NCO_PINC cambie es un
-           registro; que el NCO **mezcle** a la frecuencia nueva es otra cosa. Los dos caminos para
-           medirlo están **montados y sin correr**:
+        1. ~~No hay P&R con la IP nueva.~~ **Resuelto el mismo día: `-top zynq -step xsa` cierra
+           con la IP programable dentro — WNS = 1,626 ns, WHS = 0,015 ns, «All user specified timing
+           constraints are met»**, 0 endpoints fallando ni en setup ni en hold sobre 75288. Baja
+           desde los 2,045 ns de Z4.4: el canal `S_AXIS_CONFIG` añade lógica dentro del core y el
+           registro `NCO_PINC` cuelga del mismo camino crítico PS7↔interconnect↔`drx_axil_regs` que
+           viene estrechándose desde Z2. Sigue sobrando casi un cuarto de periodo a 62,5 MHz, pero el
+           margen ya no es holgado y conviene medirlo en cada registro nuevo. Utilización post-route:
+           LUT 19,62 % (10438/53200), registros 18,47 % (19653/106400), BRAM Tile 22,50 %
+           (31,5/140), **DSP48 159/220 (72,27 %)** — el DSP48 no se movió, es la misma cifra desde el
+           PS7 del 20-sep, así que el canal de configuración del DDS no cuesta multiplicadores.
+           Aviso de lectura del log: la corrida emite un `ERROR: [Common 17-176] Overwrite of
+           existing file isn't enabled ... dds_compiler_nco.dcp` y **termina igual en `rc=0`** — es
+           `synth_ip` negándose a rescribir un `.dcp` que ya estaba sintetizado del XCI nuevo
+           (12:24 contra las 08:39 del XCI), no un fallo de síntesis.
+        2. ~~El retune no está verificado contra el modelo dorado.~~ **Resuelto el mismo día:
+           `afc_retune__{fine,coarse}` PASA** — 315 muestras en fino y 157 en grueso dentro de
+           tolerancia (D-12) contra el modelo dorado, con `NCO_PINC = 1073741824` escrito tras soltar
+           el reset. La hipótesis `_AFC_RETUNE_AT = 0` queda **confirmada por medición**: el core
+           aplica la configuración antes de su primera salida, así que no hace falta calibrar ningún
+           desfase. Que NCO_PINC cambie era un registro; esto es el NCO mezclando de verdad a la
+           frecuencia nueva, bit a bit contra NumPy. Queda el A/B en placa, que es otra pregunta
+           (silicio, no simulación). Cómo está montado:
 
             - **L1, bit a bit.** El modelo dorado acepta ahora un retune
               (`NcoTaylor.retune_at`/`retune_inc`, `Ddc.nco_retune`; sin él, el oráculo de D-12 no
@@ -1671,12 +1687,21 @@ Trabajo:
               tarda `Latency` = 9 ciclos en dar su primera muestra— pero no está medido. Si la
               primera corrida falla, el camino es barrer `k` **contra esa misma salida del RTL**
               (una sola simulación, barrido offline), igual que se calibró `NCO_LUT_OFFSET_K`. No se
-              ajusta el modelo para que pase: se mide el hardware y se escribe el número medido.
+              ajusta el modelo para que pase: se mide el hardware y se escribe el número medido. **No
+              hizo falta: la primera corrida pasó.**
             - **En placa, espectral.** `tools/dump_ray.py --nco-pinc <palabra>` alimenta el modelo
               con la misma palabra de fase y compara el espectro del rayo congelado, igual que la
               medida de Z4.4. Aquí **no hay ambigüedad de `k`**: el rayo que se congela es muy
               posterior al retune, así que el NCO lleva esa palabra desde mucho antes de la primera
               muestra del rayo y el transitorio del salto no cae dentro de la ventana.
+        3. **No corras `tcl/sim_l1.tcl` y `tcl/build.tcl` a la vez.** Hallazgo de esta sesión, por
+           haberlo hecho: los dos trabajan sobre el MISMO `ip/<core>/` —`build.tcl` deja ahí los
+           productos de síntesis y `sim_l1.tcl` hace `generate_target {simulation
+           instantiation_template}` sobre el mismo directorio— así que en paralelo se pisan en
+           caliente. El síntoma no apunta a la causa: `synth_ip` corre bien y genera el `.dcp`, y la
+           elaboración posterior falla con `ERROR: [Synth 8-439] module 'dds_compiler_nco' not
+           found`, que parece un problema del RTL y no lo es. `ip/` no es directorio de build, es
+           fuente versionada con productos derivados al lado, y nadie lo serializa.
         4. **Nada de esto corrió en una ZedBoard.** `DrxAfcApp_SelfTest` está escrito y enganchado en
            `main.c`, pero hace falta recompilar el XSA con el bitstream nuevo y volver a entrar por
            JTAG.

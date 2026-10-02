@@ -230,10 +230,19 @@ de infraestructura: `tcl/gen_ip.tcl` no era idempotente — `create_ip` con la I
 `ip/<core>_1/` en silencio y dejaba el XCI versionado intacto; corregido con `ensure_ip`.
 **La matriz de 16 corridas de D-12 contra xsim real cerró 16/16 PASS** — el gate de verdad del
 cambio de IP, corrido entero antes de commitear: el arranque del Phase Generator no se movió y
-`NCO_LUT_OFFSET_K = 655` sigue cancelando. **Lo que falta para cerrar:** el P&R con la IP nueva
-(la última cifra válida sigue siendo la de Z4.4, WNS = 2,045 ns), la verificación del retune contra
-el modelo dorado (que NCO_PINC cambie es un registro; que el NCO mezcle a la frecuencia nueva es
-otra cosa — el caso L1 `afc_retune` está montado y corriendo) y el bring-up en placa. Detalle en
+`NCO_LUT_OFFSET_K = 655` sigue cancelando. **El retune también está verificado contra el modelo
+dorado**, que es lo que de verdad faltaba: que NCO_PINC cambie es un registro, que el NCO mezcle a
+la frecuencia nueva es otra cosa — el caso L1 `afc_retune__{fine,coarse}` pasa bit a bit (315
+muestras en fino, 157 en grueso, dentro de tolerancia D-12) con la palabra de fase escrita tras
+soltar el reset. **P&R con la IP programable dentro cierra: WNS = 1,626 ns, WHS = 0,015 ns**,
+bajando desde los 2,045 ns de Z4.4 — mismo camino crítico PS7↔interconnect↔`drx_axil_regs` que
+viene estrechándose desde Z2, vale la pena vigilarlo en cada registro nuevo. DSP48 sigue en
+159/220: el canal `S_AXIS_CONFIG` no cuesta multiplicadores. **Lo que falta para cerrar: el
+bring-up en placa** — recompilar BSP/`BOOT.BIN` desde el XSA nuevo, entrar por JTAG a ver
+`drx_afc: actuacion AFC OK` y la línea de `BITE`, y el A/B espectral con
+`tools/dump_ray.py --nco-pinc`. Hallazgo de infraestructura de esta sesión: `tcl/sim_l1.tcl` y
+`tcl/build.tcl` escriben en el mismo `ip/<core>/` y **no pueden correr a la vez** — el síntoma
+miente (`synth_ip` termina bien y la elaboración falla después con `module '<core>' not found`). Detalle en
 `fases.md#z4`, entrada del 2-oct.
 
 Lo que sí está hecho y verificado, además de lo de arriba:
