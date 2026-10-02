@@ -194,6 +194,28 @@ haya camino de vuelta para leer un rayo. Deuda anotada: `DRX_STIMULUS_N_CH` en
 `fw/include/drx_stimulus.h` tiene que coincidir a mano con el `N_CH` de `rtl/drx_top.sv`, que no
 vive en `config/params.toml`. Detalle en `fases.md#z4`, entrada del 1-oct (más tarde).
 
+**Z4.4 cerrada, 1-oct-2026 (noche).** El camino de vuelta existe y está medido. `STATUS (overrun)`
+y `GATE_TRUNCATED` **bajan de `0x7` a `0x0`** y llegan **231 rayos en 1000 ms** sin un solo error:
+`dma_errors`, `bad_magic`, `bad_n_ch`, `short`, `trig_gaps` y `ray_gaps` todos en 0 — un rayo por
+disparo de PRF, sin perder ninguno. **Y por fin se midió el dato**, que es lo que Z4.3 dejó abierto:
+un rayo completo del lote bajo congelado en DDR, leído por JTAG con `tools/dump_ray.py` y
+contrastado contra `model/drx_model` con el mismo estímulo — pico en continua en los tres canales,
+**−9,02 dBFS medidos contra −9,02 dBFS del modelo**. La comparación es espectral y no muestra a
+muestra a propósito: el rayo empieza en un punto arbitrario del vector en bucle y 4000 no es
+múltiplo de 208. Piezas: contrato **v0.6** (`config` de 2 lotes y bandera `batch_high`, cierra
+**P-15**), metadato de rayo **en banda** puesto por `drx_ray_packer` (leer `TRIG_COUNT` desde la
+interrupción llega tarde y atribuiría mal el lote en el borde del radial), `fw/src/app/drx_ray.c`
+(anillo S2MM + interrupción de fin de descriptor), `drx_ray_frame.c` (framer del mensaje `ray`,
+compilado también para host y comparado byte a byte contra el Python generado) y `drx_control_boot.c`
+(el plano de control ejercitado en silicio con una trama sintética: `PRF_DIV_LOW 767312 -> 800000`).
+P&R cierra en **WNS = 2,045 ns, WHS = 0,016 ns**. Dos hallazgos de placa que costaron una corrida
+cada uno: **el PRI tiene que ser múltiplo de R₁** o `ray_truncated` se dispara en cada pulso sin
+haber perdido ningún rayo, y **el `overrun` del arranque** no es de régimen permanente (el
+range-gate lleva llenando bancos que nadie vaciaba desde antes de que el consumidor existiera).
+Hallazgo nuevo abierto: **P-16**, Throttled(DDR) y el motor de timing no pueden correr a la vez.
+**Lo que NO hay: transporte.** El framer y el plano de control están, pero nadie abre un socket; el
+DSP real es Z4.6. Detalle en `fases.md#z4`, entrada del 1-oct (noche).
+
 Lo que sí está hecho y verificado, además de lo de arriba:
 
 - El sitio de documentación se construye y se despliega solo a

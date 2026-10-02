@@ -45,7 +45,23 @@
  * (lote alto) y el DMA lo cierra antes por TLAST. */
 #define DRX_RAY_MAX_BINS ((uint32_t)DRX_BINS_MODE_FINE)
 #define DRX_RAY_MAX_WORDS (DRX_RAY_META_WORDS + DRX_RAY_MAX_BINS * DRX_RAY_N_CH)
-#define DRX_RAY_MAX_BYTES (DRX_RAY_MAX_WORDS * 4u)
+
+/* Tamano REAL de cada buffer: el maximo redondeado hacia arriba a linea de
+ * cache (64 B = 16 palabras).
+ *
+ * No es cosmetica. `Xil_DCacheInvalidateRange` trabaja por lineas enteras, e
+ * invalidar DESCARTA lo que haya sucio en la linea sin escribirlo a memoria.
+ * Con buffers de 44284 B consecutivos, solo el primero cae en frontera de
+ * linea: invalidar cualquier otro arrastraria la linea compartida con el
+ * vecino -- y la del primero, la que comparte con lo que el enlazador haya
+ * puesto justo antes. El sintoma seria una variable cualquiera del firmware
+ * volviendo a un valor viejo, de forma intermitente y sin relacion aparente
+ * con los rayos. */
+#define DRX_RAY_LINE_WORDS 16u
+#define DRX_RAY_BUF_WORDS \
+    (((DRX_RAY_MAX_WORDS + DRX_RAY_LINE_WORDS - 1u) / DRX_RAY_LINE_WORDS) \
+     * DRX_RAY_LINE_WORDS)
+#define DRX_RAY_MAX_BYTES (DRX_RAY_BUF_WORDS * 4u)
 
 /* Rayos en vuelo en el anillo. Con 223 rayos/s y la tarea de entrega
  * despertando por semaforo, cuatro dan ~18 ms de margen antes de que el
@@ -56,6 +72,12 @@
  * ~223 rayos, mas que de sobra para que un salto de trig_count o un overrun
  * aparezcan dentro de ella. */
 #define DRX_RAY_SELFTEST_MS 1000u
+
+/* Espera antes de limpiar los sticky y empezar a medir. Cubre de sobra el
+ * arrastre del arranque: el range-gate lleva llenando bancos desde que arranco
+ * el motor de timing y nadie los vaciaba, asi que el primer banco que se
+ * completa tras armar el anillo levanta `overrun` una vez. Ver DrxRay_SelfTest. */
+#define DRX_RAY_SETTLE_MS 200u
 
 typedef struct {
     uint32_t trig_count;   /* disparos de PRF desde el arranque, al empezar este rayo */
@@ -69,6 +91,7 @@ typedef struct {
 typedef struct {
     uint32_t rays;             /* rayos entregados al sumidero */
     uint32_t dma_errors;       /* descriptores que el DMA marco como fallidos */
+    uint32_t resync;           /* descriptores sin cabecera por armar a mitad de rayo */
     uint32_t bad_magic;        /* cabeceras sin DRX_RAY_MAGIC */
     uint32_t bad_n_ch;         /* cabeceras con un n_ch distinto del compilado */
     uint32_t short_rays;       /* rayos con menos bytes de los que su bin_count pide */
@@ -102,6 +125,12 @@ void DrxRay_SetSink(DrxRay_Sink sink, void *user);
 void DrxRayTask_Create(void);
 
 void DrxRay_GetStatus(DrxRayStatus *out);
+
+/* Ultimo rayo entregado, para quien quiera volver a mirarlo. `iq` apunta al
+ * buffer de la DDR SIN el metadato en banda y vale mientras ese buffer no se
+ * rearme -- con `DrxRay_Freeze()` eso es indefinido. Devuelve false si todavia
+ * no llego ninguno. */
+bool DrxRay_GetLast(DrxRayHeader *header, const uint32_t **iq, uint32_t *n_words);
 
 /* Comprobacion de bring-up: espera `ms` milisegundos y confirma que llegaron
  * rayos y que `STATUS (overrun)`/`GATE_TRUNCATED` quedaron limpios.

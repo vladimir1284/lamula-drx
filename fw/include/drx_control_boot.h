@@ -21,4 +21,13 @@
  * DrxTiming_Start(). Devuelve true si las tres comprobaciones pasaron. */
 bool DrxControlBoot_SelfTest(void);
 
+/* Monta la trama `ray` del ultimo rayo recibido y comprueba su cabecera.
+ *
+ * El framer (fw/src/app/drx_ray_frame.c) ya se contrasta byte a byte contra la
+ * implementacion de Python en el host, con un rayo de 3 bins. Esto comprueba lo
+ * que el host no puede: que un rayo REAL, de miles de bins y recien salido de
+ * la DDR, cabe en el buffer y produce un `payload_len` que cuadra. Devuelve
+ * false si no hay rayo o si la trama no sale. */
+bool DrxControlBoot_RaySelfTest(void);
+
 #endif /* DRX_CONTROL_BOOT_H */

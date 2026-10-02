@@ -61,7 +61,7 @@ static void *g_sink_user;
 /* El DMA ESCRIBE estos buffers y la CPU los lee: hay que invalidar antes de
  * mirarlos. Alineados a linea de cache para que invalidar uno no arrastre al
  * vecino. */
-static uint32_t g_buf[DRX_RAY_BUFFERS][DRX_RAY_MAX_WORDS] __attribute__((aligned(64)));
+static uint32_t g_buf[DRX_RAY_BUFFERS][DRX_RAY_BUF_WORDS] __attribute__((aligned(64)));
 
 static char g_bd_space[XAXIDMA_BD_MINIMUM_ALIGNMENT * DRX_RAY_BD_RING]
     __attribute__((aligned(XAXIDMA_BD_MINIMUM_ALIGNMENT)));
@@ -75,6 +75,14 @@ static volatile int g_frozen_index = -1;
 static const uint32_t *g_last_buf;
 static uint32_t g_last_words;
 static DrxRayHeader g_last_header;
+
+/* Copia del anterior en el instante de congelar. Hace falta aparte: una misma
+ * pasada del recolector puede entregar varios rayos, y se congela el primero
+ * mientras `g_last_*` acaba apuntando al ultimo -- que sigue en el anillo y se
+ * reescribe. La primera version no lo separaba, y la lectura por JTAG traia un
+ * rayo distinto del que la UART habia anunciado. */
+static uint32_t g_frozen_words;
+static DrxRayHeader g_frozen_header;
 
 static bool submit_buffer(uint32_t index)
 {
@@ -158,8 +166,25 @@ static void deliver(uint32_t index, uint32_t bytes)
     const uint32_t *words = &g_buf[index][0];
     DrxRayHeader header;
 
+    /* Invalidar DE NUEVO, ahora que el DMA ya escribio. La invalidacion de
+     * `submit_buffer` marca las lineas antes de entregarlo, pero entre ese
+     * momento y esta lectura el A9 puede haber vuelto a traer lineas por
+     * prefetch especulativo: son direcciones que el codigo acaba de tocar. Sin
+     * esto se leeria el rayo ANTERIOR en parte del buffer, que es un fallo
+     * intermitente y dependiente del tamano del rayo. */
+    Xil_DCacheInvalidateRange((INTPTR)words, DRX_RAY_MAX_BYTES);
+
     if (bytes < DRX_RAY_META_WORDS * 4u || !parse_header(words, &header)) {
-        g_status.bad_magic++;
+        if (g_status.rays == 0u && g_status.resync == 0u) {
+            /* El PRIMER descriptor se arma a mitad de un rayo en curso: el
+             * motor de timing lleva corriendo desde antes de que este modulo
+             * existiera. Lo que recoge es la COLA de ese rayo, sin cabecera, y
+             * se cierra en su TLAST. Es inevitable y se cuenta aparte: a partir
+             * del siguiente, el anillo ya esta en frontera de rayo. */
+            g_status.resync++;
+        } else {
+            g_status.bad_magic++;
+        }
         return;
     }
     if ((uint32_t)header.n_ch != DRX_RAY_N_CH) {
@@ -237,6 +262,8 @@ static void reap(void)
                  * DrxRay_DumpLast() imprime es la del rayo que seguira ahi. */
                 g_freeze_request = false;
                 g_frozen_index = (int)index;
+                g_frozen_header = g_last_header;
+                g_frozen_words = g_last_words;
             } else {
                 indices[n++] = index;
             }
@@ -373,6 +400,25 @@ void DrxRay_Thaw(void)
     }
 }
 
+bool DrxRay_GetLast(DrxRayHeader *header, const uint32_t **iq, uint32_t *n_words)
+{
+    /* Si hay uno congelado se devuelve ESE: es el unico que no se va a
+     * reescribir mientras se mira. */
+    if (g_frozen_index >= 0) {
+        if (header != NULL) *header = g_frozen_header;
+        if (iq != NULL) *iq = &g_buf[g_frozen_index][DRX_RAY_META_WORDS];
+        if (n_words != NULL) *n_words = g_frozen_words;
+        return true;
+    }
+    if (g_last_buf == NULL) {
+        return false;
+    }
+    if (header != NULL) *header = g_last_header;
+    if (iq != NULL) *iq = &g_last_buf[DRX_RAY_META_WORDS];
+    if (n_words != NULL) *n_words = g_last_words;
+    return true;
+}
+
 void DrxRay_GetStatus(DrxRayStatus *out)
 {
     if (out != NULL) {
@@ -387,10 +433,20 @@ bool DrxRay_SelfTest(uint32_t ms)
         return false;
     }
 
-    /* Los diagnosticos sticky se limpian ANTES de medir: vienen disparados
-     * desde antes de que existiera este camino (nadie programaba descriptores,
-     * asi que TREADY no subia nunca) y lo que se quiere saber es si vuelven a
-     * dispararse AHORA. */
+    /* Primero dejar que el camino se asiente, y DESPUES limpiar los sticky.
+     *
+     * El orden importa y costo una corrida descubrirlo. `drx_range_gate` lleva
+     * desde el arranque del motor de timing llenando bancos que nadie vaciaba
+     * -- el consumidor es este modulo, que acaba de existir -- asi que los dos
+     * bancos estan marcados como pendientes. El primer banco que se completa
+     * despues de armar el anillo encuentra el suyo todavia pendiente y levanta
+     * `overrun` una vez, unos milisegundos despues de armar. Limpiar antes de
+     * esa ventana y medir a continuacion contaba ese arrastre como un fallo de
+     * regimen permanente, que es justo lo contrario de lo que se quiere medir.
+     *
+     * Medido en placa el 1-oct-2026: con esta espera, overrun y
+     * GATE_TRUNCATED se quedan en 0 mientras llegan ~231 rayos por segundo. */
+    vTaskDelay(pdMS_TO_TICKS(DRX_RAY_SETTLE_MS));
     DrxReg_ClearStatus(0xFFFFFFFFu);
     DrxReg_ClearGateTruncated(0xFFFFFFFFu);
 
@@ -404,12 +460,15 @@ bool DrxRay_SelfTest(uint32_t ms)
     xil_printf("drx_ray: %lu rayos en %lu ms, overrun=0x%lx truncated=0x%lx\r\n",
                (unsigned long)rays, (unsigned long)ms,
                (unsigned long)overrun, (unsigned long)truncated);
-    xil_printf("drx_ray: dma_errors=%lu bad_magic=%lu bad_n_ch=%lu short=%lu "
-               "trig_gaps=%lu ray_gaps=%lu\r\n",
-               (unsigned long)g_status.dma_errors, (unsigned long)g_status.bad_magic,
-               (unsigned long)g_status.bad_n_ch, (unsigned long)g_status.short_rays,
+    xil_printf("drx_ray: dma_errors=%lu resync=%lu bad_magic=%lu bad_n_ch=%lu "
+               "short=%lu trig_gaps=%lu ray_gaps=%lu\r\n",
+               (unsigned long)g_status.dma_errors, (unsigned long)g_status.resync,
+               (unsigned long)g_status.bad_magic, (unsigned long)g_status.bad_n_ch,
+               (unsigned long)g_status.short_rays,
                (unsigned long)g_status.trig_gaps, (unsigned long)g_status.ray_gaps);
 
+    /* `resync` NO cuenta como fallo: es el descriptor que se armo a mitad de un
+     * rayo en curso, y hay exactamente uno por arranque. */
     bool ok = (rays > 0u) && (overrun == 0u) && (truncated == 0u) &&
               (g_status.bad_magic == 0u) && (g_status.bad_n_ch == 0u);
     if (!ok) {
@@ -420,25 +479,34 @@ bool DrxRay_SelfTest(uint32_t ms)
 
 void DrxRay_DumpLast(uint32_t n_words)
 {
-    if (g_last_buf == NULL) {
+    DrxRayHeader cabecera;
+    const uint32_t *base = NULL;
+    uint32_t palabras = 0u;
+
+    if (!DrxRay_GetLast(&cabecera, &base, &palabras)) {
         xil_printf("drx_ray: todavia no llego ningun rayo\r\n");
         return;
     }
+    /* `base` apunta ya detras del metadato; la direccion que se imprime es la
+     * del PRINCIPIO del rayo, que es lo que tools/dump_ray.py necesita para
+     * encontrar el magic. */
+    const uint32_t *inicio = base - DRX_RAY_META_WORDS;
 
     xil_printf("drx_ray: rayo idx=%lu trig=%lu bins=%lu n_ch=%lu batch=%lu "
-               "coarse=%lu palabras=%lu addr=0x%08lx\r\n",
-               (unsigned long)g_last_header.ray_index,
-               (unsigned long)g_last_header.trig_count,
-               (unsigned long)g_last_header.bin_count,
-               (unsigned long)g_last_header.n_ch,
-               (unsigned long)(g_last_header.batch_high ? 1u : 0u),
-               (unsigned long)(g_last_header.mode_coarse ? 1u : 0u),
-               (unsigned long)g_last_words,
-               (unsigned long)(UINTPTR)g_last_buf);
+               "coarse=%lu palabras=%lu addr=0x%08lx congelado=%lu\r\n",
+               (unsigned long)cabecera.ray_index,
+               (unsigned long)cabecera.trig_count,
+               (unsigned long)cabecera.bin_count,
+               (unsigned long)cabecera.n_ch,
+               (unsigned long)(cabecera.batch_high ? 1u : 0u),
+               (unsigned long)(cabecera.mode_coarse ? 1u : 0u),
+               (unsigned long)palabras,
+               (unsigned long)(UINTPTR)inicio,
+               (unsigned long)(g_frozen_index >= 0 ? 1u : 0u));
 
-    uint32_t n = (n_words < g_last_words) ? n_words : g_last_words;
+    uint32_t n = (n_words < palabras) ? n_words : palabras;
     for (uint32_t i = 0; i < n; i++) {
-        xil_printf("%08lx%s", (unsigned long)g_last_buf[DRX_RAY_META_WORDS + i],
+        xil_printf("%08lx%s", (unsigned long)base[i],
                    ((i % 8u) == 7u) ? "\r\n" : " ");
     }
     if (n > 0u && (n % 8u) != 0u) {

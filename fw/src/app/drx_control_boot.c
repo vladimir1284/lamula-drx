@@ -4,6 +4,8 @@
 #include "drx_contract_io.h"
 #include "drx_control.h"
 #include "drx_params.h"
+#include "drx_ray.h"
+#include "drx_ray_frame.h"
 #include "drx_regs.h"
 #include "drx_regs_hw.h"
 #include "drx_stimulus.h"
@@ -46,18 +48,24 @@ static drx_dsp_error_t boot_select_stimulus(uint8_t vector_id, uint16_t repeat, 
     return DrxStimulus_Select(vector_id, repeat);
 }
 
-/* Una configuracion distinta de la de bring-up, para que "los registros
- * cambiaron" signifique algo. Sigue siendo valida bajo D-09: mismo lote bajo
- * en el piso de rango no ambiguo, lote alto con la mitad de pulsos. */
+/* Una configuracion CLARAMENTE distinta de la de bring-up, para que "los
+ * registros cambiaron" signifique algo.
+ *
+ * La primera version de esta funcion usaba PRF_DIV_MIN_LOW, que es justo el
+ * valor que la configuracion de bring-up ya deja escrito: la comprobacion
+ * pasaba sin demostrar nada, y se vio en la primera corrida en placa
+ * ("PRF_DIV_LOW 767198 -> 767198"). Los valores de aqui no son PRI alineados a
+ * R1 a proposito -- este ejercicio prueba el camino del mensaje, no la calidad
+ * de la configuracion, y DrxTiming_Start() deja la buena al terminar. */
 static void boot_config(drx_dsp_config_t *out)
 {
     memset(out, 0, sizeof(*out));
 
     out->seq = DRX_BOOT_SEQ;
-    out->prf_div_low = (uint32_t)DRX_PRF_DIV_MIN_LOW;
-    out->prf_div_high = (uint32_t)DRX_PRF_DIV_MIN;
-    out->range_bins_low = (uint16_t)((uint32_t)DRX_PRF_DIV_MIN_LOW / (uint32_t)DRX_R1 - 2u);
-    out->range_bins_high = (uint16_t)((uint32_t)DRX_PRF_DIV_MIN / (uint32_t)DRX_R1 - 2u);
+    out->prf_div_low = 800000u;  /* clock-const-ok: divisor de PRF, no una frecuencia */
+    out->prf_div_high = 300000u; /* clock-const-ok: divisor de PRF, no una frecuencia */
+    out->range_bins_low = 3000u;
+    out->range_bins_high = 1200u;
     out->n_pulses_low = 8u;
     out->n_pulses_high = 24u;
     out->pulse_width_idx_low = (uint8_t)(DRX_N_PULSE_WIDTHS - 1u);
@@ -169,4 +177,67 @@ bool DrxControlBoot_SelfTest(void)
     DrxReg_TimingEnable();
 
     return ok;
+}
+
+/* Buffer de salida de la trama de un rayo. Se dimensiona al rayo mas grande
+ * que el bitstream puede producir, igual que los descriptores del S2MM. */
+static uint8_t g_ray_frame[DRX_RAY_MAX_BINS * DRX_RAY_N_CH * 4u + 64u];
+
+bool DrxControlBoot_RaySelfTest(void)
+{
+    DrxRayHeader header;
+    const uint32_t *iq = NULL;
+    uint32_t n_words = 0u;
+
+    if (!DrxRay_GetLast(&header, &iq, &n_words)) {
+        xil_printf("drx_control: sin rayo que enmarcar\r\n");
+        return false;
+    }
+
+    DrxTimingConfig base;
+    DrxTiming_DefaultConfig(&base);
+
+    uint8_t mask = 0u;
+    for (unsigned i = 0u; i < (unsigned)DRX_N_CH_TOP; i++) {
+        mask = (uint8_t)(mask | (1u << i));
+    }
+
+    DrxRayContext ctx = {
+        .prf_div_low = base.prf_div_low,
+        .prf_div_high = base.prf_div_high,
+        /* Indices, no ciclos: DrxTimingConfig guarda el ancho en ciclos porque
+         * es lo que el registro quiere, y el contrato quiere la posicion en la
+         * tabla. La configuracion de bring-up usa el ultimo para el lote bajo
+         * y el primero para el alto (ver drx_timing_cfg.c). */
+        .pulse_width_idx_low = (uint8_t)(DRX_N_PULSE_WIDTHS - 1u),
+        .pulse_width_idx_high = 0u,
+        .pulse_mode = 0u,
+        .channel_mask = mask,
+        .azel_valid = false, /* P-02: no hay encoders SSI todavia */
+        .azimuth_raw = 0u,
+        .elevation_raw = 0u,
+        /* Sin reloj de pared: el instante se deriva del contador de disparos y
+         * de FS_HZ. Es monotono y exacto en ciclos, que es lo que el DSP
+         * necesita para ordenar rayos; atarlo a una hora real es otro trabajo. */
+        .timestamp_ns = ((uint64_t)header.trig_count * 1000000000ull) /
+                        (uint64_t)DRX_FS_HZ, /* clock-const-ok: ns/s, conversion de unidades */
+        .first_after_config = false,
+        .ddc_overflow = DrxReg_ReadOverflow() != 0u,
+        .truncated = DrxReg_Read(DRX_REG_GATE_TRUNCATED_OFFSET) != 0u,
+    };
+
+    size_t len = DrxRayFrame_Encode(g_ray_frame, sizeof(g_ray_frame), &header,
+                                    &ctx, iq, n_words);
+    size_t esperado = DrxRayFrame_Size(header.bin_count, header.n_ch);
+
+    if (len == 0u || len != esperado) {
+        xil_printf("drx_control: la trama del rayo salio %lu B, se esperaban %lu\r\n",
+                   (unsigned long)len, (unsigned long)esperado);
+        return false;
+    }
+
+    xil_printf("drx_control: trama `ray` de %lu B lista (bins=%lu n_ch=%lu)\r\n",
+               (unsigned long)len, (unsigned long)header.bin_count,
+               (unsigned long)header.n_ch);
+    return true;
 }

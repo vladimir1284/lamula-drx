@@ -315,6 +315,7 @@ int main_thread()
 	if (DrxRay_Freeze()) {
 		vTaskDelay(pdMS_TO_TICKS(100));
 		DrxRay_DumpLast(0u);
+		(void)DrxControlBoot_RaySelfTest();
 	}
 
 	DrxStatusTask_Create();

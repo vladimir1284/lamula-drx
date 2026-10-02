@@ -1495,6 +1495,91 @@ Trabajo:
       lado del contrato. Es también donde `STATUS`/`GATE_TRUNCATED` deben dejar de estar en `0x7` y
       donde se puede por fin mirar el dato.
 
+!!! success "1-oct-2026 (noche): Z4.4 — rayos ensamblados, medidos contra el modelo, y P-15 cerrado"
+    El camino de vuelta. `STATUS (overrun)` y `GATE_TRUNCATED` **caen de `0x7` a `0x0`** y llegan
+    **231 rayos en 1000 ms** con `dma_errors = 0`, `bad_magic = 0`, `bad_n_ch = 0`, `short = 0`,
+    `trig_gaps = 0` y `ray_gaps = 0` — uno por disparo de PRF, sin perder ninguno. Medido en
+    ZedBoard por JTAG; P&R de `-top zynq` cierra en **WNS = 2,045 ns, WHS = 0,016 ns**.
+
+    **Y por fin se midió el DATO, que es lo que Z4.3 no pudo.** Un rayo completo del lote bajo
+    (`idx=279`, `bins=3689`, 11067 palabras) congelado en DDR, leído con `mrd` y contrastado contra
+    `model/drx_model` alimentado con el mismo estímulo: pico en continua en los tres canales,
+    **−9,02 dBFS medidos contra −9,02 dBFS del modelo**, misma potencia. La comparación es espectral
+    y no muestra a muestra a propósito: el rayo empieza en un punto arbitrario del vector en bucle y
+    4000 no es múltiplo de 208, así que no existe desplazamiento entero que alinee las dos series.
+    Herramienta: `tools/dump_ray.py`.
+
+    **a — Contrato v0.6, cierra [P-15](../alcance/pendientes.md#p-15).** `config` pasa a declarar los
+    dos lotes (`prf_div_low/high`, `pulse_width_idx_low/high`, `n_pulses_low/high`,
+    `range_bins_low/high`; de 48 a 60 B) y el enum `ray_flag` gana `batch_high`. Se rompe el mensaje
+    en vez de añadir otro al lado: `config` está definido como atómico y mantener una variante de un
+    solo lote modelaría un modo que D-13 descartó. `DrxTiming_Apply()` lo aplica valida-entero-antes-
+    de-escribir y restaura la última configuración buena si el RTL lo rechaza.
+
+    **b — Metadato de rayo EN BANDA.** `drx_ray_packer` antepone cuatro palabras —magic,
+    `trig_count`, `ray_index`, `bin_count` más banderas de lote y celda— y TLAST sigue cayendo en el
+    último beat de datos, así que un descriptor cubre cabecera y datos. Leer `TRIG_COUNT` desde el
+    manejador **llega tarde**: el banco de ping-pong se completa unos cientos de ciclos antes del
+    siguiente disparo y una interrupción de FreeRTOS no atiende en 5 µs; justo en el borde entre
+    lotes eso atribuye el rayo al lote equivocado, que es el único caso que el metadato existe para
+    distinguir. El metadato se congela al empezar a VACIAR el rayo, no en su `ray_start`: entre esos
+    dos instantes pasa un rayo entero, y guardarlo exigiría una FIFO que se desincronizaría para
+    siempre al primer rayo descartado. `c_sg_length_width` sube de 14 a 23 bits para que un rayo
+    fino (44 284 B) quepa en un solo descriptor.
+
+    **c — Hallazgo de placa: el PRI tiene que ser múltiplo de R₁, o `ray_truncated` miente.** Con el
+    reparto anterior (PRI en el piso de D-09 y un bin de guarda) el rayo se completa unos ciclos
+    antes del siguiente `ray_start`, y en ese hueco el DDC —que corre libre— escribe una o dos
+    muestras decimadas en el banco siguiente. `ray_start` encuentra `wr_ptr != 0` y
+    `drx_range_gate` levanta `ray_truncated` **sin haber perdido ningún rayo**: lo descartado es
+    tiempo muerto. Medido: `GATE_TRUNCATED = 0x7` permanente con 231 rayos/s, `trig_gaps = 0` y
+    `ray_gaps = 0` a la vez. Con el PRI redondeado arriba al múltiplo de R₁ (767 312 y 208 416, con
+    3689 y 1002 bins) entran exactamente `prf_div / R₁` muestras por PRI, el banco cierra en su
+    última muestra y la bandera se queda en 0. El BITE de D-14 no distingue por sí solo «llegó tarde
+    y cortó un rayo» de «llegó dos muestras después del cierre natural».
+
+    **d — `overrun` al arrancar el consumidor no es un fallo de régimen permanente.** El range-gate
+    lleva llenando bancos desde que arrancó el motor de timing y nadie los vaciaba, así que los dos
+    quedan marcados pendientes; el primer banco que se completa tras armar el anillo levanta
+    `overrun` una vez. `DrxRay_SelfTest()` espera `DRX_RAY_SETTLE_MS` **antes** de limpiar los
+    sticky por eso. Con la espera, `overrun` se queda en 0.
+
+    **e — Framer del mensaje `ray`**, en su propio fichero y sin dependencias de Xilinx, compilado
+    también para host y comparado byte a byte contra la implementación de Python generada del mismo
+    esquema. El detalle que justifica el fichero y su test es el orden **I/Q**: la DDR trae
+    `{I[31:16], Q[15:0]}` —en memoria `Q_lo Q_hi I_lo I_hi`— y el contrato pide el par en orden I,Q.
+    Copiar la palabra tal cual produce una trama con cabecera y `payload_len` correctos y con I y Q
+    cambiados en todos los bins; el parser del otro lado no puede verlo. En placa se montó la trama
+    de un rayo real: **44 316 B** para 3689 bins × 3 canales, que es exactamente
+    12 + 36 + 11 067 × 4.
+
+    **f — El plano de control, ejercitado en silicio.** `drx_control_boot.c` monta un `config` de 2
+    lotes con el mismo codificador que usará el cable, lo empuja por el mismo parser y comprueba que
+    el `config_ack` lleva el `seq` original y que los registros cambiaron:
+    `PRF_DIV_LOW 767312 -> 800000`. Lo único que no cubre es el socket. (La primera versión usaba
+    `PRF_DIV_MIN_LOW`, que es justo lo que la configuración de bring-up ya deja escrito, así que la
+    comprobación pasaba sin demostrar nada — se vio en la primera corrida: `767198 -> 767198`.)
+
+    **g — Deuda de Z4.3 cerrada:** el número de canales pasa a `config/params.toml` (`n_ch_top`), de
+    donde salen tanto `rtl/drx_top.sv` como `fw/include/drx_stimulus.h`, y además viaja en la
+    cabecera del rayo, así que una divergencia sale en el primer rayo en vez de como un espectro raro
+    sin origen.
+
+    **Hallazgo nuevo abierto:** [P-16](../alcance/pendientes.md#p-16) — Throttled(DDR) y el motor de
+    timing no pueden correr a la vez. En ese modo `s_valid` hacia el DDC está alto 1 de cada N_CH+1
+    ciclos, así que un rayo necesita unas cuatro veces el PRI y `ray_start` lo trunca antes. La
+    medida de rayos corre por eso en BRAM-loop, cuyo contenido es exactamente el caso `tono_if` del
+    catálogo (comprobado array a array). No bloquea Z4.4.
+
+    **Lo que NO está hecho:** no hay transporte. El framer y el plano de control están y se ejercitan,
+    pero nadie abre un socket: el DSP real es **Z4.6**. `drx_ray.c` deja el sumidero como puntero de
+    función precisamente para que ese paso sea un fichero nuevo y no una reescritura. Tampoco hay
+    encoders SSI (P-02), así que todo rayo sale marcado `azel_invalid`, y el `timestamp_ns` se deriva
+    de `trig_count` y FS_HZ: monótono y exacto en ciclos, pero no atado a ninguna hora de pared.
+
+    - Siguiente paso: **Z4.5** — status/BITE sobre el contrato y actuación de AFC, que obliga a
+      regenerar el IP del DDS Compiler con `S_AXIS_CONFIG` y a repasar la matriz 16/16 de D-12.
+
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
 Trabajo:

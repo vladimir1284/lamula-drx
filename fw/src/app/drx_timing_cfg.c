@@ -90,6 +90,43 @@ static uint32_t bins_for_pri(uint32_t prf_div)
     return bins;
 }
 
+/* PRI redondeado ARRIBA al multiplo de R1 mas cercano que siga cumpliendo el
+ * piso, con su conteo de bins exacto.
+ *
+ * Por que, y es un hallazgo de placa del 1-oct-2026 (Z4.4): con un PRI que NO
+ * es multiplo de R1, el rayo se completa unos ciclos ANTES del siguiente
+ * `ray_start`, y en ese hueco el DDC —que corre libre y no se entera de los
+ * lotes— escribe una o dos muestras decimadas en el banco siguiente. Cuando
+ * `ray_start` llega, encuentra `wr_ptr != 0` y `drx_range_gate` levanta
+ * `ray_truncated` (D-14/v6) aunque no se haya perdido ningun rayo: lo
+ * descartado es tiempo muerto. El sintoma medido fue GATE_TRUNCATED = 0x7
+ * permanente con 231 rayos en 1000 ms, trig_gaps = 0 y ray_gaps = 0, es decir
+ * uno por uno y sin perder ninguno.
+ *
+ * Con el PRI multiplo de R1 entran EXACTAMENTE `prf_div / R1` muestras
+ * decimadas por PRI, el banco cierra en su ultima muestra y `wr_ptr` vale 0
+ * cuando llega el disparo siguiente, que es el caso que el RTL trata como
+ * cierre natural.
+ *
+ * Si el redondeo no cupiera bajo BINS_MODE_FINE se vuelve al reparto de antes
+ * (PRI en el piso y un bin de guarda): peor BITE, pero nunca una
+ * configuracion que D-09 rechace. */
+static uint32_t pri_aligned(uint32_t floor_div, uint32_t *bins_out)
+{
+    uint32_t bins = (floor_div + (uint32_t)DRX_R1 - 1u) / (uint32_t)DRX_R1;
+
+    if (bins <= (uint32_t)DRX_BINS_MODE_FINE) {
+        uint32_t prf_div = bins * (uint32_t)DRX_R1;
+
+        if (prf_div >= floor_div && prf_div <= (uint32_t)DRX_PRF_DIV_MAX) {
+            *bins_out = bins;
+            return prf_div;
+        }
+    }
+    *bins_out = bins_for_pri(floor_div);
+    return floor_div;
+}
+
 void DrxTiming_DefaultConfig(DrxTimingConfig *cfg)
 {
     static const uint16_t kPulseWidthCycles[DRX_N_PULSE_WIDTHS] = DRX_PULSE_WIDTH_CYCLES;
@@ -112,8 +149,13 @@ void DrxTiming_DefaultConfig(DrxTimingConfig *cfg)
      * configuracion pegada al limite que el validador comprueba, asi que un
      * comparador invertido en el RTL saldria en este bring-up en vez de pasar
      * por casualidad. */
-    cfg->prf_div_low = DRX_MAX_U32((uint32_t)DRX_PRF_DIV_MIN_LOW, (uint32_t)DRX_PRF_DIV_MIN);
-    cfg->prf_div_high = DRX_MAX_U32((uint32_t)DRX_PRF_DIV_MIN_HIGH, (uint32_t)DRX_PRF_DIV_MIN);
+    uint32_t bins_low = 0u;
+    uint32_t bins_high = 0u;
+
+    cfg->prf_div_low = pri_aligned(
+        DRX_MAX_U32((uint32_t)DRX_PRF_DIV_MIN_LOW, (uint32_t)DRX_PRF_DIV_MIN), &bins_low);
+    cfg->prf_div_high = pri_aligned(
+        DRX_MAX_U32((uint32_t)DRX_PRF_DIV_MIN_HIGH, (uint32_t)DRX_PRF_DIV_MIN), &bins_high);
 
     /* Pulso largo para el lote de vigilancia, corto para el de Doppler: es el
      * reparto de Batch mode (D-13). Los indices son posiciones de la tabla de
@@ -124,8 +166,8 @@ void DrxTiming_DefaultConfig(DrxTimingConfig *cfg)
     cfg->n_pulses_low = (uint16_t)DRX_BRINGUP_N_PULSES_LOW;
     cfg->n_pulses_high = (uint16_t)DRX_BRINGUP_N_PULSES_HIGH;
 
-    cfg->bins_low = bins_for_pri(cfg->prf_div_low);
-    cfg->bins_high = bins_for_pri(cfg->prf_div_high);
+    cfg->bins_low = bins_low;
+    cfg->bins_high = bins_high;
 
     for (unsigned i = 0u; i < DRX_N_TRIGGERS; i++) {
         uint32_t width = DRX_CYCLES_US(kTrigWidthUs[i]);
