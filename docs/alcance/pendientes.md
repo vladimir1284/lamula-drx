@@ -1953,3 +1953,37 @@ explícita que vladimir dio el 26-sep-2026 para el contrato durante Z4 («trabaj
 respecto al contrato, luego actualizamos a DSP»), mismo patrón que el puente PS7 del 20-sep. Queda
 como aviso pendiente de dar: cualquier implementación que el equipo DSP hubiera empezado contra
 v0.5 tiene que migrar.
+
+### P-16 · El modo Throttled(DDR) no puede coexistir con el motor de timing { #p-16 }
+
+**Estado:** abierto, encontrado 1-oct-2026 (Z4.4) · **Dueño:** Z4.6 o después · **Bloquea:**
+barrer el catálogo de estímulos de Z4.3 contra rayos reales. No bloquea Z4.4.
+
+`rtl/vector_source.sv` en Throttled(DDR) llena un conjunto de N_CH muestras tomando una por beat de
+un AXI4-Stream de 16 bits y lo presenta durante un ciclo, así que el `s_valid` que ve
+`drx_ddc_top` está alto como mucho 1 de cada N_CH+1 ciclos. Toda la cadena del DDC avanza solo con
+`valid`, de modo que con N_CH = 3 una muestra decimada sale cada ≈4·R₁ ciclos en vez de cada R₁.
+
+`drx_range_gate` corta donde se lo dice `ray_start`, que llega cada `prf_div` **ciclos de reloj**
+(D-14). Un rayo de `bins_for_pri(prf_div)` bins necesita por tanto unas cuatro veces el PRI para
+llenarse, `ray_start` lo trunca antes, `GATE_TRUNCATED` sube y no se completa ningún rayo. No es un
+fallo de ninguna de las dos piezas: cada una hace lo que su cabecera dice. Es que la combinación no
+está contemplada.
+
+El modo sigue siendo útil para lo que Z4.3 lo usó —probar que el camino DDR → MM2S → PL entrega
+bytes, y ejercitar el plano de control del contrato— y el nombre ya avisaba («Throttled», tasa por
+debajo de tiempo real, ver [fuente de muestras](../plataforma/fuente-de-muestras.md)). Lo que no se
+había dicho en ningún sitio es que eso impide producir rayos con el motor de timing en marcha, que
+es la combinación que hace falta para barrer los ocho vectores del catálogo contra rayos reales.
+
+**Condición de cierre:** el DMA entrega N_CH muestras por ciclo —un stream de N_CH·16 bits en vez
+de 16, con `vector_source` deshaciendo el entrelazado dentro de la palabra en lugar de a lo largo
+del tiempo— o se acepta explícitamente que el catálogo elegible en caliente solo sirve sin el motor
+de timing, y se documenta así en el contrato. La primera opción es un cambio de
+`tcl/gen_zynq_bd.tcl` (`c_m_axis_mm2s_tdata_width`), del camino DDR de `vector_source.sv` y del
+entrelazado que monta `fw/src/app/drx_stimulus.c`; ninguna de las tres es grande, pero las tres
+tienen que cambiar a la vez o el reparto por canal se desplaza sin ningún error visible.
+
+Mientras tanto, la medida de rayos de Z4.4 corre en BRAM-loop, cuyo contenido
+(`tools/gen_vector_source_init.py`) es exactamente el caso `tono_if` del catálogo —comprobado array
+a array—, así que la comparación contra el modelo dorado sigue siendo posible.

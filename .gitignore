@@ -34,6 +34,9 @@ ip/*/*.veo
 ip/*/*.vho
 ip/*/*.xml
 ip/*/*.mif
+# Vivado deja .mif de los FIR Compiler en el directorio desde el que se lanza,
+# que es la raiz del repo. Son byproducts del IP, no fuentes.
+*.mif
 ip/*/*.dcp
 ip/*/*_sim_netlist.v
 ip/*/*_sim_netlist.vhdl

@@ -274,6 +274,23 @@ int main_thread()
 	 * aqui STATUS (overrun) y GATE_TRUNCATED estaban en 0x7 a proposito
 	 * porque nadie programaba descriptores; que caigan a cero es el criterio
 	 * de que el camino entero funciona. */
+	/* Los rayos EXIGEN el modo BRAM-loop, y esto no es una preferencia.
+	 *
+	 * En Throttled(DDR) `vector_source` presenta un conjunto de N_CH
+	 * muestras cada N_CH+1 ciclos como mucho (llena el conjunto muestra a
+	 * muestra desde un stream de 16 bits y lo presenta un ciclo), asi que el
+	 * `s_valid` que ve el DDC esta alto ~1 de cada 4 ciclos. La cadena solo
+	 * avanza con `valid`, asi que una muestra decimada sale cada ~4*R1
+	 * ciclos en vez de cada R1. Un rayo de `bins_for_pri(prf_div)` bins
+	 * necesitaria entonces unas cuatro veces el PRI, y `ray_start` lo
+	 * truncaria antes de completarse: GATE_TRUNCATED subiria y no saldria
+	 * NINGUN rayo entero. El nombre del modo ya lo dice -- es throttled.
+	 *
+	 * Para elegir vector en caliente a tasa plena hace falta que el DMA
+	 * entregue N_CH muestras por ciclo, es decir un stream de N_CH*16 bits;
+	 * hoy es de 16. Queda anotado, no es Z4.4. */
+	DrxStimulus_Stop();
+
 	if (DrxRay_Init()) {
 		DrxRayTask_Create();
 		(void)DrxRay_SelfTest(DRX_RAY_SELFTEST_MS);
@@ -285,13 +302,16 @@ int main_thread()
 	 * del motor de timing, sin necesitar enlace Ethernet. */
 	DrxControlBoot_SelfTest();
 
-	/* Z4.4: deja un vector conocido en bucle y congela un rayo entero para
-	 * que `tools/dump_ray.py` pueda leerlo por JTAG y compararlo contra el
-	 * modelo dorado. Es la primera medida del DATO en esta cadena: Z4.3 solo
-	 * pudo probar que los BYTES llegaban a la PL. El vector es el primero del
-	 * catalogo (`tono_if`), que es el que el NCO tiene que llevar a continua
-	 * exactamente, asi que la salida esperada no necesita interpretacion. */
-	(void)DrxStimulus_Select(0u, 0u);
+	/* Z4.4: congela un rayo entero para que `tools/dump_ray.py` pueda leerlo
+	 * por JTAG y compararlo contra el modelo dorado. Es la primera medida del
+	 * DATO en esta cadena: Z4.3 solo pudo probar que los BYTES llegaban a la
+	 * PL.
+	 *
+	 * El estimulo es el de la BRAM, que `tools/gen_vector_source_init.py`
+	 * carga con `vectors.tone()` -- exactamente el mismo array que el caso
+	 * `tono_if` del catalogo, comprobado. Es el tono que el NCO tiene que
+	 * llevar a continua, asi que la salida esperada no necesita
+	 * interpretacion: el pico tiene que caer en continua. */
 	if (DrxRay_Freeze()) {
 		vTaskDelay(pdMS_TO_TICKS(100));
 		DrxRay_DumpLast(0u);

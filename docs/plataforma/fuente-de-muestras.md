@@ -64,6 +64,25 @@ muestras/canal**, es decir 766 µs de señal a 100 MSPS — suficiente para vari
 referencia para corrección, y por eso la limitación de ancho de banda de DDR no compromete la
 validación funcional: solo la fidelidad temporal, que se cubre con BRAM-loop.
 
+!!! warning "1-oct-2026 (Z4.4): *Throttled* y el motor de timing no pueden correr a la vez"
+    «Solo tarda más» es cierto para la aritmética y falso para el range gating, y la diferencia
+    importa en placa. `drx_range_gate` corta rayos donde se lo dice `ray_start`, que viene del motor
+    de timing y llega cada `prf_div` **ciclos de reloj**; el número de bins que caben, en cambio,
+    depende de cuántas muestras VÁLIDAS lleguen en ese tiempo.
+
+    En Throttled(DDR), `vector_source` junta N_CH muestras de un stream de 16 bits —una por beat— y
+    presenta el conjunto un ciclo, así que `s_valid` hacia el DDC está alto como mucho 1 de cada
+    N_CH+1 ciclos. Con N_CH = 3 eso es un cuarto de la tasa: una muestra decimada sale cada ≈4·R₁
+    ciclos en vez de cada R₁, y un rayo de `bins_for_pri(prf_div)` bins necesita unas cuatro veces
+    el PRI. `ray_start` lo trunca antes de completarse, `GATE_TRUNCATED` sube y **no sale ni un
+    rayo entero**.
+
+    Consecuencia práctica: la medida de rayos de Z4.4 corre en BRAM-loop, y el catálogo elegible en
+    caliente de Z4.3 sirve para ejercitar el camino de datos, no para producir rayos con el motor
+    de timing en marcha. Para las dos cosas a la vez haría falta que el DMA entregase N_CH muestras
+    por ciclo, es decir un stream de N_CH·16 bits en vez de 16. Ver
+    [P-16](../alcance/pendientes.md#p-16).
+
 ## Consecuencia para la portabilidad
 
 Cuando llegue la ZU9, la migración de la fuente de muestras es sustituir un módulo que cumple un
