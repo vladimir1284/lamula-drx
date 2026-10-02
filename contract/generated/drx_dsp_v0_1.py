@@ -1,6 +1,6 @@
 """GENERADO por tools/gen_contract.py a partir de contract/schema/drx_dsp_v0_1.toml. NO EDITAR A MANO.
 
-Contrato DRx↔DSP v0.5 — referencia
+Contrato DRx↔DSP v0.6 — referencia
 de los tests de contrato. Es la tercera implementación generada de la misma
 fuente: si esta y la de C no producen los mismos bytes, el codegen está mal.
 """
@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 MAGIC = 0x4C4D4452
 VERSION_MAJOR = 0
-VERSION_MINOR = 5
+VERSION_MINOR = 6
 
 @dataclass
 class Header:
@@ -104,19 +104,25 @@ class Status:
 class Config:
     """Configuración completa. Se aplica de forma atómica: o entra entera o se"""
 
-    FORMAT = "<IIHBBBBBBIIIIIIII"
-    SIZE = 48
-    FIELDS = ("seq", "prf_div", "range_bins", "pulse_width_idx", "pulse_mode", "cell_mode", "channel_mask", "scan_mode", "pad0", "trigger_delay_0", "trigger_delay_1", "trigger_delay_2", "trigger_delay_3", "trigger_width_0", "trigger_width_1", "trigger_width_2", "trigger_width_3",)
+    FORMAT = "<IIIHHHHBBBBBBBBIIIIIIII"
+    SIZE = 60
+    FIELDS = ("seq", "prf_div_low", "prf_div_high", "range_bins_low", "range_bins_high", "n_pulses_low", "n_pulses_high", "pulse_width_idx_low", "pulse_width_idx_high", "pulse_mode", "cell_mode", "channel_mask", "scan_mode", "pad0", "pad1", "trigger_delay_0", "trigger_delay_1", "trigger_delay_2", "trigger_delay_3", "trigger_width_0", "trigger_width_1", "trigger_width_2", "trigger_width_3",)
 
     seq: int = 0
-    prf_div: int = 0
-    range_bins: int = 0
-    pulse_width_idx: int = 0
+    prf_div_low: int = 0
+    prf_div_high: int = 0
+    range_bins_low: int = 0
+    range_bins_high: int = 0
+    n_pulses_low: int = 0
+    n_pulses_high: int = 0
+    pulse_width_idx_low: int = 0
+    pulse_width_idx_high: int = 0
     pulse_mode: int = 0
     cell_mode: int = 0
     channel_mask: int = 0
     scan_mode: int = 0
     pad0: int = 0
+    pad1: int = 0
     trigger_delay_0: int = 0
     trigger_delay_1: int = 0
     trigger_delay_2: int = 0
@@ -225,6 +231,7 @@ class RayFlag:
     TRUNCATED = 4
     FIRST_AFTER_CONFIG = 8
     TX_POL_V = 16
+    BATCH_HIGH = 32
 
 class BiteFlag:
     """Catálogo de fallos del plan de testing."""

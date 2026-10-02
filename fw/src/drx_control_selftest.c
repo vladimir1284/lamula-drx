@@ -50,8 +50,10 @@ static drx_dsp_error_t fake_select(uint8_t vector_id, uint16_t repeat, void *use
 
 static drx_dsp_error_t fake_config(const drx_dsp_config_t *config, void *user) {
   (void)user;
-  printf("accion apply_config seq=%u prf_div=%u range_bins=%u\n", config->seq,
-         config->prf_div, config->range_bins);
+  printf("accion apply_config seq=%u prf_div_low=%u prf_div_high=%u "
+         "range_bins_low=%u range_bins_high=%u\n",
+         config->seq, config->prf_div_low, config->prf_div_high,
+         config->range_bins_low, config->range_bins_high);
   return DRX_DSP_ERROR_OK;
 }
 

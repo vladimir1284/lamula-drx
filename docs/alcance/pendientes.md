@@ -1895,8 +1895,7 @@ del todo (falta el modelo de integración de M pulsos sobre el ruido de fase, ve
 
 ### P-15 · El mensaje `config` del contrato solo tiene 1 PRF/ancho de pulso, no 2 lotes { #p-15 }
 
-**Estado:** abierto, mitad resuelto 22-sep-2026 · **Dueño:** siguiente revisión del contrato
-(Z4) · **Bloquea:** cerrar Z2 y Z4 de verdad — ya no bloquea nada del lado del registro.
+**Estado:** CERRADO 1-oct-2026 (Z4.4) · **Dueño:** cerrado · **Bloquea:** nada.
 
 **Actualización 22-sep-2026:** el mapa de registros AXI-Lite de Z2 (v3 de
 `config/registers.toml`, ver [`registros.md#z2-en-v3`](../implementacion/registros.md#z2-en-v3))
@@ -1930,3 +1929,27 @@ el registro real que le habría dado la forma concreta; ya existe, ver la actual
 [Z4](../implementacion/fases.md#z4) gana qué lote produjo ese rayo) y sube `version_minor`. Hasta
 entonces, cualquier prueba de aceptación de D-09/D-13 contra el contrato real (no contra el modelo
 dorado) queda bloqueada por este hueco.
+
+**Cierre 1-oct-2026, contrato v0.6 (Z4.4).** Las dos mitades de la condición de cierre, hechas:
+
+- `config` pasa a declarar los dos lotes, con la forma concreta que ya tenía `config/registers.toml`
+  v3 y la estructura `DrxTimingConfig` del firmware: `prf_div_low`/`prf_div_high`,
+  `pulse_width_idx_low`/`pulse_width_idx_high`, `n_pulses_low`/`n_pulses_high` y
+  `range_bins_low`/`range_bins_high` (D-15). El mensaje crece de 48 a 60 B. Se rompe el mensaje
+  anterior en vez de añadir uno nuevo al lado: `config` está definido como atómico, y mantener una
+  variante de un solo lote modelaría un modo de operación que D-13 descartó.
+- El metadato por rayo gana qué lote lo produjo: bandera `batch_high` (valor 32) en el enum
+  `ray_flag`. Es bandera y no campo porque `prf_div`, `bins` y `pulse_width_idx` de la cabecera de
+  `ray` ya llevan los valores vigentes de ese rayo; el bit sólo dice de cuál de los dos lotes
+  salieron, que es lo que hace falta para agrupar rayos por lote sin reconstruir el radial.
+
+`version_minor` sube de 5 a 6 y los tests se actualizaron, como exige [D-08](decisiones.md#d-08).
+El test que faltaba poder escribir —una configuración de 2 lotes que atraviesa el cable entera y
+llega a la acción con los dos lotes distinguidos— es
+`test_los_dos_lotes_de_prf_llegan_enteros_a_la_accion` en `fw/tests/test_control.py`.
+
+Este cambio se hizo **sin esperar a una revisión conjunta con el equipo DSP**, bajo la autorización
+explícita que vladimir dio el 26-sep-2026 para el contrato durante Z4 («trabajá con libertad
+respecto al contrato, luego actualizamos a DSP»), mismo patrón que el puente PS7 del 20-sep. Queda
+como aviso pendiente de dar: cualquier implementación que el equipo DSP hubiera empezado contra
+v0.5 tiene que migrar.

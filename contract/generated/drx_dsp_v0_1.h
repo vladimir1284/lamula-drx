@@ -1,7 +1,7 @@
 /* GENERADO por tools/gen_contract.py a partir de
  * contract/schema/drx_dsp_v0_1.toml. NO EDITAR A MANO.
  *
- * Contrato DRx↔DSP v0.5 — lado DRx.
+ * Contrato DRx↔DSP v0.6 — lado DRx.
  *
  * Little-endian, empaquetado, sin relleno implícito. Los _Static_assert
  * de abajo fallan la compilación si el compilador añade relleno: es el
@@ -15,7 +15,7 @@
 
 #define DRX_DSP_MAGIC 0x4C4D4452u
 #define DRX_DSP_VERSION_MAJOR 0
-#define DRX_DSP_VERSION_MINOR 5
+#define DRX_DSP_VERSION_MINOR 6
 
 /* Cabecera común a todo mensaje. */
 typedef struct __attribute__((packed)) {
@@ -24,7 +24,7 @@ typedef struct __attribute__((packed)) {
   uint8_t version_minor;  /* Compatible hacia atrás dentro del mismo major. */
   uint8_t msg_type;  /* Ver la tabla de tipos de mensaje. */
   uint8_t flags;  /* Reservado en v0.1; tiene que valer 0. */
-  uint32_t payload_len;  /* Bytes que siguen a ESTA cabecera de 12 B: la cabecera del mensaje más su carga útil variable si la tiene. Un lector de tramas hace por tanto: leer 12 B, leer payload_len B, y ya tiene el mensaje entero sin conocer su tipo. Un ray de 1844 bins x 4 canales vale 36 + 1844x4x4 = 29540; un mensaje sin carga variable vale el tamaño de su struct (status 28, config 48, config_ack 8, afc 16, test_stimulus_select 8), nunca 0. */
+  uint32_t payload_len;  /* Bytes que siguen a ESTA cabecera de 12 B: la cabecera del mensaje más su carga útil variable si la tiene. Un lector de tramas hace por tanto: leer 12 B, leer payload_len B, y ya tiene el mensaje entero sin conocer su tipo. Un ray de 1844 bins x 4 canales vale 36 + 1844x4x4 = 29540; un mensaje sin carga variable vale el tamaño de su struct (status 28, config 60, config_ack 8, afc 16, test_stimulus_select 8), nunca 0. */
 } drx_dsp_header_t;
 _Static_assert(sizeof(drx_dsp_header_t) == 12, "layout de drx_dsp_header_t");
 
@@ -72,17 +72,33 @@ typedef struct __attribute__((packed)) {
 _Static_assert(sizeof(drx_dsp_status_t) == 28, "layout de drx_dsp_status_t");
 
 /* Configuración completa. Se aplica de forma atómica: o entra entera o se
- * rechaza entera y el estado anterior se preserva. */
+ * rechaza entera y el estado anterior se preserva.
+ * 
+ * Lleva DOS lotes de PRF/ancho de pulso por radial, `low` y `high`, porque eso es
+ * lo que secuencia el motor de timing (D-13, Batch mode de NEXRAD) y lo que el
+ * mapa de registros AXI-Lite expone desde v3. Hasta v0.5 este mensaje declaraba un
+ * único par, que modelaba un supuesto que D-13 descartó: con aquel esquema el DSP
+ * no tenía dónde pedir el segundo lote. Ver P-15.
+ * 
+ * Los dos lotes se validan por separado contra D-09 y la configuración entra o se
+ * rechaza como un todo: un `config` cuyo lote `high` sea inválido NO deja aplicado
+ * el lote `low`. */
 typedef struct __attribute__((packed)) {
   uint32_t seq;  /* Se devuelve tal cual en el config_ack. */
-  uint32_t prf_div;  /* Divisor de PRF. PRF = FS_HZ/prf_div. */
-  uint16_t range_bins;  /* Bins de rango pedidos. */
-  uint8_t pulse_width_idx;  /* Índice en la tabla de anchos de pulso. */
+  uint32_t prf_div_low;  /* Divisor de PRF del lote bajo. PRF = FS_HZ/prf_div_low. */
+  uint32_t prf_div_high;  /* Divisor de PRF del lote alto. PRF = FS_HZ/prf_div_high. */
+  uint16_t range_bins_low;  /* Bins de rango del lote bajo (D-15). */
+  uint16_t range_bins_high;  /* Bins de rango del lote alto (D-15). */
+  uint16_t n_pulses_low;  /* Pulsos del lote bajo dentro del radial. */
+  uint16_t n_pulses_high;  /* Pulsos del lote alto dentro del radial. */
+  uint8_t pulse_width_idx_low;  /* Índice en la tabla de anchos de pulso, lote bajo. */
+  uint8_t pulse_width_idx_high;  /* Índice en la tabla de anchos de pulso, lote alto. */
   uint8_t pulse_mode;  /* Modo de pulso. */
   uint8_t cell_mode;  /* 0 = celda fina, 1 = celda gruesa. */
   uint8_t channel_mask;  /* Canales a capturar. */
   uint8_t scan_mode;  /* 0 = split cut, 1 = batch cut, 2 = doppler cut. */
   uint8_t pad0;  /* Relleno explícito; vale 0. */
+  uint8_t pad1;  /* Relleno explícito; vale 0. */
   uint32_t trigger_delay_0;  /* Retardo del trigger 0, en ciclos de fs. */
   uint32_t trigger_delay_1;  /* Retardo del trigger 1, en ciclos de fs. */
   uint32_t trigger_delay_2;  /* Retardo del trigger 2, en ciclos de fs. */
@@ -92,7 +108,7 @@ typedef struct __attribute__((packed)) {
   uint32_t trigger_width_2;  /* Ancho del trigger 2, en ciclos de fs. */
   uint32_t trigger_width_3;  /* Ancho del trigger 3, en ciclos de fs. */
 } drx_dsp_config_t;
-_Static_assert(sizeof(drx_dsp_config_t) == 48, "layout de drx_dsp_config_t");
+_Static_assert(sizeof(drx_dsp_config_t) == 60, "layout de drx_dsp_config_t");
 
 /* Respuesta a un config. `error` distinto de 0 significa que NO se aplicó nada. */
 typedef struct __attribute__((packed)) {
@@ -168,6 +184,7 @@ typedef enum {
   DRX_DSP_RAY_FLAG_TRUNCATED = 4,  /* El rayo salió corto. */
   DRX_DSP_RAY_FLAG_FIRST_AFTER_CONFIG = 8,  /* Primer rayo con la configuración nueva. */
   DRX_DSP_RAY_FLAG_TX_POL_V = 16,  /* Este pulso se transmitió en V; a cero, se transmitió en H. Sólo tiene sentido con polarización alternante H/V; en canal único o simultánea (STAR) el bit no se usa y vale 0. */
+  DRX_DSP_RAY_FLAG_BATCH_HIGH = 32,  /* Este rayo lo produjo el lote ALTO del radial; a cero, el lote bajo (D-13). Es una bandera y no un campo porque prf_div, bins y pulse_width_idx de la cabecera ya llevan los valores VIGENTES para ese rayo: el bit sólo dice de cuál de los dos lotes salieron, que es lo que hace falta para agrupar rayos por lote sin reconstruir el radial. */
 } drx_dsp_ray_flag_t;
 
 /* Catálogo de fallos del plan de testing. */

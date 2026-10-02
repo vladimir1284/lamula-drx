@@ -24,6 +24,14 @@ ifeq ($(PLATFORM),zu9)
 CFLAGS += -DDRX_PLATFORM_ZU9
 endif
 
+# Cabecera generada del contrato. Va como prerrequisito EXPLÍCITO de los tres
+# binarios porque este Makefile no usa `-MMD`: sin ella, regenerar el contrato
+# (`make gen`) dejaba los objetos viejos en su sitio y los tests de host se
+# comparaban contra un binario compilado con la versión anterior del esquema.
+# En CI no se notaba —el árbol de build nace vacío en cada corrida— así que el
+# síntoma sólo aparecía en local, y parecía un fallo del framer.
+CONTRACT_H := ../contract/generated/drx_dsp_v0_1.h
+
 SELFTEST := $(BUILD_DIR)/drx_params_selftest
 
 # El framer del contrato (Z4.3) se compila también para el host: es el MISMO
@@ -43,15 +51,15 @@ all: check
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(SELFTEST): src/drx_params_selftest.c include/drx_params.h | $(BUILD_DIR)
+$(SELFTEST): src/drx_params_selftest.c include/drx_params.h $(CONTRACT_H) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $< -o $@
 
 $(CONTRACT_IO): src/drx_contract_io_selftest.c src/app/drx_contract_io.c \
-                include/drx_contract_io.h | $(BUILD_DIR)
+                include/drx_contract_io.h $(CONTRACT_H) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) src/drx_contract_io_selftest.c src/app/drx_contract_io.c -o $@
 
 $(CONTROL): src/drx_control_selftest.c src/app/drx_control.c src/app/drx_contract_io.c \
-            include/drx_control.h include/drx_contract_io.h | $(BUILD_DIR)
+            include/drx_control.h include/drx_contract_io.h $(CONTRACT_H) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) src/drx_control_selftest.c src/app/drx_control.c \
 	      src/app/drx_contract_io.c -o $@
 

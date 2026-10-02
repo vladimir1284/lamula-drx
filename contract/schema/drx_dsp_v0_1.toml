@@ -21,7 +21,7 @@
 [meta]
 name = "drx_dsp"
 version_major = 0
-version_minor = 5
+version_minor = 6
 magic = 0x4C4D4452  # "LMDR" en ASCII, little-endian
 endianness = "little"
 
@@ -56,7 +56,7 @@ doc = "Reservado en v0.1; tiene que valer 0."
 [[header.fields]]
 name = "payload_len"
 type = "u32"
-doc = "Bytes que siguen a ESTA cabecera de 12 B: la cabecera del mensaje más su carga útil variable si la tiene. Un lector de tramas hace por tanto: leer 12 B, leer payload_len B, y ya tiene el mensaje entero sin conocer su tipo. Un ray de 1844 bins x 4 canales vale 36 + 1844x4x4 = 29540; un mensaje sin carga variable vale el tamaño de su struct (status 28, config 48, config_ack 8, afc 16, test_stimulus_select 8), nunca 0."
+doc = "Bytes que siguen a ESTA cabecera de 12 B: la cabecera del mensaje más su carga útil variable si la tiene. Un lector de tramas hace por tanto: leer 12 B, leer payload_len B, y ya tiene el mensaje entero sin conocer su tipo. Un ray de 1844 bins x 4 canales vale 36 + 1844x4x4 = 29540; un mensaje sin carga variable vale el tamaño de su struct (status 28, config 60, config_ack 8, afc 16, test_stimulus_select 8), nunca 0."
 
 # ---------------------------------------------------------------------------
 # Mensajes. `dir` es el sentido: "up" del DRx al DSP, "down" del DSP al DRx.
@@ -108,18 +108,34 @@ name = "config"
 type_id = 3
 dir = "down"
 doc = """Configuración completa. Se aplica de forma atómica: o entra entera o se
-rechaza entera y el estado anterior se preserva."""
+rechaza entera y el estado anterior se preserva.
+
+Lleva DOS lotes de PRF/ancho de pulso por radial, `low` y `high`, porque eso es
+lo que secuencia el motor de timing (D-13, Batch mode de NEXRAD) y lo que el
+mapa de registros AXI-Lite expone desde v3. Hasta v0.5 este mensaje declaraba un
+único par, que modelaba un supuesto que D-13 descartó: con aquel esquema el DSP
+no tenía dónde pedir el segundo lote. Ver P-15.
+
+Los dos lotes se validan por separado contra D-09 y la configuración entra o se
+rechaza como un todo: un `config` cuyo lote `high` sea inválido NO deja aplicado
+el lote `low`."""
 
 fields = [
   { name = "seq", type = "u32", doc = "Se devuelve tal cual en el config_ack." },
-  { name = "prf_div", type = "u32", doc = "Divisor de PRF. PRF = FS_HZ/prf_div." },
-  { name = "range_bins", type = "u16", doc = "Bins de rango pedidos." },
-  { name = "pulse_width_idx", type = "u8", doc = "Índice en la tabla de anchos de pulso." },
+  { name = "prf_div_low", type = "u32", doc = "Divisor de PRF del lote bajo. PRF = FS_HZ/prf_div_low." },
+  { name = "prf_div_high", type = "u32", doc = "Divisor de PRF del lote alto. PRF = FS_HZ/prf_div_high." },
+  { name = "range_bins_low", type = "u16", doc = "Bins de rango del lote bajo (D-15)." },
+  { name = "range_bins_high", type = "u16", doc = "Bins de rango del lote alto (D-15)." },
+  { name = "n_pulses_low", type = "u16", doc = "Pulsos del lote bajo dentro del radial." },
+  { name = "n_pulses_high", type = "u16", doc = "Pulsos del lote alto dentro del radial." },
+  { name = "pulse_width_idx_low", type = "u8", doc = "Índice en la tabla de anchos de pulso, lote bajo." },
+  { name = "pulse_width_idx_high", type = "u8", doc = "Índice en la tabla de anchos de pulso, lote alto." },
   { name = "pulse_mode", type = "u8", doc = "Modo de pulso." },
   { name = "cell_mode", type = "u8", doc = "0 = celda fina, 1 = celda gruesa." },
   { name = "channel_mask", type = "u8", doc = "Canales a capturar." },
   { name = "scan_mode", type = "u8", doc = "0 = split cut, 1 = batch cut, 2 = doppler cut." },
   { name = "pad0", type = "u8", doc = "Relleno explícito; vale 0." },
+  { name = "pad1", type = "u8", doc = "Relleno explícito; vale 0." },
   { name = "trigger_delay_0", type = "u32", doc = "Retardo del trigger 0, en ciclos de fs." },
   { name = "trigger_delay_1", type = "u32", doc = "Retardo del trigger 1, en ciclos de fs." },
   { name = "trigger_delay_2", type = "u32", doc = "Retardo del trigger 2, en ciclos de fs." },
@@ -229,6 +245,7 @@ values = [
   { name = "truncated", value = 4, doc = "El rayo salió corto." },
   { name = "first_after_config", value = 8, doc = "Primer rayo con la configuración nueva." },
   { name = "tx_pol_v", value = 16, doc = "Este pulso se transmitió en V; a cero, se transmitió en H. Sólo tiene sentido con polarización alternante H/V; en canal único o simultánea (STAR) el bit no se usa y vale 0." },
+  { name = "batch_high", value = 32, doc = "Este rayo lo produjo el lote ALTO del radial; a cero, el lote bajo (D-13). Es una bandera y no un campo porque prf_div, bins y pulse_width_idx de la cabecera ya llevan los valores VIGENTES para ese rayo: el bit sólo dice de cuál de los dos lotes salieron, que es lo que hace falta para agrupar rayos por lote sin reconstruir el radial." },
 ]
 
 [[enum]]

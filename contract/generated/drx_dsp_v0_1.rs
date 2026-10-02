@@ -1,7 +1,7 @@
 // GENERADO por tools/gen_contract.py a partir de
 // contract/schema/drx_dsp_v0_1.toml. NO EDITAR A MANO.
 //
-// Contrato DRx↔DSP v0.5 — lado DSP.
+// Contrato DRx↔DSP v0.6 — lado DSP.
 //
 // Little-endian, empaquetado. Los `assert!` de tamaño viven en los tests
 // del proyecto DSP; aquí van como constantes para que se puedan comprobar.
@@ -10,7 +10,7 @@
 
 pub const MAGIC: u32 = 0x4C4D4452;
 pub const VERSION_MAJOR: u8 = 0;
-pub const VERSION_MINOR: u8 = 5;
+pub const VERSION_MINOR: u8 = 6;
 
 /// Cabecera común a todo mensaje.
 #[repr(C, packed)]
@@ -26,7 +26,7 @@ pub struct Header {
     pub msg_type: u8,
     /// Reservado en v0.1; tiene que valer 0.
     pub flags: u8,
-    /// Bytes que siguen a ESTA cabecera de 12 B: la cabecera del mensaje más su carga útil variable si la tiene. Un lector de tramas hace por tanto: leer 12 B, leer payload_len B, y ya tiene el mensaje entero sin conocer su tipo. Un ray de 1844 bins x 4 canales vale 36 + 1844x4x4 = 29540; un mensaje sin carga variable vale el tamaño de su struct (status 28, config 48, config_ack 8, afc 16, test_stimulus_select 8), nunca 0.
+    /// Bytes que siguen a ESTA cabecera de 12 B: la cabecera del mensaje más su carga útil variable si la tiene. Un lector de tramas hace por tanto: leer 12 B, leer payload_len B, y ya tiene el mensaje entero sin conocer su tipo. Un ray de 1844 bins x 4 canales vale 36 + 1844x4x4 = 29540; un mensaje sin carga variable vale el tamaño de su struct (status 28, config 60, config_ack 8, afc 16, test_stimulus_select 8), nunca 0.
     pub payload_len: u32,
 }
 pub const HEADER_SIZE: usize = 12;
@@ -110,17 +110,37 @@ pub const STATUS_SIZE: usize = 28;
 
 /// Configuración completa. Se aplica de forma atómica: o entra entera o se
 /// rechaza entera y el estado anterior se preserva.
+/// 
+/// Lleva DOS lotes de PRF/ancho de pulso por radial, `low` y `high`, porque eso es
+/// lo que secuencia el motor de timing (D-13, Batch mode de NEXRAD) y lo que el
+/// mapa de registros AXI-Lite expone desde v3. Hasta v0.5 este mensaje declaraba un
+/// único par, que modelaba un supuesto que D-13 descartó: con aquel esquema el DSP
+/// no tenía dónde pedir el segundo lote. Ver P-15.
+/// 
+/// Los dos lotes se validan por separado contra D-09 y la configuración entra o se
+/// rechaza como un todo: un `config` cuyo lote `high` sea inválido NO deja aplicado
+/// el lote `low`.
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Config {
     /// Se devuelve tal cual en el config_ack.
     pub seq: u32,
-    /// Divisor de PRF. PRF = FS_HZ/prf_div.
-    pub prf_div: u32,
-    /// Bins de rango pedidos.
-    pub range_bins: u16,
-    /// Índice en la tabla de anchos de pulso.
-    pub pulse_width_idx: u8,
+    /// Divisor de PRF del lote bajo. PRF = FS_HZ/prf_div_low.
+    pub prf_div_low: u32,
+    /// Divisor de PRF del lote alto. PRF = FS_HZ/prf_div_high.
+    pub prf_div_high: u32,
+    /// Bins de rango del lote bajo (D-15).
+    pub range_bins_low: u16,
+    /// Bins de rango del lote alto (D-15).
+    pub range_bins_high: u16,
+    /// Pulsos del lote bajo dentro del radial.
+    pub n_pulses_low: u16,
+    /// Pulsos del lote alto dentro del radial.
+    pub n_pulses_high: u16,
+    /// Índice en la tabla de anchos de pulso, lote bajo.
+    pub pulse_width_idx_low: u8,
+    /// Índice en la tabla de anchos de pulso, lote alto.
+    pub pulse_width_idx_high: u8,
     /// Modo de pulso.
     pub pulse_mode: u8,
     /// 0 = celda fina, 1 = celda gruesa.
@@ -131,6 +151,8 @@ pub struct Config {
     pub scan_mode: u8,
     /// Relleno explícito; vale 0.
     pub pad0: u8,
+    /// Relleno explícito; vale 0.
+    pub pad1: u8,
     /// Retardo del trigger 0, en ciclos de fs.
     pub trigger_delay_0: u32,
     /// Retardo del trigger 1, en ciclos de fs.
@@ -148,7 +170,7 @@ pub struct Config {
     /// Ancho del trigger 3, en ciclos de fs.
     pub trigger_width_3: u32,
 }
-pub const CONFIG_SIZE: usize = 48;
+pub const CONFIG_SIZE: usize = 60;
 
 /// Respuesta a un config. `error` distinto de 0 significa que NO se aplicó nada.
 #[repr(C, packed)]
@@ -263,6 +285,8 @@ pub mod ray_flag {
     pub const FIRST_AFTER_CONFIG: u8 = 8;
     /// Este pulso se transmitió en V; a cero, se transmitió en H. Sólo tiene sentido con polarización alternante H/V; en canal único o simultánea (STAR) el bit no se usa y vale 0.
     pub const TX_POL_V: u8 = 16;
+    /// Este rayo lo produjo el lote ALTO del radial; a cero, el lote bajo (D-13). Es una bandera y no un campo porque prf_div, bins y pulse_width_idx de la cabecera ya llevan los valores VIGENTES para ese rayo: el bit sólo dice de cuál de los dos lotes salieron, que es lo que hace falta para agrupar rayos por lote sin reconstruir el radial.
+    pub const BATCH_HIGH: u8 = 32;
 }
 
 /// Catálogo de fallos del plan de testing.

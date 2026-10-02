@@ -140,10 +140,11 @@ ningún otro sitio las fija:
 
 Lo que v3 explícitamente **no** hace, aunque su condición de cierre lo mencione: tocar
 `contract/schema/drx_dsp_v0_1.toml`. [P-15](../alcance/pendientes.md#p-15) fijaba "cuando se diseñe
-el mapa de registros de Z2" como su condición de cierre, y ese mapa ya existe — pero P-15 sigue
+el mapa de registros de Z2" como su condición de cierre, y ese mapa ya existe — pero P-15 seguía
 **abierto** del lado del contrato: D-08 dice que cambiarlo exige subir `version_minor` y actualizar
 tests, y eso mismo documento lo marca como alcance de Z4, no de esta sesión. Tocar el contrato
 congelado sin discutirlo antes rompería esa regla aunque el registro que lo motiva ya exista.
+(P-15 cerró el 1-oct-2026 con el contrato v0.6, en Z4.4 — ver `fases.md#z4`.)
 
 ### Z2 en v4 { #z2-en-v4 }
 

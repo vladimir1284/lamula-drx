@@ -186,7 +186,7 @@ def test_los_tipos_de_mensaje_son_unicos():
 # carga variable», estos números pasan a 0 y el test lo dice en voz alta.
 PAYLOAD_LEN_SIN_CARGA_VARIABLE = {
     "status": 28,
-    "config": 48,
+    "config": 60,
     "config_ack": 8,
     "afc": 16,
     "test_stimulus_select": 8,

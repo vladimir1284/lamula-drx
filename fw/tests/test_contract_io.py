@@ -174,7 +174,7 @@ def test_el_emisor_se_niega_a_emitir_tramas_mal_formadas(encoded):
 
 
 def _tres_mensajes_down(module) -> bytes:
-    config = module.Config(seq=1, prf_div=767198, range_bins=3687, cell_mode=0)
+    config = module.Config(seq=1, prf_div_low=767198, range_bins_low=3687, cell_mode=0)
     afc = module.Afc(nco_phase_inc=0x0102030405060708, apply_at_seq=2, pad0=0)
     stim = module.TestStimulusSelect(seq=3, vector_id=5, pad0=0, repeat=0)
     return (
@@ -250,7 +250,7 @@ def test_cada_fallo_de_validacion_para_el_flujo_con_su_estado(
     error inventado.
     """
     module = _py_module()
-    config = module.Config(seq=1, prf_div=767198, range_bins=3687)
+    config = module.Config(seq=1, prf_div_low=767198, range_bins_low=3687)
     wire = bytearray(_frame(module, module.MsgType.CONFIG, config.pack()))
 
     if mutacion == "magic":
@@ -283,7 +283,7 @@ def test_el_parser_no_sigue_leyendo_tras_una_cabecera_invalida(contract_io):
     inventado al plano de control.
     """
     module = _py_module()
-    config = module.Config(seq=1, prf_div=767198, range_bins=3687)
+    config = module.Config(seq=1, prf_div_low=767198, range_bins_low=3687)
     mala = bytearray(_frame(module, module.MsgType.CONFIG, config.pack()))
     mala[0] ^= 0xFF
     buena = _frame(module, module.MsgType.CONFIG, config.pack())

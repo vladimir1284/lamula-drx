@@ -150,7 +150,7 @@ def test_una_funcion_que_no_existe_se_contesta_unimplemented(control_bin):
     aplicarlos es Z4.4 y Z4.5.
     """
     module = _py_module()
-    config = module.Config(seq=42, prf_div=767198, range_bins=3687)
+    config = module.Config(seq=42, prf_div_low=767198, range_bins_low=3687)
     salida = _run(
         control_bin,
         _frame(module, module.MsgType.CONFIG, config.pack()),
@@ -184,7 +184,7 @@ def test_una_rafaga_mezclada_se_despacha_en_orden(control_bin):
     module = _py_module()
     stim = module.TestStimulusSelect(seq=1, vector_id=0, pad0=0, repeat=0)
     afc = module.Afc(nco_phase_inc=1, apply_at_seq=2, pad0=0)
-    config = module.Config(seq=3, prf_div=208333, range_bins=1000)
+    config = module.Config(seq=3, prf_div_low=208333, range_bins_low=1000)
 
     wire = (
         _frame(module, module.MsgType.TEST_STIMULUS_SELECT, stim.pack())
@@ -202,3 +202,43 @@ def test_una_rafaga_mezclada_se_despacha_en_orden(control_bin):
     acks = _acks(module, salida["respuestas"])
     assert [a.seq for a in acks] == [1, 3], "`afc` no se contesta; los otros dos sí"
     assert salida["send_fails"] == 0
+
+
+def test_los_dos_lotes_de_prf_llegan_enteros_a_la_accion(control_bin):
+    """P-15: el `config` del contrato lleva DOS lotes, y los dos tienen que llegar.
+
+    Es el test que faltaba poder escribir. Hasta v0.5 el mensaje declaraba un
+    único `prf_div`/`range_bins`, así que una configuración de 2 lotes —la que
+    D-13 fija como el modo de operación real— no cabía en el cable y ninguna
+    prueba de aceptación de D-09/D-13 contra el contrato era posible.
+
+    Los valores son los del radial que el firmware ya escribe en silicio: lote
+    bajo a PRF baja con el rango completo, lote alto a PRF alta con menos bins.
+    Si el despacho confundiera los dos lotes, el radial saldría con el orden
+    invertido y la firma Doppler del lote alto se mezclaría con la del bajo.
+    """
+    module = _py_module()
+    config = module.Config(
+        seq=11,
+        prf_div_low=767198,
+        prf_div_high=208333,
+        range_bins_low=3687,
+        range_bins_high=1000,
+        n_pulses_low=6,
+        n_pulses_high=41,
+    )
+    salida = _run(control_bin, _frame(module, module.MsgType.CONFIG, config.pack()))
+
+    assert salida["acciones"] == [
+        {
+            "nombre": "apply_config",
+            "seq": 11,
+            "prf_div_low": 767198,
+            "prf_div_high": 208333,
+            "range_bins_low": 3687,
+            "range_bins_high": 1000,
+        }
+    ]
+    (ack,) = _acks(module, salida["respuestas"])
+    assert ack.seq == 11
+    assert ack.error == module.Error.OK
