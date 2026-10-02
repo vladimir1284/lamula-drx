@@ -150,7 +150,19 @@ module drx_top
     output logic                 m_ray_valid,
     input  logic                 m_ray_ready,
     output logic [2*IQ_BITS-1:0] m_ray_data,
-    output logic                 m_ray_last
+    output logic                 m_ray_last,
+
+    // Z4.3: AXI4-Stream de ENTRADA del modo Throttled(DDR) de `vector_source`
+    // -- 16 bits, una muestra por beat, canales en orden ascendente (ver la
+    // cabecera de `vector_source.sv`). Quien instancie este top lo trae de un
+    // AXI DMA MM2S real (`rtl/drx_zynq_top.sv`) o lo ata inerte
+    // (`rtl/drx_top_tieoff.sv`). Con CTRL bit 1 en 0 -- el valor de reset --
+    // este puerto no se mira, asi que el flujo sin PS7 sigue funcionando
+    // exactamente igual que antes de Z4.3.
+    input  logic                          s_vec_valid,
+    output logic                          s_vec_ready,
+    input  logic signed [SAMPLE_BITS-1:0] s_vec_data,
+    input  logic                          s_vec_last
 );
 
   logic                      gate_valid  [N_CH];
@@ -171,6 +183,7 @@ module drx_top
   );
 
   logic mode_coarse;
+  logic vector_source_ddr;
 
   // `drx_axil_regs` recibe/devuelve el overrun por canal como vector
   // empaquetado (STATUS es literalmente eso), mientras que
@@ -257,6 +270,7 @@ module drx_top
       .s_axi_rready (s_axi_rready),
 
       .mode_coarse(mode_coarse),
+      .vector_source_ddr(vector_source_ddr),
 
       .overrun_in   (gate_overrun_packed),
       .overrun_clear(gate_clear_packed),
@@ -358,6 +372,14 @@ module drx_top
   ) u_vector_source (
       .clk  (clk),
       .rst_n(rst_n),
+
+      .ddr_mode(vector_source_ddr),
+
+      .s_axis_valid(s_vec_valid),
+      .s_axis_ready(s_vec_ready),
+      .s_axis_data (s_vec_data),
+      .s_axis_last (s_vec_last),
+
       .ready(vs_ready),
       .valid(vs_valid),
       .data (vs_data),

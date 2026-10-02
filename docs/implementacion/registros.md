@@ -327,6 +327,34 @@ escritura tiene efecto sobre él). `make check` en verde. No se corrió P&R con 
 argumento que v5/v6: lógica de bajo costo (un sumador de 32 bits) dentro de un módulo ya cerrado, sin
 tocar ningún camino crítico.
 
+### Z4 en v8 { #z4-en-v8 }
+
+**1-oct-2026, Z4.3.** `CTRL` bit 1 pasa a ser `vector_source_ddr`, el selector entre los dos modos de
+fuente de muestras de [la tabla de `fuente-de-muestras.md`](../plataforma/fuente-de-muestras.md):
+BRAM-loop (0, valor de reset) y Throttled(DDR) (1).
+
+- **Un bit que v1–v7 declaraban "reservado, lee 0".** Por eso sube la versión: redefinir un bit que
+  el mapa prometía siempre a cero es un cambio de semántica visible desde firmware, no solo de RTL
+  interno. Mismo criterio exacto que v4, que hizo lo propio con dos bits de TIMING_STATUS.
+- **Sin registro nuevo.** Es un único bit de modo, del mismo tipo que `mode_coarse` y con la misma
+  regla de uso: solo es seguro cambiarlo con la cadena parada, porque `vector_source` no vacía el
+  conjunto de N_CH muestras a medio llenar al conmutar.
+- **Qué desbloquea.** Hasta v8 el vector que reproducía la PL quedaba fijado en tiempo de SÍNTESIS
+  (`$readmemh` sobre la BRAM, `tools/gen_vector_source_init.py`), así que barrer el catálogo de ocho
+  casos de `tools/gen_l1_vectors.py` costaba ocho corridas de Vivado. Con este bit más el canal MM2S
+  del AXI DMA, el vector se elige en tiempo de ejecución con el mensaje `test_stimulus_select` del
+  contrato (v0.5) y cuesta un DMA.
+
+Verificación: `sim/tb/tb_drx_axil_regs.py` gana `test_ctrl_vector_source_ddr_rw`, que comprueba
+explícitamente que los bits 0 y 1 son **independientes** — los dos salen de la misma escritura a
+CTRL, así que un desplazamiento de un bit en el RTL dejaría a `mode_coarse` siguiendo al selector de
+fuente, y en placa eso se vería como "la decimación cambia sola al activar el modo DDR", un síntoma
+que no apunta a este registro. De paso, `REGS_VERSION` en ese testbench pasa a leerse de
+`config/registers.toml` en vez de estar clavado: los OFFSETS siguen siendo literales (si alguien
+mueve un registro, el test tiene que decirlo), pero la VERSIÓN es un contador cuyo valor fijo solo
+hacía que cada bump rompiera el test sin informar de nada. P&R re-corrido con el cambio completo de
+Z4.3 (DMA MM2S incluido): **WNS = 1,634 ns**, bajando desde 1,711 ns.
+
 ### Semántica del slave
 
 `drx_axil_regs.sv` es un slave AXI4-Lite mínimo a propósito: sin bursts (AXI-Lite no los tiene),

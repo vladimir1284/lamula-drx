@@ -15,6 +15,9 @@ la mayoría de las veces el valor YA bajado por esa misma aceptación, un
 desfase de un ciclo que hace parecer que el handshake nunca ocurrió.
 """
 
+import tomllib
+from pathlib import Path
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge
@@ -43,7 +46,15 @@ REG_GATE_TRUNCATED_ADDR = 0x50
 REG_TRIG_COUNT_ADDR = 0x54  # v7, Z4.1
 REG_RESERVED_ADDR = 0x58  # primera palabra sin implementar desde v7
 
-REGS_VERSION = 7
+#: Leída de config/registers.toml, no fijada aquí. Los OFFSETS de arriba sí son
+#: literales a propósito -- si alguien mueve un registro, este test tiene que
+#: decirlo en voz alta. La VERSIÓN es lo contrario: es un contador que sube con
+#: cada cambio del mapa, y clavarlo aquí solo haría que cada bump rompiera el
+#: test sin informar de nada. Lo que de verdad se quiere comprobar es que el RTL
+#: devuelve la versión que el esquema declara, y eso es esto.
+_SCHEMA = Path(__file__).resolve().parents[2] / "config" / "registers.toml"
+with _SCHEMA.open("rb") as _handle:
+    REGS_VERSION = tomllib.load(_handle)["schema_version"]
 
 
 async def _reset(dut) -> None:
@@ -131,7 +142,7 @@ async def test_version_de_solo_lectura(dut):
 
 @cocotb.test()
 async def test_ctrl_mode_coarse_rw(dut):
-    """CTRL bit 0 controla `mode_coarse`; bits altos son reservados (leen 0)."""
+    """CTRL bit 0 controla `mode_coarse`; bits 31:2 son reservados (leen 0)."""
     cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
     await _reset(dut)
 
@@ -140,10 +151,39 @@ async def test_ctrl_mode_coarse_rw(dut):
 
     await axil_write(dut, REG_CTRL_ADDR, 0xFFFF_FFFF)
     assert int(dut.mode_coarse.value) == 1, "mode_coarse no siguió a CTRL bit 0"
-    assert await axil_read(dut, REG_CTRL_ADDR) == 1, "los bits reservados de CTRL deben leer 0"
+    # 0b11: bits 0 y 1 implementados desde v8, el resto reservados y a 0.
+    assert await axil_read(dut, REG_CTRL_ADDR) == 0b11, (
+        "los bits reservados de CTRL deben leer 0"
+    )
 
     await axil_write(dut, REG_CTRL_ADDR, 0x0)
     assert int(dut.mode_coarse.value) == 0
+
+
+@cocotb.test()
+async def test_ctrl_vector_source_ddr_rw(dut):
+    """CTRL bit 1 (v8) controla `vector_source_ddr`, y es independiente del bit 0.
+
+    Que sean independientes no es obvio ni gratis: los dos salen de la MISMA
+    escritura a CTRL, así que un desplazamiento de un bit en el RTL dejaría a
+    `mode_coarse` siguiendo al selector de fuente. En placa eso se vería como
+    "la decimación cambia sola al activar el modo DDR", que es un síntoma que
+    no apunta a este registro.
+    """
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    assert int(dut.vector_source_ddr.value) == 0, "arranca en BRAM-loop"
+
+    await axil_write(dut, REG_CTRL_ADDR, 0b10)
+    assert int(dut.vector_source_ddr.value) == 1, "no siguió a CTRL bit 1"
+    assert int(dut.mode_coarse.value) == 0, "el bit 1 arrastró al bit 0"
+    assert await axil_read(dut, REG_CTRL_ADDR) == 0b10
+
+    await axil_write(dut, REG_CTRL_ADDR, 0b01)
+    assert int(dut.vector_source_ddr.value) == 0, "el bit 0 arrastró al bit 1"
+    assert int(dut.mode_coarse.value) == 1
+    assert await axil_read(dut, REG_CTRL_ADDR) == 0b01
 
 
 @cocotb.test()

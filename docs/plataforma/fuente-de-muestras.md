@@ -40,6 +40,26 @@ modos con compromisos distintos:
 BRAM disponible en el 7Z020: 4,9 Mb ≈ 613 KB. A 16 bits × 4 canales son unas **76 k
 muestras/canal**, es decir 766 µs de señal a 100 MSPS — suficiente para varias PRIs a PRF alta.
 
+!!! success "1-oct-2026: *Throttled* implementado y verificado en ZedBoard (Z4.3)"
+    `rtl/vector_source.sv` tiene desde hoy los dos modos: BRAM-loop, que es el que tenía, y
+    **Throttled(DDR)**, con las muestras llegando por AXI4-Stream desde el canal MM2S de un AXI DMA
+    alimentado por la DDR del PS. Se elige en tiempo de ejecución con `CTRL` bit 1 (mapa de
+    registros v8) y el vector concreto con el mensaje `test_stimulus_select` del contrato (v0.5).
+    **RT sigue sin implementar.**
+
+    Formato del stream: 16 bits, UNA muestra por beat, canales en orden ascendente y repitiendo.
+    Los N_CH canales avanzan en bloque —se juntan N_CH beats en un conjunto y los N_CH salidas se
+    presentan a la vez, y el conjunto no se retira hasta que todos los consumidores lo han tomado—,
+    que es más estricto de lo que exige AXI4-Stream y es justo el punto de este modo: dejar que un
+    canal se adelantara convertiría un desfase de muestra en un resultado distinto sin ningún error
+    visible.
+
+    Verificado en placa por JTAG: el DMA completa pasadas enteras con 0 errores, y eso **es** la
+    prueba de que los bytes entraron en la PL, porque el stream tiene backpressure y el único que
+    levanta `tready` es `vector_source` en este modo. Lo que ese ensayo **no** prueba es que el
+    dato llegue correcto hasta la salida del DDC: no hay camino de vuelta para leerlo hasta que
+    Z4.4 ensamble rayos. Ver `fases.md#z4`, entrada del 1-oct.
+
 **El modo *Throttled* produce salida bit a bit idéntica al modo RT; solo tarda más.** Es el modo de
 referencia para corrección, y por eso la limitación de ancho de banda de DDR no compromete la
 validación funcional: solo la fidelidad temporal, que se cubre con BRAM-loop.

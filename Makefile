@@ -10,7 +10,7 @@
 PY := .venv/bin/python
 RUFF := .venv/bin/ruff
 
-.PHONY: check gen figures l1-vectors vector-source-init lint lint-hdl lint-hdl-tb lint-hdl-tb-quad lint-hdl-tb-tri lint-hdl-tb-range-tri test sim clean venv
+.PHONY: check gen figures l1-vectors vector-source-init stimulus-catalog lint lint-hdl lint-hdl-tb lint-hdl-tb-quad lint-hdl-tb-tri lint-hdl-tb-range-tri test sim clean venv
 
 venv:
 	uv venv .venv
@@ -102,6 +102,12 @@ l1-vectors:
 # diferencia del lint de Verilator (no lo abre, ver make lint-hdl).
 vector-source-init:
 	$(PY) tools/gen_vector_source_init.py
+
+# Catálogo de estímulos para el firmware (Z4.3). Artefacto de build, como el
+# anterior: son los mismos ocho casos de tools/gen_l1_vectors.py, recortados al
+# largo del bucle y volcados a C. tools/build_vitis.sh lo invoca solo.
+stimulus-catalog:
+	$(PY) tools/gen_stimulus_catalog.py
 
 test:
 	$(PY) -m pytest -q

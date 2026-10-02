@@ -65,7 +65,16 @@
 # reset, no un diagnóstico sticky -- envuelve en 2^32 pulsos, muy por encima
 # de cualquier sesión real. `mode_coarse`/BINS_*/etc no cambian de semántica;
 # este registro es puramente aditivo.
-schema_version = 7
+# v8 (1-oct-2026, Z4.3) usa el bit 1 de CTRL, que v1..v7 documentaban como
+# reservado y "lee 0": `vector_source_ddr`, el selector entre los dos modos de
+# fuente de muestras de docs/plataforma/fuente-de-muestras.md -- BRAM-loop (0,
+# valor de reset, el de siempre) y Throttled(DDR) (1, muestras desde la DDR del
+# PS por AXI DMA MM2S). Mismo criterio de bump que v4: redefinir un bit que el
+# mapa declaraba como siempre 0 es un cambio de semantica visible desde
+# firmware, no solo de RTL interno. Sin registro nuevo porque no hace falta: es
+# un unico bit de modo, del mismo tipo que `mode_coarse` y con la misma regla
+# (solo seguro de cambiar con la cadena parada).
+schema_version = 8
 
 # Bytes direccionables: 2^addr_width = 128 B = 32 palabras de 32 bits. Las
 # primeras 22 palabras (0x00-0x54) están implementadas (Z1 + Z2 v3/v5/v6 +
@@ -83,7 +92,7 @@ doc = "Versión de ESTE mapa de registros (= schema_version de arriba). Permite 
 name = "ctrl"
 offset = 0x04
 access = "rw"
-doc = "Bit 0: mode_coarse (0 = fino, valor de reset; 1 = grueso), compartido por los N_CH canales de drx_ddc_quad_top (decimación), igual que ya lo era como localparam. Desde v5 (D-15) ya NO llega a drx_range_gate -- el conteo de bins de range-gate es BINS_LOW/BINS_HIGH, no una elección fino/grueso fija. Bits 31:1 reservados: leen 0, una escritura ahí no tiene efecto."
+doc = "Bit 0: mode_coarse (0 = fino, valor de reset; 1 = grueso), compartido por los N_CH canales de drx_ddc_quad_top (decimación), igual que ya lo era como localparam. Desde v5 (D-15) ya NO llega a drx_range_gate -- el conteo de bins de range-gate es BINS_LOW/BINS_HIGH, no una elección fino/grueso fija. Bit 1 (v8): vector_source_ddr -- 0 = BRAM-loop (valor de reset), el vector queda fijo en el bitstream; 1 = Throttled(DDR), las muestras llegan por AXI4-Stream desde un AXI DMA MM2S alimentado por la DDR del PS, y el vector se elige en tiempo de ejecución (mensaje test_stimulus_select del contrato v0.5). Solo es seguro cambiarlo con la cadena parada: vector_source no vacía el conjunto a medio llenar al conmutar. Bits 31:2 reservados: leen 0, una escritura ahí no tiene efecto."
 
 [[register]]
 name = "status"

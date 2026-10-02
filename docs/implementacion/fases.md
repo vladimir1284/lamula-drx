@@ -1380,6 +1380,121 @@ Trabajo:
       contrato en C, `vector_source` con modo Throttled(DDR) alimentado por DMA, AXI DMA MM2S y el
       mensaje `test_stimulus_select`.
 
+!!! success "1-oct-2026 (más tarde): Z4.3 — contrato v0.5, framer en C, `vector_source` por DMA y el catálogo de estímulos elegible en caliente"
+    Z4.3 tal como lo fija el orden congelado el 26-sep: framer/parser real del contrato en C,
+    `vector_source` con modo Throttled(DDR) alimentado por DMA, AXI DMA MM2S, y el mensaje
+    `test_stimulus_select`. Entregado en cinco pasos, cada uno cerrando algo probable antes del
+    siguiente.
+
+    **a — Contrato v0.5.** Mensaje nuevo `test_stimulus_select` (`down`, `type_id` 6, 8 B: `seq`,
+    `vector_id`, relleno, `repeat`; 0 = bucle indefinido), enumeración `stimulus_vector` con el
+    catálogo v1 —los ocho casos de `tools/gen_l1_vectors.py`, en ese orden— y dos códigos de error
+    nuevos: `vector_unknown` (10) y `unimplemented` (11). El segundo no estaba previsto y hace
+    falta de verdad: un receptor que CONOCE un `msg_type` pero todavía no lo aplica no puede
+    contestar `unknown_message` sin mentir, porque eso le dice al otro lado que hablan versiones
+    distintas. Las tres implementaciones regeneradas desde el esquema; `contract/tests/` sube a 10
+    casos con dos nuevos que fijan el acoplamiento que el mensaje introduce — el catálogo del
+    contrato y los casos del generador tienen que listar lo mismo **y en el mismo orden**, porque
+    `vector_id` es el índice y reordenar el generador renombraría en silencio lo que ya está en el
+    cable.
+
+    **b — Framer y parser en C** (`fw/src/app/drx_contract_io.c`, `fw/include/drx_contract_io.h`).
+    No existía nada: lo generado eran structs y `_Static_assert` de layout, y lo que viaja por el
+    cable es una trama. El parser es incremental y con estado porque TCP parte los mensajes donde
+    quiere. Dos decisiones que vale la pena no descubrir dos veces:
+
+    - **`DrxFrameStatus` NO es `drx_dsp_error_t`.** Un `magic` que no cuadra significa que el flujo
+      entero no es de este contrato y lo que procede es cerrar, no contestar; mezclarlo con los
+      códigos del contrato habría obligado a inventar uno para algo que el contrato no cubre.
+      `DrxFrame_ErrorCode()` traduce solo los que sí son contestables.
+    - **Tras una cabecera inválida el parser se para en seco.** Saltarse la trama mala exigiría
+      adivinar dónde empieza la siguiente, y un acierto por casualidad entregaría un mensaje
+      inventado al plano de control.
+
+    Y **`fw/src/app/drx_control.c`**, el plano de control: traduce mensaje a acción y produce la
+    respuesta. Las acciones entran por una tabla de punteros, así que ni el framer ni el despacho
+    dependen de Xilinx y los dos se compilan también para el host. Ahí los ejercita
+    `fw/tests/test_contract_io.py` y `fw/tests/test_control.py` contra la implementación de Python
+    generada del mismo esquema: tramas byte a byte en los dos sentidos, el parser dando lo mismo
+    con empujones de 1, 7, 12 y 13 bytes (12 es exactamente la cabecera, 13 la cruza por uno), cada
+    fallo de validación con su estado y su código, y el camino bytes → acción → bytes con el `seq`
+    devuelto tal cual y el error de la ACCIÓN y no uno inventado por el despacho. **El fichero que
+    se prueba es el mismo que Vitis compila cruzado para el Cortex-A9, no una copia.**
+
+    **c — `vector_source` gana el modo Throttled(DDR)** y, con él, su primer L0 (no lo tenía: sus
+    puertos por canal son arrays sin empaquetar y la VPI de Verilator no los indexa, así que hizo
+    falta el mismo tipo de shim que ya usa `drx_ray_packer`). Stream de 16 bits, una muestra por
+    beat, canales en orden ascendente; los N_CH avanzan en bloque. Mapa de registros a **v8**:
+    `CTRL` bit 1 `vector_source_ddr`, un bit que v1–v7 declaraban reservado. El modo NO reemplaza a
+    BRAM-loop —quitarlo habría perdido el único modo que sostiene la tasa real— y la elección pasa
+    a ser de runtime, que es el punto entero del ejercicio.
+
+    **d — AXI DMA MM2S en el block design.** Tercer maestro contra el mismo `S_AXI_HP0`, y la
+    interrupción obliga por fin al `xlconcat` que la entrada de Z4.0 anticipaba (In0 = S2MM,
+    In1 = MM2S, orden fijo porque el firmware lo necesita para elegir el ID). **Hallazgo real de
+    Vivado:** en un puerto de interfaz externo en modo **Master** los parámetros del interfaz son
+    de SOLO LECTURA —se derivan del maestro conectado— y fijarlos produce cuatro
+    `CRITICAL WARNING [BD 41-737] ... It is read-only.` sin ningún efecto. Es lo contrario del
+    puerto Slave `s_axis_ray`, donde fijarlos sí hace falta. Peor: la propagación de parámetros del
+    BD corre dentro de `validate_bd_design`, así que leído antes el puerto todavía dice **1 byte**
+    aunque el pin del DMA ya diga 2 — y `rtl/drx_zynq_top.sv` declara 16 bits, que Verilog habría
+    truncado en silencio en el wrapper. El script ya no fija nada ahí y en su lugar **comprueba**
+    el ancho después de validar; la comprobación saltó de verdad mientras se escribía esto, que es
+    la razón por la que existe. P&R cierra: **WNS = 1,634 ns, WHS = 0,020 ns** (desde 1,711 ns —
+    mismo camino crítico PS7↔interconnect↔`drx_axil_regs`).
+
+    **e — Firmware y catálogo.** `tools/gen_stimulus_catalog.py` vuelca los MISMOS ocho casos —
+    importados de `gen_l1_vectors`, no copiados; el único cambio es la longitud, que pasa a ser
+    parámetro — a 62 KiB de C que viajan en la imagen. Artefacto de build, no versionado, igual que
+    el `.hex` de la BRAM. `fw/src/app/drx_stimulus.c` monta el buffer entrelazado en DDR y lo
+    entrega por un anillo de descriptores de `xaxidma` (el DMA es scatter-gather desde Z4.0, así
+    que `XAxiDma_SimpleTransfer` no existe aquí). Por sondeo y no por interrupción a propósito: la
+    tarea que rearma el DMA entre pasadas no tiene plazo que cumplir, y montar el GIC para ella
+    sería código que Z4.4 va a reescribir.
+
+    **Verificado en ZedBoard**, por JTAG:
+
+    ```
+    drx_stimulus: AXI DMA MM2S listo, 8 vectores de 4000 muestras
+    drx_stimulus: vector 0 (tono_if), repeat=2
+    drx_stimulus: vector tono_if -- pasadas=2 errores=0 OVERFLOW 0 -> 0
+    drx_stimulus: DDR -> MM2S -> vector_source confirmado en placa
+    drx_stimulus: vector 7 (tono_sobre_escala), repeat=2
+    drx_stimulus: vector tono_sobre_escala -- pasadas=2 errores=0 OVERFLOW 0 -> 0
+    ```
+
+    Que una pasada se COMPLETE no es contabilidad: el stream tiene backpressure y el único que
+    levanta `tready` es `vector_source` en modo Throttled(DDR) consumiendo beats. Si el modo no
+    estuviera puesto, si el ancho no cuadrara o si el conjunto de N_CH no se llenara, el DMA se
+    quedaría a medias. Dos pasadas completas con 0 errores es por tanto prueba de que los **bytes**
+    recorrieron DDR → MM2S → PL.
+
+    **Lo que esto NO prueba, y conviene decirlo:** que el **dato** llegue correcto hasta la salida
+    del DDC. El ensayo A/B buscaba justamente eso —el último vector del catálogo es el de +6 dBFS,
+    pensado para saturar— y `OVERFLOW` salió 0 con los dos, así que no discriminó. La lectura más
+    probable es que no sea un fallo sino el comportamiento esperado: el vector se satura ya en el
+    generador al recortarlo a 16 bits, y una senoide recortada pierde amplitud de fundamental al
+    pasar por el FIR, mientras que el ajuste de ganancia de la cadena está calculado para una
+    senoide limpia. Lectura alternativa, menos probable: que el dato no esté llegando y solo el
+    handshake sí — pero eso exigiría que `vector_source` presentara muestras distintas de las que
+    latcheó, que es lo que su L0 comprueba. **No está medido**, y el primer sitio donde se medirá
+    es Z4.4, que es cuando por fin hay camino de vuelta para leer un rayo.
+
+    Lo demás que sigue sin probarse en placa es lo mismo que antes: `STATUS (overrun) = 0x7` y
+    `GATE_TRUNCATED = 0x7` siguen activos porque nadie programa descriptores S2MM todavía.
+
+    **Deuda que deja este paso, anotada aquí para que no se pierda:** `DRX_STIMULUS_N_CH` está
+    escrito a mano en `fw/include/drx_stimulus.h` y tiene que coincidir con el `parameter int
+    N_CH = 3` de `rtl/drx_top.sv`. `N_CH` no vive hoy en `config/params.toml`, así que no hay nada
+    que compruebe la coincidencia. Si divergen no hay error: el buffer se entrelaza con un paso
+    distinto del que `vector_source` deshace y en placa se ve como un espectro raro sin ninguna
+    pista del origen.
+
+    - Siguiente paso: **Z4.4** — ensamblado de rayos sobre la interrupción de fin de descriptor
+      S2MM, framing real sobre el contrato, y el manejo del `config` de 2 lotes que cierra P-15 del
+      lado del contrato. Es también donde `STATUS`/`GATE_TRUNCATED` deben dejar de estar en `0x7` y
+      donde se puede por fin mirar el dato.
+
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
 Trabajo:

@@ -1,7 +1,7 @@
 /* GENERADO por tools/gen_contract.py a partir de
  * contract/schema/drx_dsp_v0_1.toml. NO EDITAR A MANO.
  *
- * Contrato DRx↔DSP v0.4 — lado DRx.
+ * Contrato DRx↔DSP v0.5 — lado DRx.
  *
  * Little-endian, empaquetado, sin relleno implícito. Los _Static_assert
  * de abajo fallan la compilación si el compilador añade relleno: es el
@@ -15,7 +15,7 @@
 
 #define DRX_DSP_MAGIC 0x4C4D4452u
 #define DRX_DSP_VERSION_MAJOR 0
-#define DRX_DSP_VERSION_MINOR 4
+#define DRX_DSP_VERSION_MINOR 5
 
 /* Cabecera común a todo mensaje. */
 typedef struct __attribute__((packed)) {
@@ -24,7 +24,7 @@ typedef struct __attribute__((packed)) {
   uint8_t version_minor;  /* Compatible hacia atrás dentro del mismo major. */
   uint8_t msg_type;  /* Ver la tabla de tipos de mensaje. */
   uint8_t flags;  /* Reservado en v0.1; tiene que valer 0. */
-  uint32_t payload_len;  /* Bytes que siguen a ESTA cabecera de 12 B: la cabecera del mensaje más su carga útil variable si la tiene. Un lector de tramas hace por tanto: leer 12 B, leer payload_len B, y ya tiene el mensaje entero sin conocer su tipo. Un ray de 1844 bins x 4 canales vale 36 + 1844x4x4 = 29540; un mensaje sin carga variable vale el tamaño de su struct (status 28, config 48, config_ack 8, afc 16), nunca 0. */
+  uint32_t payload_len;  /* Bytes que siguen a ESTA cabecera de 12 B: la cabecera del mensaje más su carga útil variable si la tiene. Un lector de tramas hace por tanto: leer 12 B, leer payload_len B, y ya tiene el mensaje entero sin conocer su tipo. Un ray de 1844 bins x 4 canales vale 36 + 1844x4x4 = 29540; un mensaje sin carga variable vale el tamaño de su struct (status 28, config 48, config_ack 8, afc 16, test_stimulus_select 8), nunca 0. */
 } drx_dsp_header_t;
 _Static_assert(sizeof(drx_dsp_header_t) == 12, "layout de drx_dsp_header_t");
 
@@ -35,6 +35,7 @@ typedef enum {
   DRX_DSP_MSG_CONFIG = 3,  /* down */
   DRX_DSP_MSG_CONFIG_ACK = 4,  /* up */
   DRX_DSP_MSG_AFC = 5,  /* down */
+  DRX_DSP_MSG_TEST_STIMULUS_SELECT = 6,  /* down */
 } drx_dsp_msg_type_t;
 
 /* Cabecera de un rayo. Detrás van `bins`·`n_channels` pares (I,Q) de int16
@@ -114,6 +115,27 @@ typedef struct __attribute__((packed)) {
 } drx_dsp_afc_t;
 _Static_assert(sizeof(drx_dsp_afc_t) == 16, "layout de drx_dsp_afc_t");
 
+/* Elige qué vector de estímulo reproduce `vector_source` en la PL.
+ * 
+ * Existe porque en ZedBoard no hay ADC: el único origen de muestras es
+ * `rtl/vector_source.sv`, y hasta v0.5 el vector que reproducía quedaba fijado en
+ * tiempo de SÍNTESIS (`$readmemh` sobre la BRAM, `tools/gen_vector_source_init.py`).
+ * Cambiar de estímulo costaba una corrida de Vivado entera, así que ninguna prueba
+ * de punta a punta podía barrer el catálogo. Con este mensaje el par remoto elige
+ * el vector en tiempo de ejecución y el firmware lo carga en la PL por AXI DMA
+ * MM2S.
+ * 
+ * Es un mandato de BANCO DE PRUEBAS, no de operación: en la plataforma objetivo el
+ * origen de muestras son los ADC reales y este mensaje no tiene efecto. El
+ * receptor responde con `config_ack` reusando `seq`, igual que a un `config`. */
+typedef struct __attribute__((packed)) {
+  uint32_t seq;  /* Se devuelve tal cual en el config_ack. */
+  uint8_t vector_id;  /* Índice en el catálogo; ver la enumeración stimulus_vector. */
+  uint8_t pad0;  /* Relleno explícito; vale 0. */
+  uint16_t repeat;  /* Veces que se reproduce el vector antes de parar. 0 = en bucle indefinido, que es el comportamiento que tenía el modo BRAM-loop. */
+} drx_dsp_test_stimulus_select_t;
+_Static_assert(sizeof(drx_dsp_test_stimulus_select_t) == 8, "layout de drx_dsp_test_stimulus_select_t");
+
 /* Códigos de rechazo del plano de control. */
 typedef enum {
   DRX_DSP_ERROR_OK = 0,  /* Aceptado. */
@@ -126,6 +148,8 @@ typedef enum {
   DRX_DSP_ERROR_CHANNEL_MASK_INVALID = 7,  /* Máscara de canales vacía o fuera de rango. */
   DRX_DSP_ERROR_SCAN_MODE_INVALID = 8,  /* Modo de barrido desconocido. */
   DRX_DSP_ERROR_NOT_CONFIGURED = 9,  /* Llegó un mandato antes de la primera configuración. */
+  DRX_DSP_ERROR_VECTOR_UNKNOWN = 10,  /* vector_id fuera del catálogo de stimulus_vector. */
+  DRX_DSP_ERROR_UNIMPLEMENTED = 11,  /* msg_type conocido y bien formado, pero este receptor todavía no lo aplica. Distinto de unknown_message, que es para un msg_type que el receptor NO conoce: con ese el par remoto sabe que hablan versiones distintas, con este sabe que hablan la misma y que la función aún no está. Nada se aplicó. */
 } drx_dsp_error_t;
 
 /* Bit por canal físico presente en channel_mask. El orden de channels[] en el payload de ray sigue el orden ascendente de los bits puestos en channel_mask; cada canal aporta los mismos `bins` que el resto del rayo. rx_0..rx_3 son 2 conversores por polarización (H, V): uno a ganancia nominal y otro con la señal atenuada, para extender el rango dinámico (confirmado en sesión, 8-sep-2026). El emparejamiento H/V de arriba está confirmado; el orden concreto rx_0 vs rx_1 (¿cuál es el nominal y cuál el atenuado de cada polarización?) es una CONVENCIÓN asumida aquí, sin confirmar todavía contra el cableado físico — ver docs/alcance/pendientes.md, A10. */
@@ -156,5 +180,17 @@ typedef enum {
   DRX_DSP_BITE_FLAG_LINK_DOWN = 32,  /* Enlace Ethernet caído. */
   DRX_DSP_BITE_FLAG_CONFIG_REJECTED = 64,  /* Se rechazó una configuración. */
 } drx_dsp_bite_flag_t;
+
+/* Catálogo v1 de vectores de estímulo, los ocho casos de tools/gen_l1_vectors.py — la misma lista contra la que L1 compara la IP real de Xilinx con el modelo dorado bajo D-12. El catálogo puede CRECER dentro del mismo version_major (añadir un valor es compatible hacia atrás); reordenar o quitar valores no. En la plataforma objetivo, con ADC reales, esta enumeración no tiene efecto. */
+typedef enum {
+  DRX_DSP_STIMULUS_VECTOR_TONO_IF = 0,  /* IF nominal: lo que el NCO tiene que llevar a continua exactamente. */
+  DRX_DSP_STIMULUS_VECTOR_TONO_DESPLAZADO = 1,  /* Desplazado +0,001 dentro de la banda de paso: ejercita el FIR fuera de continua. */
+  DRX_DSP_STIMULUS_VECTOR_DOS_TONOS = 2,  /* Rechazo de imagen e intermodulación del mezclador complejo. */
+  DRX_DSP_STIMULUS_VECTOR_TONO_DESPLAZADO_NEG = 3,  /* Simétrico del anterior al otro lado del IF; cuarto estímulo distinto para los canales del quad. */
+  DRX_DSP_STIMULUS_VECTOR_TONO_CON_RUIDO = 4,  /* Degradación D9: ruido a 10 dB de SNR. */
+  DRX_DSP_STIMULUS_VECTOR_TONO_CON_OFFSET_DC = 5,  /* Degradación D9: offset de continua a -12 dBFS. */
+  DRX_DSP_STIMULUS_VECTOR_TONO_DESBALANCEADO = 6,  /* Degradación D9: desbalance I/Q de 1 dB y 3 grados. */
+  DRX_DSP_STIMULUS_VECTOR_TONO_SOBRE_ESCALA = 7,  /* Entrada a +6 dBFS: el ADC satura, no envuelve. Ejercita el reporte de overflow. */
+} drx_dsp_stimulus_vector_t;
 
 #endif /* DRX_DSP_V0_1_H */

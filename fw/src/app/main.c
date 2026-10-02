@@ -41,6 +41,8 @@
 
 #include "drx_status_task.h"
 #include "drx_timing_cfg.h"
+#include "drx_stimulus.h"
+#include "drx_stimulus_catalog.h"
 
 #if LWIP_IPV6==1
 #include "lwip/ip.h"
@@ -246,6 +248,21 @@ int main_thread()
 	 * primero imprimiria ese 0x6 de reset como si fuese un fallo. Ver
 	 * fw/src/app/drx_timing_cfg.c. */
 	(void)DrxTiming_Start();
+
+	/* Z4.3: el camino DDR -> AXI DMA MM2S -> vector_source. La tarea tiene
+	 * que existir antes de la comprobacion: es la que rearma el DMA entre
+	 * pasadas, y la comprobacion cuenta pasadas completas. */
+	if (DrxStimulus_Init()) {
+		DrxStimulusTask_Create();
+		/* Dos vectores y no uno: el primero es el tono nominal y el
+		 * ultimo del catalogo es el de +6 dBFS, pensado para saturar.
+		 * Que una pasada se complete ya prueba que los BYTES llegaron a
+		 * la PL; que OVERFLOW salga distinto entre los dos probaria
+		 * ademas que llego el DATO, porque lo unico que cambia entre las
+		 * dos corridas es el contenido del buffer. */
+		(void)DrxStimulus_SelfTest(0u);
+		(void)DrxStimulus_SelfTest(DRX_STIMULUS_COUNT - 1u);
+	}
 
 	DrxStatusTask_Create();
 

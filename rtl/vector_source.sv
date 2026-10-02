@@ -35,6 +35,52 @@
 // ventana" para poder ejercitar el framing de `drx_range_gate`, NO el PRF
 // real: el motor de timing (Z2) no existe todavía. No leer este pulso como
 // una cadencia de rayo real.
+//
+// --- Modo Throttled(DDR), Z4.3 (1-oct-2026) --------------------------------
+//
+// Segundo de los tres modos de `docs/plataforma/fuente-de-muestras.md`:
+// «DDR con backpressure AXIS, 4 canales, por debajo de tiempo real, para
+// corrección funcional bit a bit». Las muestras ya no salen de la BRAM
+// precargada en síntesis sino de un AXI4-Stream que alimenta un AXI DMA MM2S
+// desde la DDR del PS, así que el vector se elige en TIEMPO DE EJECUCIÓN
+// (mensaje `test_stimulus_select` del contrato, v0.5) en vez de quedar fijo en
+// el bitstream. Eso es lo que convierte un barrido del catálogo de 8 vectores
+// de `tools/gen_l1_vectors.py` en algo que cuesta un DMA en vez de ocho
+// corridas de Vivado.
+//
+// El modo NO reemplaza a BRAM-loop, convive con él y se elige por registro
+// (`CTRL` bit 1, mapa v8). Quitarlo habría perdido el único modo que sostiene
+// la tasa real, que es para lo que existe según esa misma tabla.
+//
+// Formato del stream: 16 bits por beat, UNA muestra por beat, canales en orden
+// ascendente y repitiendo — canal 0, 1, ..., N_CH-1, canal 0, ... Es el
+// formato más simple que existe y no hay motivo para otro: este modo es
+// explícitamente más lento que tiempo real, así que estrechar el bus a una
+// muestra por beat no cuesta nada que importe, y a cambio el buffer de DDR que
+// prepara el firmware es exactamente un array de int16 entrelazado por canal,
+// sin reglas de alineación ni relleno.
+//
+// Los N_CH canales avanzan en BLOQUE: se juntan N_CH beats en un conjunto y los
+// N_CH salidas se presentan válidas a la vez, y el conjunto no se retira hasta
+// que TODOS los consumidores lo han tomado. Es más estricto de lo que pide
+// AXI4-Stream —un canal lento frena a los demás— y es a propósito: este modo
+// existe para corrección bit a bit, donde que los canales vayan en el mismo
+// instante de muestra es parte de lo que se compara. Dejar que un canal se
+// adelantara convertiría un desfase en un resultado distinto sin ningún error
+// visible. Aguas abajo no cambia nada: `drx_ddc_quad_top` es un `generate` de
+// cadenas idénticas que ya van en bloque.
+//
+// `s_axis_last` marca el fin del vector. Se propaga a `last` de los N_CH
+// canales del conjunto que lo contiene, no solo al canal del beat donde llegó:
+// `last` es un marcador de ventana por canal, y marcarlo en uno solo dejaría a
+// `drx_range_gate` cerrando un rayo en un canal y no en los otros dos.
+//
+// CONDICIÓN QUE EL FIRMWARE TIENE QUE CUMPLIR: la transferencia MM2S lleva un
+// número de muestras múltiplo de N_CH. Un conjunto a medio llenar nunca se
+// presenta, así que un resto distinto de 0 deja la cadena parada en silencio
+// —sin error, sin bandera— hasta la transferencia siguiente. Este módulo no lo
+// valida: no puede distinguir "faltan beats" de "todavía no han llegado", que
+// es la misma situación un ciclo antes.
 
 `ifndef VECTOR_SOURCE_SV
 `define VECTOR_SOURCE_SV
@@ -59,6 +105,20 @@ module vector_source
     input logic clk,
     input logic rst_n,
 
+    // 1 = modo Throttled(DDR), las muestras vienen de `s_axis_*`.
+    // 0 = BRAM-loop, el modo de siempre. Solo es seguro cambiarlo con la
+    // cadena parada: este módulo no vacía el conjunto a medio llenar ni el
+    // registro de salida de BRAM al conmutar, igual que `drx_prf_batch_seq`
+    // no revalida su configuración a mitad de radial.
+    input logic ddr_mode,
+
+    // AXI4-Stream esclavo, 16 bits, una muestra por beat, canales en orden
+    // ascendente y repitiendo. Inerte mientras `ddr_mode` esté en 0.
+    input  logic                          s_axis_valid,
+    output logic                          s_axis_ready,
+    input  logic signed [SAMPLE_BITS-1:0] s_axis_data,
+    input  logic                          s_axis_last,
+
     input  logic                          ready[N_CH],
     output logic                          valid[N_CH],
     output logic signed [SAMPLE_BITS-1:0] data [N_CH],
@@ -66,6 +126,63 @@ module vector_source
 );
 
   localparam int AddrBits = $clog2(DEPTH);
+  localparam int ChBits   = (N_CH > 1) ? $clog2(N_CH) : 1;
+
+  // --- Modo Throttled(DDR) --------------------------------------------------
+  //
+  // Dos estados y nada más: llenando el conjunto de N_CH muestras, o
+  // presentándolo. No hay doble buffer a propósito — con backpressure AXIS y
+  // un modo que ya es más lento que tiempo real, un segundo conjunto solo
+  // añadiría un camino de datos más que verificar sin comprar nada medible.
+  logic [ChBits-1:0]            ddr_fill_idx;
+  logic                         ddr_presenting;
+  logic                         ddr_last_set;
+  logic signed [SAMPLE_BITS-1:0] ddr_set[N_CH];
+
+  // El conjunto se retira cuando TODOS los consumidores lo han tomado (ver la
+  // cabecera sobre por qué en bloque y no por canal).
+  logic ddr_all_taken;
+  always_comb begin
+    ddr_all_taken = 1'b1;
+    for (int c = 0; c < N_CH; c = c + 1) begin
+      if (!ready[c]) ddr_all_taken = 1'b0;
+    end
+  end
+
+  assign s_axis_ready = ddr_mode && !ddr_presenting;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      ddr_fill_idx   <= '0;
+      ddr_presenting <= 1'b0;
+      ddr_last_set   <= 1'b0;
+    end else if (!ddr_mode) begin
+      // Modo BRAM: se mantiene rearmado, para que una conmutación con la
+      // cadena parada empiece siempre en el canal 0 de un conjunto nuevo.
+      ddr_fill_idx   <= '0;
+      ddr_presenting <= 1'b0;
+      ddr_last_set   <= 1'b0;
+    end else if (!ddr_presenting) begin
+      if (s_axis_valid) begin
+        if (s_axis_last) ddr_last_set <= 1'b1;
+        if (ddr_fill_idx == ChBits'(N_CH - 1)) begin
+          ddr_fill_idx   <= '0;
+          ddr_presenting <= 1'b1;
+        end else begin
+          ddr_fill_idx <= ddr_fill_idx + 1'b1;
+        end
+      end
+    end else if (ddr_all_taken) begin
+      ddr_presenting <= 1'b0;
+      ddr_last_set   <= 1'b0;
+    end
+  end
+
+  always_ff @(posedge clk) begin
+    if (ddr_mode && !ddr_presenting && s_axis_valid) begin
+      ddr_set[ddr_fill_idx] <= s_axis_data;
+    end
+  end
 
   genvar gc;
   generate
@@ -81,7 +198,7 @@ module vector_source
       logic                out_last_r;
 
       logic can_advance;
-      assign can_advance = !out_valid_r || ready[gc];
+      assign can_advance = !ddr_mode && (!out_valid_r || ready[gc]);
 
       // Puerto de lectura registrado a propósito (ver cabecera): `out_data_r`
       // se carga desde `mem[rd_ptr]` solo cuando el dato anterior ya se
@@ -114,9 +231,13 @@ module vector_source
         end
       end
 
-      assign valid[gc] = out_valid_r;
-      assign data[gc]  = signed'(out_data_r);
-      assign last[gc]  = out_valid_r && out_last_r;
+      // El contador de BRAM se congela en modo DDR: así no consume el vector
+      // precargado por detrás ni deja el puntero en un sitio arbitrario al
+      // volver.
+      assign valid[gc] = ddr_mode ? ddr_presenting : out_valid_r;
+      assign data[gc]  = ddr_mode ? ddr_set[gc] : signed'(out_data_r);
+      assign last[gc]  = ddr_mode ? (ddr_presenting && ddr_last_set)
+                                  : (out_valid_r && out_last_r);
 
     end
   endgenerate

@@ -184,7 +184,13 @@ def test_los_tipos_de_mensaje_son_unicos():
 # Tamaños de `payload_len` esperados para los mensajes sin carga útil variable.
 # Son literales a propósito: si alguien reinterpreta `payload_len` como «solo la
 # carga variable», estos números pasan a 0 y el test lo dice en voz alta.
-PAYLOAD_LEN_SIN_CARGA_VARIABLE = {"status": 28, "config": 48, "config_ack": 8, "afc": 16}
+PAYLOAD_LEN_SIN_CARGA_VARIABLE = {
+    "status": 28,
+    "config": 48,
+    "config_ack": 8,
+    "afc": 16,
+    "test_stimulus_select": 8,
+}
 
 
 def _payload_len(py_class, variable_bytes: int = 0) -> int:
@@ -229,3 +235,60 @@ def test_el_esquema_deja_payload_len_sin_ambiguedad():
     assert "12 B" in doc, "el esquema no dice respecto a qué cabecera cuenta"
     assert "nunca 0" in doc, "el esquema no fija el caso sin carga variable"
     assert _py_module().Error.BAD_LENGTH == 4
+
+
+def test_el_catalogo_de_estimulos_coincide_con_el_generador():
+    """`stimulus_vector` y `tools/gen_l1_vectors.py` tienen que listar lo mismo.
+
+    Es el acoplamiento real que introduce `test_stimulus_select` (v0.5): el
+    catálogo del contrato nombra vectores que produce OTRO fichero. Si alguien
+    añade un caso al generador y no toca el esquema, el par remoto puede pedir
+    un `vector_id` que el firmware no sabe cargar, y al revés. Ninguna de las
+    dos derivas se ve sin este test, porque las dos compilan y parsean bien.
+
+    El orden importa tanto como el conjunto: `vector_id` es el índice, así que
+    reordenar el generador renombraría silenciosamente lo que ya está en el
+    cable.
+    """
+    sys.path.insert(0, str(ROOT / "tools"))
+    sys.path.insert(0, str(ROOT / "model"))
+    import gen_l1_vectors
+    from drx_model import params as params_mod
+
+    del_generador = list(gen_l1_vectors._cases(params_mod.load("zedboard")).keys())
+    del_esquema = [
+        value["name"]
+        for enum in _schema()["enum"]
+        if enum["name"] == "stimulus_vector"
+        for value in enum["values"]
+    ]
+
+    assert del_esquema == del_generador, (
+        "el catálogo de stimulus_vector y los casos de tools/gen_l1_vectors.py "
+        "divergieron; añadir un caso es compatible, reordenarlos no"
+    )
+
+    # Los valores son el índice, sin huecos: es lo que hace que `vector_id` se
+    # pueda usar directamente como posición en el catálogo del firmware.
+    valores = [
+        value["value"]
+        for enum in _schema()["enum"]
+        if enum["name"] == "stimulus_vector"
+        for value in enum["values"]
+    ]
+    assert valores == list(range(len(del_generador)))
+
+
+def test_test_stimulus_select_es_un_mandato_de_banco_no_de_operacion():
+    """La redacción que dice que esto no aplica a la plataforma objetivo no se pierde.
+
+    Sin esa frase el mensaje se lee como parte del plano de control normal, y el
+    lado DSP podría construir lógica de producción encima de un mandato que en la
+    ZU9 con ADC reales no tiene efecto.
+    """
+    mensaje = next(
+        m for m in _schema()["message"] if m["name"] == "test_stimulus_select"
+    )
+    assert mensaje["dir"] == "down"
+    assert "BANCO DE PRUEBAS" in mensaje["doc"]
+    assert _py_module().Error.VECTOR_UNKNOWN == 10

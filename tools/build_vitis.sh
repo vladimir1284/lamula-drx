@@ -23,4 +23,15 @@ done
 }
 
 mkdir -p "$outdir"
+
+# Catálogo de estímulos (Z4.3): 62 KiB de C generados del modelo, consumidos por
+# fw/src/app/drx_stimulus.c. No se versionan -- se regeneran, igual que el .hex
+# de precarga de la BRAM. tcl/gen_bsp.tcl falla con un mensaje claro si faltan.
+# El generador necesita numpy (sale del modelo dorado), que vive en el venv del
+# repo -- el mismo que usa el Makefile. Fuera de él, `python3` pelado falla con
+# ModuleNotFoundError y no con algo que se pueda confundir con un fallo de Vitis.
+py="$repo_root/.venv/bin/python"
+[[ -x "$py" ]] || py=python3
+"$py" "$repo_root/tools/gen_stimulus_catalog.py" --platform "$platform"
+
 xsct "$repo_root/tcl/gen_bsp.tcl" "$xsa" "$outdir"

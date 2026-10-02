@@ -1,7 +1,7 @@
 // GENERADO por tools/gen_contract.py a partir de
 // contract/schema/drx_dsp_v0_1.toml. NO EDITAR A MANO.
 //
-// Contrato DRx↔DSP v0.4 — lado DSP.
+// Contrato DRx↔DSP v0.5 — lado DSP.
 //
 // Little-endian, empaquetado. Los `assert!` de tamaño viven en los tests
 // del proyecto DSP; aquí van como constantes para que se puedan comprobar.
@@ -10,7 +10,7 @@
 
 pub const MAGIC: u32 = 0x4C4D4452;
 pub const VERSION_MAJOR: u8 = 0;
-pub const VERSION_MINOR: u8 = 4;
+pub const VERSION_MINOR: u8 = 5;
 
 /// Cabecera común a todo mensaje.
 #[repr(C, packed)]
@@ -26,7 +26,7 @@ pub struct Header {
     pub msg_type: u8,
     /// Reservado en v0.1; tiene que valer 0.
     pub flags: u8,
-    /// Bytes que siguen a ESTA cabecera de 12 B: la cabecera del mensaje más su carga útil variable si la tiene. Un lector de tramas hace por tanto: leer 12 B, leer payload_len B, y ya tiene el mensaje entero sin conocer su tipo. Un ray de 1844 bins x 4 canales vale 36 + 1844x4x4 = 29540; un mensaje sin carga variable vale el tamaño de su struct (status 28, config 48, config_ack 8, afc 16), nunca 0.
+    /// Bytes que siguen a ESTA cabecera de 12 B: la cabecera del mensaje más su carga útil variable si la tiene. Un lector de tramas hace por tanto: leer 12 B, leer payload_len B, y ya tiene el mensaje entero sin conocer su tipo. Un ray de 1844 bins x 4 canales vale 36 + 1844x4x4 = 29540; un mensaje sin carga variable vale el tamaño de su struct (status 28, config 48, config_ack 8, afc 16, test_stimulus_select 8), nunca 0.
     pub payload_len: u32,
 }
 pub const HEADER_SIZE: usize = 12;
@@ -45,6 +45,8 @@ pub enum MsgType {
     ConfigAck = 4,
     /// down
     Afc = 5,
+    /// down
+    TestStimulusSelect = 6,
 }
 
 /// Cabecera de un rayo. Detrás van `bins`·`n_channels` pares (I,Q) de int16
@@ -180,6 +182,33 @@ pub struct Afc {
 }
 pub const AFC_SIZE: usize = 16;
 
+/// Elige qué vector de estímulo reproduce `vector_source` en la PL.
+/// 
+/// Existe porque en ZedBoard no hay ADC: el único origen de muestras es
+/// `rtl/vector_source.sv`, y hasta v0.5 el vector que reproducía quedaba fijado en
+/// tiempo de SÍNTESIS (`$readmemh` sobre la BRAM, `tools/gen_vector_source_init.py`).
+/// Cambiar de estímulo costaba una corrida de Vivado entera, así que ninguna prueba
+/// de punta a punta podía barrer el catálogo. Con este mensaje el par remoto elige
+/// el vector en tiempo de ejecución y el firmware lo carga en la PL por AXI DMA
+/// MM2S.
+/// 
+/// Es un mandato de BANCO DE PRUEBAS, no de operación: en la plataforma objetivo el
+/// origen de muestras son los ADC reales y este mensaje no tiene efecto. El
+/// receptor responde con `config_ack` reusando `seq`, igual que a un `config`.
+#[repr(C, packed)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TestStimulusSelect {
+    /// Se devuelve tal cual en el config_ack.
+    pub seq: u32,
+    /// Índice en el catálogo; ver la enumeración stimulus_vector.
+    pub vector_id: u8,
+    /// Relleno explícito; vale 0.
+    pub pad0: u8,
+    /// Veces que se reproduce el vector antes de parar. 0 = en bucle indefinido, que es el comportamiento que tenía el modo BRAM-loop.
+    pub repeat: u16,
+}
+pub const TEST_STIMULUS_SELECT_SIZE: usize = 8;
+
 /// Códigos de rechazo del plano de control.
 pub mod error {
     /// Aceptado.
@@ -202,6 +231,10 @@ pub mod error {
     pub const SCAN_MODE_INVALID: u8 = 8;
     /// Llegó un mandato antes de la primera configuración.
     pub const NOT_CONFIGURED: u8 = 9;
+    /// vector_id fuera del catálogo de stimulus_vector.
+    pub const VECTOR_UNKNOWN: u8 = 10;
+    /// msg_type conocido y bien formado, pero este receptor todavía no lo aplica. Distinto de unknown_message, que es para un msg_type que el receptor NO conoce: con ese el par remoto sabe que hablan versiones distintas, con este sabe que hablan la misma y que la función aún no está. Nada se aplicó.
+    pub const UNIMPLEMENTED: u8 = 11;
 }
 
 /// Bit por canal físico presente en channel_mask. El orden de channels[] en el payload de ray sigue el orden ascendente de los bits puestos en channel_mask; cada canal aporta los mismos `bins` que el resto del rayo. rx_0..rx_3 son 2 conversores por polarización (H, V): uno a ganancia nominal y otro con la señal atenuada, para extender el rango dinámico (confirmado en sesión, 8-sep-2026). El emparejamiento H/V de arriba está confirmado; el orden concreto rx_0 vs rx_1 (¿cuál es el nominal y cuál el atenuado de cada polarización?) es una CONVENCIÓN asumida aquí, sin confirmar todavía contra el cableado físico — ver docs/alcance/pendientes.md, A10.
@@ -248,4 +281,24 @@ pub mod bite_flag {
     pub const LINK_DOWN: u32 = 32;
     /// Se rechazó una configuración.
     pub const CONFIG_REJECTED: u32 = 64;
+}
+
+/// Catálogo v1 de vectores de estímulo, los ocho casos de tools/gen_l1_vectors.py — la misma lista contra la que L1 compara la IP real de Xilinx con el modelo dorado bajo D-12. El catálogo puede CRECER dentro del mismo version_major (añadir un valor es compatible hacia atrás); reordenar o quitar valores no. En la plataforma objetivo, con ADC reales, esta enumeración no tiene efecto.
+pub mod stimulus_vector {
+    /// IF nominal: lo que el NCO tiene que llevar a continua exactamente.
+    pub const TONO_IF: u8 = 0;
+    /// Desplazado +0,001 dentro de la banda de paso: ejercita el FIR fuera de continua.
+    pub const TONO_DESPLAZADO: u8 = 1;
+    /// Rechazo de imagen e intermodulación del mezclador complejo.
+    pub const DOS_TONOS: u8 = 2;
+    /// Simétrico del anterior al otro lado del IF; cuarto estímulo distinto para los canales del quad.
+    pub const TONO_DESPLAZADO_NEG: u8 = 3;
+    /// Degradación D9: ruido a 10 dB de SNR.
+    pub const TONO_CON_RUIDO: u8 = 4;
+    /// Degradación D9: offset de continua a -12 dBFS.
+    pub const TONO_CON_OFFSET_DC: u8 = 5;
+    /// Degradación D9: desbalance I/Q de 1 dB y 3 grados.
+    pub const TONO_DESBALANCEADO: u8 = 6;
+    /// Entrada a +6 dBFS: el ADC satura, no envuelve. Ejercita el reporte de overflow.
+    pub const TONO_SOBRE_ESCALA: u8 = 7;
 }

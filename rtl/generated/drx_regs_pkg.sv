@@ -9,7 +9,7 @@
 
 package drx_regs_pkg;
 
-  localparam int REGS_VERSION = 7;
+  localparam int REGS_VERSION = 8;
   localparam int REGS_ADDR_WIDTH = 7;
 
   localparam logic [REGS_ADDR_WIDTH-1:0] REG_VERSION_ADDR = REGS_ADDR_WIDTH'(32'h00000000);

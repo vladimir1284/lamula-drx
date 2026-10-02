@@ -23,6 +23,11 @@
 // `drx_axil_regs.sv`) y nunca tuvieron puerto para ellas -- no hay nada del
 // otro lado que conectar.
 //
+// Z4.3 (fases.md#z4): `m_axis_vec_*` es el sentido contrario -- el canal MM2S
+// del mismo AXI DMA lee vectores de estimulo de la DDR del PS y los entrega a
+// `drx_top.s_vec_*`, que los mete en el modo Throttled(DDR) de
+// `vector_source.sv`. El vector deja asi de quedar fijo en el bitstream.
+//
 // Z4.0 (fases.md#z4): `s_axis_ray_*` es el AXI4-Stream de `drx_top.m_ray_*`
 // (empaquetador de rayo, N_CH canales entrelazados) hacia el AXI DMA S2MM
 // que ya vive DENTRO del block design (`tcl/gen_zynq_bd.tcl`) -- por eso este
@@ -91,6 +96,21 @@ module drx_zynq_top
   logic [2*IQ_BITS-1:0] s_axis_ray_tdata;
   logic                 s_axis_ray_tlast;
 
+  // Z4.3: el sentido contrario -- el vector de estimulo sale del canal MM2S
+  // del mismo AXI DMA y entra en el modo Throttled(DDR) de `vector_source`.
+  // 16 bits, una muestra por beat (ver la cabecera de `vector_source.sv`).
+  logic                   m_axis_vec_tvalid;
+  logic                   m_axis_vec_tready;
+  logic [SAMPLE_BITS-1:0] m_axis_vec_tdata;
+  logic                   m_axis_vec_tlast;
+  logic [1:0]             m_axis_vec_tkeep;
+  logic                   unused_vec_tkeep;
+  // TKEEP existe en el interfaz porque el VLNV `axis_rtl` lo lleva, pero con
+  // una muestra de 16 bits por beat no hay bytes parciales que señalar.
+  // Conectarlo a un bote de lint, y no dejarlo sin conectar, por el mismo
+  // motivo que las salidas de rayo de `drx_top_tieoff.sv`.
+  assign unused_vec_tkeep = &{1'b0, m_axis_vec_tkeep};
+
   drx_zynq_bd_wrapper u_bd (
       .DDR_addr         (DDR_addr),
       .DDR_ba           (DDR_ba),
@@ -143,7 +163,13 @@ module drx_zynq_top
       .s_axis_ray_tlast (s_axis_ray_tlast),
       // El stream nunca trae bytes parciales -- `drx_top`/`drx_ray_packer` no
       // tienen ni necesitan noción de TKEEP, ver la cabecera.
-      .s_axis_ray_tkeep (4'hF)
+      .s_axis_ray_tkeep (4'hF),
+
+      .m_axis_vec_tvalid(m_axis_vec_tvalid),
+      .m_axis_vec_tready(m_axis_vec_tready),
+      .m_axis_vec_tdata (m_axis_vec_tdata),
+      .m_axis_vec_tlast (m_axis_vec_tlast),
+      .m_axis_vec_tkeep (m_axis_vec_tkeep)
   );
 
   drx_top u_drx_top (
@@ -174,7 +200,12 @@ module drx_zynq_top
       .m_ray_valid(s_axis_ray_tvalid),
       .m_ray_ready(s_axis_ray_tready),
       .m_ray_data (s_axis_ray_tdata),
-      .m_ray_last (s_axis_ray_tlast)
+      .m_ray_last (s_axis_ray_tlast),
+
+      .s_vec_valid(m_axis_vec_tvalid),
+      .s_vec_ready(m_axis_vec_tready),
+      .s_vec_data (signed'(m_axis_vec_tdata)),
+      .s_vec_last (m_axis_vec_tlast)
   );
 
 endmodule

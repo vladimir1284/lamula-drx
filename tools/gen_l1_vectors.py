@@ -49,13 +49,27 @@ _DESBALANCE_FASE_DEG = 3.0
 _SOBRE_ESCALA_DBFS = 6.0
 
 
-def _cases(params: params_mod.Params) -> dict[str, object]:
+def _cases(
+    params: params_mod.Params, n_samples: int = N_SAMPLES
+) -> dict[str, object]:
     """Los casos de L1, por nombre.
 
     El conjunto es deliberadamente pequeño: L1 no es la suite funcional —esa es
     L0 y el modelo— sino la prueba de que la IP real de Xilinx da el mismo bit
     que el modelo. Cada caso ataca una parte distinta de la aritmética.
+
+    `n_samples` es parámetro desde Z4.3 (1-oct-2026) y no una constante: esta
+    MISMA lista, en este MISMO orden, es el catálogo de estímulos que el
+    firmware carga por AXI DMA MM2S (`tools/gen_stimulus_catalog.py`), y el
+    contrato la nombra en la enumeración `stimulus_vector` (v0.5). Lo que
+    cambia entre un uso y otro es solo la longitud: L1 necesita 65536 muestras
+    para alcanzar régimen permanente en modo grueso, y el catálogo de la placa
+    necesita un bucle corto. Duplicar la lista para cambiar un número habría
+    sido la forma segura de que las dos copias divergieran sin que nadie se
+    enterase; `contract/tests/test_contract.py` comprueba que no diverge del
+    esquema.
     """
+    N_SAMPLES = n_samples  # noqa: N806 -- sombra deliberada, ver el docstring
     return {
         # El caso base: el IF nominal, que es lo que el NCO tiene que llevar a
         # continua exactamente.

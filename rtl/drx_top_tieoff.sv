@@ -67,6 +67,17 @@ module drx_top_tieoff
   logic        unused_ray_tie;
   assign unused_ray_tie = &{1'b0, m_ray_valid_tie, m_ray_last_tie, m_ray_data_tie};
 
+  // Z4.3: sin PS7 tampoco hay AXI DMA MM2S que alimente el modo
+  // Throttled(DDR), asi que la entrada se ata inerte -- `s_vec_valid` en bajo
+  // y nada mas. No es una limitacion de este flujo: CTRL bit 1 vale 0 tras
+  // reset y aqui NADIE puede escribirlo (el AXI-Lite esta atado a valores
+  // inertes, ver arriba), asi que `vector_source` se queda en BRAM-loop para
+  // siempre y este puerto no se mira nunca. `s_vec_ready` va al bote de lint
+  // por el mismo motivo que las salidas de rayo.
+  logic s_vec_ready_tie;
+  logic unused_vec_tie;
+  assign unused_vec_tie = &{1'b0, s_vec_ready_tie};
+
   drx_top #(
       .HEARTBEAT_DIV(HEARTBEAT_DIV),
       .N_CH(N_CH)
@@ -97,7 +108,12 @@ module drx_top_tieoff
       .m_ray_valid(m_ray_valid_tie),
       .m_ray_ready(1'b1),
       .m_ray_data (m_ray_data_tie),
-      .m_ray_last (m_ray_last_tie)
+      .m_ray_last (m_ray_last_tie),
+
+      .s_vec_valid(1'b0),
+      .s_vec_ready(s_vec_ready_tie),
+      .s_vec_data ('0),
+      .s_vec_last (1'b0)
   );
 
 endmodule

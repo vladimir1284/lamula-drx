@@ -95,8 +95,13 @@ def render_h(schema: dict) -> str:
         out.append(f"#define {_h_name(reg['name'])} 0x{reg['offset']:02X}u")
     out += [
         "",
+        # Los bits con nombre de CTRL se escriben aqui y no salen del TOML: el
+        # esquema describe registros, no campos de bits. Si CTRL llega a tener
+        # muchos mas, el sitio donde arreglarlo es el esquema, no esta lista.
         "#define DRX_REG_CTRL_MODE_COARSE_BIT 0u",
         "#define DRX_REG_CTRL_MODE_COARSE_MASK (1u << DRX_REG_CTRL_MODE_COARSE_BIT)",
+        "#define DRX_REG_CTRL_VECTOR_SOURCE_DDR_BIT 1u",
+        "#define DRX_REG_CTRL_VECTOR_SOURCE_DDR_MASK (1u << DRX_REG_CTRL_VECTOR_SOURCE_DDR_BIT)",
         "",
         "#endif /* DRX_REGS_H */",
         "",

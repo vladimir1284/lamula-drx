@@ -178,6 +178,22 @@ el AXI-Lite inerte) — corregido el mismo día. `STATUS (overrun)` y `GATE_TRUN
 a propósito: nadie programa descriptores del AXI DMA todavía, eso es Z4.4. Detalle completo en
 `bringup/README.md` y en `fases.md#z4`, entrada del 1-oct.
 
+**Z4.3 cerrada, 1-oct-2026.** Contrato **v0.5** (`test_stimulus_select`, enumeración
+`stimulus_vector` con el catálogo de ocho vectores, errores `vector_unknown`/`unimplemented`),
+framer y plano de control reales en C (`fw/src/app/drx_contract_io.c`, `drx_control.c` — sin
+dependencias de Xilinx, compilados también para host y contrastados contra la implementación de
+Python generada del mismo esquema), `rtl/vector_source.sv` con el modo **Throttled(DDR)** y su
+primer L0, mapa de registros **v8** (`CTRL` bit 1 `vector_source_ddr`) y **AXI DMA MM2S** en el
+block design. El vector de estímulo deja de quedar fijado en síntesis: barrer el catálogo costaba
+ocho corridas de Vivado, ahora cuesta ocho mensajes. P&R cierra en **WNS = 1,634 ns**. Verificado en
+placa por JTAG — el DMA completa pasadas enteras con 0 errores, y eso prueba que los bytes llegaron
+a la PL porque el stream tiene backpressure y el único que levanta `tready` es `vector_source` en
+ese modo. **Lo que NO prueba** es que el dato llegue correcto a la salida del DDC: el A/B contra el
+vector de +6 dBFS dio `OVERFLOW = 0` en los dos casos y no discriminó; eso se mide en Z4.4, cuando
+haya camino de vuelta para leer un rayo. Deuda anotada: `DRX_STIMULUS_N_CH` en
+`fw/include/drx_stimulus.h` tiene que coincidir a mano con el `N_CH` de `rtl/drx_top.sv`, que no
+vive en `config/params.toml`. Detalle en `fases.md#z4`, entrada del 1-oct (más tarde).
+
 Lo que sí está hecho y verificado, además de lo de arriba:
 
 - El sitio de documentación se construye y se despliega solo a

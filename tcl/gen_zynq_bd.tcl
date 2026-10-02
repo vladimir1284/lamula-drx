@@ -163,17 +163,30 @@ connect_bd_net [get_bd_pins $rst_ic/peripheral_aresetn] [get_bd_ports pl_resetn0
 # mismo criterio que `drx_axil_regs`, que se sintetizó semanas antes de que
 # hubiera firmware real que lo leyera.
 #
-# Solo canal S2MM: MM2S (lectura de vectores de prueba desde DDR) es Z4.3,
-# no este cambio -- `c_include_mm2s {0}` evita instanciar un motor de lectura
-# que nada usa todavía.
+# Los dos canales desde Z4.3 (1-oct-2026). S2MM saca el rayo empaquetado hacia
+# la DDR; MM2S lee de la DDR los vectores de estímulo y los mete en el modo
+# Throttled(DDR) de `rtl/vector_source.sv` -- la pieza que convierte un barrido
+# del catálogo de 8 vectores de `tools/gen_l1_vectors.py` en un DMA en vez de
+# en ocho corridas de Vivado.
+#
+# Anchos distintos por canal, y a propósito: S2MM lleva 32 bits (`2*IQ_BITS`,
+# una pareja I/Q por palabra, ver `drx_ray_packer.sv`) y MM2S lleva 16
+# (`SAMPLE_BITS`, UNA muestra por beat, ver la cabecera de `vector_source.sv`).
+# El modo Throttled está definido como más lento que tiempo real
+# (docs/plataforma/fuente-de-muestras.md), así que estrechar su bus no cuesta
+# nada que importe y a cambio el buffer de DDR que prepara el firmware es
+# exactamente un array de int16 entrelazado por canal, sin reglas de
+# alineación ni relleno. El lado de memoria sigue siendo 32 bits en los dos.
 set dma [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_dma:7.1 dma]
 set_property -dict [list \
-  CONFIG.c_include_mm2s          {0} \
+  CONFIG.c_include_mm2s          {1} \
   CONFIG.c_include_s2mm          {1} \
   CONFIG.c_include_sg            {1} \
   CONFIG.c_sg_include_stscntrl_strm {0} \
   CONFIG.c_s_axis_s2mm_tdata_width  {32} \
   CONFIG.c_m_axi_s2mm_data_width    {32} \
+  CONFIG.c_m_axis_mm2s_tdata_width  {16} \
+  CONFIG.c_m_axi_mm2s_data_width    {32} \
 ] [get_bd_cells $dma]
 
 # Reloj único de todo el BD (FCLK0, D-02) para las tres interfaces de reloj
@@ -182,7 +195,7 @@ set_property -dict [list \
 # defecto, sin "Enable Multi Channel"/relojes asíncronos) `S_AXIS_S2MM` vive
 # en el dominio de `m_axi_s2mm_aclk`, sin pin de reloj propio -- confirmado
 # listando los pines reales de la IP generada (no hay `s_axis_s2mm_aclk`).
-foreach clk_pin {s_axi_lite_aclk m_axi_sg_aclk m_axi_s2mm_aclk} {
+foreach clk_pin {s_axi_lite_aclk m_axi_sg_aclk m_axi_s2mm_aclk m_axi_mm2s_aclk} {
   connect_bd_net [get_bd_pins $ps7/FCLK_CLK0] [get_bd_pins $dma/$clk_pin]
 }
 connect_bd_net [get_bd_pins $rst_ic/peripheral_aresetn] [get_bd_pins $dma/axi_resetn]
@@ -202,10 +215,16 @@ connect_bd_net [get_bd_pins $rst_ic/peripheral_aresetn] [get_bd_pins $axi_pc_dma
 #     scatter-gather; M_AXI_S2MM, los propios datos) contra un solo slave
 #     (HP0). --------------------------------------------------------------
 set axi_ic_hp [create_bd_cell -type ip -vlnv xilinx.com:ip:axi_interconnect:2.1 axi_ic_hp]
-set_property -dict [list CONFIG.NUM_SI {2} CONFIG.NUM_MI {1}] [get_bd_cells $axi_ic_hp]
+set_property -dict [list CONFIG.NUM_SI {3} CONFIG.NUM_MI {1}] [get_bd_cells $axi_ic_hp]
 
 connect_bd_intf_net [get_bd_intf_pins $dma/M_AXI_SG]   [get_bd_intf_pins $axi_ic_hp/S00_AXI]
 connect_bd_intf_net [get_bd_intf_pins $dma/M_AXI_S2MM] [get_bd_intf_pins $axi_ic_hp/S01_AXI]
+# Z4.3: el motor de lectura es el tercer maestro contra el mismo HP0. No hay
+# conflicto de ancho de banda que valga la pena resolver con un segundo puerto
+# HP: S2MM y MM2S no corren a la vez en ninguna prueba prevista -- MM2S llena
+# la fuente, S2MM vacía el resultado -- y el modo que usa MM2S es por
+# definición más lento que tiempo real.
+connect_bd_intf_net [get_bd_intf_pins $dma/M_AXI_MM2S] [get_bd_intf_pins $axi_ic_hp/S02_AXI]
 connect_bd_intf_net [get_bd_intf_pins $axi_ic_hp/M00_AXI] [get_bd_intf_pins $ps7/S_AXI_HP0]
 
 set ic_hp_clk_pins [get_bd_pins -of_objects [get_bd_cells $axi_ic_hp] \
@@ -217,11 +236,22 @@ set ic_hp_rst_pins [get_bd_pins -of_objects [get_bd_cells $axi_ic_hp] \
                                  -filter {NAME =~ "*ARESETN*"}]
 connect_bd_net [get_bd_pins $rst_ic/peripheral_aresetn] $ic_hp_rst_pins
 
-# --- Interrupción de fin de descriptor (S2MM), Z4.0: firmware (Z4.2+) la usa
-#     para saber cuándo un rayo terminó de escribirse en DDR. Un solo origen
-#     hoy -- conexión directa a IRQ_F2P, sin `xlconcat` (haría falta en
-#     cuanto se sume una segunda fuente de interrupción). -------------------
-connect_bd_net [get_bd_pins $dma/s2mm_introut] [get_bd_pins $ps7/IRQ_F2P]
+# --- Interrupciones de fin de descriptor. S2MM (Z4.0) dice cuándo un rayo
+#     terminó de escribirse en DDR; MM2S (Z4.3) cuándo terminó de leerse un
+#     vector de estímulo. Ya son dos fuentes, así que entra el `xlconcat` que
+#     la cabecera de Z4.0 anticipaba: IRQ_F2P es un bus, no un pin suelto, y
+#     conectarle dos redes sueltas no es legal.
+#
+#     Orden de bits FIJO y documentado, porque el firmware lo necesita para
+#     elegir el ID de interrupción: In0 -> bit 0 -> S2MM, In1 -> bit 1 ->
+#     MM2S. Invertirlo haría que el ISR de rayo se disparase al acabar una
+#     carga de vectores, que es un fallo que en placa parece "el DMA entrega
+#     rayos que nadie pidió". ------------------------------------------------
+set irq_cat [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat:2.1 irq_cat]
+set_property -dict [list CONFIG.NUM_PORTS {2}] [get_bd_cells $irq_cat]
+connect_bd_net [get_bd_pins $dma/s2mm_introut] [get_bd_pins $irq_cat/In0]
+connect_bd_net [get_bd_pins $dma/mm2s_introut] [get_bd_pins $irq_cat/In1]
+connect_bd_net [get_bd_pins $irq_cat/dout] [get_bd_pins $ps7/IRQ_F2P]
 
 # --- AXI4-Stream externo: entra el rayo empaquetado desde `drx_top`
 #     (`rtl/drx_zynq_top.sv`) hacia `dma/S_AXIS_S2MM`. TDATA_NUM_BYTES=4
@@ -243,7 +273,40 @@ set_property -dict [list CONFIG.TDATA_NUM_BYTES {4} CONFIG.HAS_TKEEP {1} \
                           CONFIG.HAS_TSTRB {0} CONFIG.HAS_TLAST {1}] \
   [get_bd_intf_ports $s_axis_name]
 connect_bd_intf_net [get_bd_intf_ports $s_axis_name] [get_bd_intf_pins $dma/S_AXIS_S2MM]
-set_property CONFIG.ASSOCIATED_BUSIF "${m00_name}:${s_axis_name}" [get_bd_ports pl_clk0]
+
+# --- AXI4-Stream externo de SALIDA, Z4.3: sale el vector de estímulo desde
+#     `dma/M_AXIS_MM2S` hacia `drx_top.s_vec_*` (`rtl/drx_zynq_top.sv`).
+#     TDATA_NUM_BYTES=2 (16 bits, `SAMPLE_BITS`): una muestra por beat.
+#     HAS_TLAST por el mismo motivo que en el otro sentido -- `tlast` es lo
+#     que `vector_source` propaga como `last` a los N_CH canales, el marcador
+#     de fin de ventana que `drx_range_gate` usa para cerrar un rayo. Sin él
+#     el vector se reproduciría sin fin de ventana ninguno.
+#     `m_axis_vec_tkeep` se ignora en `drx_zynq_top.sv`: con 16 bits y una
+#     muestra por beat no hay bytes parciales que señalar. -------------------
+#     HALLAZGO REAL (corrida de Vivado del 1-oct-2026): en un puerto de
+#     interfaz externo en modo **Master**, los parametros del interfaz son de
+#     SOLO LECTURA -- se derivan del pin maestro al que se conecta, no se
+#     declaran. Fijar TDATA_NUM_BYTES/HAS_TKEEP/HAS_TSTRB/HAS_TLAST a mano
+#     produce cuatro CRITICAL WARNING `[BD 41-737] ... It is read-only.` y no
+#     tiene ningun efecto. Es lo contrario del puerto Slave `s_axis_ray` de
+#     arriba, donde fijarlos SI hace falta (ahi no hay maestro del que
+#     derivarlos, y sin HAS_TLAST explicito `axi_dma` avisa de que le falta
+#     TLAST). Por eso aqui no se fija nada y en su lugar se COMPRUEBA: el
+#     ancho tiene que ser el que `c_m_axis_mm2s_tdata_width` dejo en el DMA,
+#     y si alguien lo cambia sin tocar `rtl/drx_zynq_top.sv` el error sale en
+#     la comprobacion de mas abajo y no como una truncacion silenciosa de
+#     Verilog en el wrapper. La comprobacion va DESPUES de
+#     `validate_bd_design` a proposito: la propagacion de parametros del BD
+#     corre ahi, asi que leido antes el puerto todavia dice 1 byte (el valor
+#     con el que nace un puerto de interfaz) aunque el pin del DMA ya diga 2.
+#     Medido en esta misma sesion, no supuesto.
+set m_axis_name m_axis_vec
+create_bd_intf_port -mode Master -vlnv xilinx.com:interface:axis_rtl:1.0 $m_axis_name
+connect_bd_intf_net [get_bd_intf_pins $dma/M_AXIS_MM2S] [get_bd_intf_ports $m_axis_name]
+
+
+set_property CONFIG.ASSOCIATED_BUSIF "${m00_name}:${s_axis_name}:${m_axis_name}" \
+  [get_bd_ports pl_clk0]
 
 # Vivado elige la dirección dentro del mapa de GP0 del PS7 -- no se fija a
 # mano aquí (Z2/firmware es quien la necesitará de verdad). `assign_bd_address`
@@ -254,6 +317,22 @@ set_property CONFIG.ASSOCIATED_BUSIF "${m00_name}:${s_axis_name}" [get_bd_ports 
 assign_bd_address
 
 validate_bd_design
+
+# Comprobacion del ancho del stream de vectores -- ver el bloque de
+# `m_axis_vec` mas arriba sobre por que aqui y no alli.
+set vec_bytes [get_property CONFIG.TDATA_NUM_BYTES [get_bd_intf_ports $m_axis_name]]
+set vec_tlast [get_property CONFIG.HAS_TLAST      [get_bd_intf_ports $m_axis_name]]
+if {$vec_bytes ne "2"} {
+  error "$m_axis_name quedo con TDATA_NUM_BYTES = $vec_bytes, se esperaba 2\
+         (SAMPLE_BITS = 16, una muestra por beat -- ver la cabecera de\
+         rtl/vector_source.sv). rtl/drx_zynq_top.sv declara 16 bits y Verilog\
+         truncaria en silencio en el wrapper."
+}
+if {$vec_tlast ne "1"} {
+  error "$m_axis_name quedo sin TLAST; es lo que vector_source propaga como\
+         `last` a los N_CH canales"
+}
+puts "   m_axis_vec : TDATA_NUM_BYTES = $vec_bytes, HAS_TLAST = $vec_tlast"
 
 set bd_file [get_files ${bd_name}.bd]
 generate_target all $bd_file

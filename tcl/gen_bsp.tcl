@@ -71,11 +71,41 @@ set app_src   [file join $proj_dir drx_app src]
 set fw_src    [file join $repo_root fw src app]
 set fw_inc    [file join $repo_root fw include]
 
-foreach f {main.c drx_regs_hw.c drx_status_task.c drx_timing_cfg.c} {
+foreach f {main.c drx_regs_hw.c drx_status_task.c drx_timing_cfg.c drx_contract_io.c
+            drx_control.c drx_stimulus.c} {
   file copy -force [file join $fw_src $f] [file join $app_src $f]
 }
-foreach f {drx_regs_hw.h drx_status_task.h drx_timing_cfg.h drx_regs.h drx_params.h} {
+foreach f {drx_regs_hw.h drx_status_task.h drx_timing_cfg.h drx_contract_io.h
+            drx_control.h drx_stimulus.h drx_regs.h drx_params.h} {
   file copy -force [file join $fw_inc $f] [file join $app_src $f]
+}
+
+# La cabecera del contrato vive fuera de fw/: la genera tools/gen_contract.py a
+# partir de contract/schema/, igual que la de Python y la de Rust. Se copia, no
+# se anade por -I, porque `app create` fija los includes del proyecto de Vitis y
+# anadir una ruta externa a mano obligaria a tocar el .cproject generado -- que
+# es justo lo que AGENTS.md prohibe. Copiarla no la duplica como fuente: el
+# original sigue siendo el unico versionado, y el CI ya falla si esta desfasado
+# respecto del esquema.
+file copy -force [file join $repo_root contract generated drx_dsp_v0_1.h] \
+                 [file join $app_src drx_dsp_v0_1.h]
+
+# El catalogo de estimulos (Z4.3) lo genera tools/gen_stimulus_catalog.py en
+# build/, no se versiona -- son 62 KiB de numeros que salen del modelo, igual
+# que el `.hex` de precarga de la BRAM. tools/build_vitis.sh lo regenera antes
+# de llamar a xsct; si falta, el fallo es aqui y no un error de compilacion
+# oscuro mas adelante.
+# La plataforma sale del nombre del directorio de salida -- tools/build_vitis.sh
+# llama con `build/fw/<plataforma>`, el mismo convenio que usa para localizar el
+# XSA. No se pasa como tercer argumento para no cambiar la firma del script.
+set platform [file tail $outdir]
+set stim_dir [file join $repo_root build fw stimulus $platform]
+foreach f {drx_stimulus_catalog.c drx_stimulus_catalog.h} {
+  set src [file join $stim_dir $f]
+  if {![file exists $src]} {
+    error "falta $src: correr 'python3 tools/gen_stimulus_catalog.py --platform $platform'"
+  }
+  file copy -force $src [file join $app_src $f]
 }
 
 app build -name fsbl

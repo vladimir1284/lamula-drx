@@ -11,7 +11,9 @@
 // completos de 32 bits, no hay ninguno donde escribir solo un byte tenga
 // sentido.
 //
-// CTRL (offset REG_CTRL_ADDR) — bit 0 es `mode_coarse`, el mismo generic
+// CTRL (offset REG_CTRL_ADDR) — bit 1 (v8, Z4.3) es `vector_source_ddr`, el
+// selector entre BRAM-loop y Throttled(DDR) de `vector_source.sv`; bit 0 es
+// `mode_coarse`, el mismo generic
 // compartido por los N_CH canales que antes era `localparam ModeCoarse` fijo
 // en `drx_top.sv`. Bits 31:1 reservados: leen 0, una escritura ahí no hace
 // nada (no hay registro que actualizar).
@@ -115,6 +117,8 @@ module drx_axil_regs
 
     // Registro -> planta.
     output logic mode_coarse,
+    // v8 (Z4.3): CTRL bit 1 -- selector de modo de `vector_source`.
+    output logic vector_source_ddr,
 
     // Planta -> registro (ver cabecera: `overrun_in` ya viene latcheado desde
     // `drx_range_gate`, este bloque solo lo expone y pulsa el clear). Vector
@@ -215,13 +219,17 @@ module drx_axil_regs
   end
 
   logic mode_coarse_r;
-  assign mode_coarse = mode_coarse_r;
+  logic vector_source_ddr_r;
+  assign mode_coarse       = mode_coarse_r;
+  assign vector_source_ddr = vector_source_ddr_r;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      mode_coarse_r <= 1'b0;  // fino, el mismo default que el `ModeCoarse` fijo anterior
+      mode_coarse_r       <= 1'b0;  // fino, el mismo default que el `ModeCoarse` fijo anterior
+      vector_source_ddr_r <= 1'b0;  // BRAM-loop, el modo que existia antes de v8
     end else if (write_commit && awaddr_r == REG_CTRL_ADDR) begin
-      mode_coarse_r <= wdata_r[0];
+      mode_coarse_r       <= wdata_r[0];
+      vector_source_ddr_r <= wdata_r[1];
     end
   end
 
@@ -437,7 +445,10 @@ module drx_axil_regs
     rdata_next = 32'h0000_0000;
     unique case (araddr_r)
       REG_VERSION_ADDR: rdata_next = 32'(REGS_VERSION);
-      REG_CTRL_ADDR:    rdata_next[0] = mode_coarse_r;
+      REG_CTRL_ADDR: begin
+        rdata_next[0] = mode_coarse_r;
+        rdata_next[1] = vector_source_ddr_r;
+      end
       REG_STATUS_ADDR: begin
         for (int c = 0; c < N_CH; c++) rdata_next[c] = overrun_in[c];
       end
