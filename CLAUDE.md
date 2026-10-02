@@ -162,6 +162,22 @@ corrió en una ZedBoard física** — sin UART ni Ethernet conectados no hay for
 "primer bring-up físico" que Z4.2 promete; ese paso sigue pendiente de alguien con acceso a la placa.
 Detalle completo en `fases.md#z4`, entrada del 26-sep (más tarde).
 
+**Bring-up físico y motor de timing en silicio, 1-oct-2026.** La escalera de `bringup/` (5 escalones
+desechables, solo JTAG) cerró de punta a punta y con ella el «bring-up físico pendiente» que Z4.2
+dejó abierto. De paso salió la causa raíz de la DDR de esta placa: el board file de Digilent no fija
+`PCW_UIPARAM_DDR_USE_INTERNAL_VREF`, así que el parámetro caía al default del IP (VREF externo) y la
+DDR3 devolvía basura aunque el controlador reportara «normal operation» — corregido en
+`tcl/gen_zynq_bd.tcl` y verificado aislándolo hasta `DDRIOB_DDR_CTRL` (`0xF8000B6C`). **Todo
+artefacto de `build/` anterior al 1-oct-2026 es defectuoso.** Después, el firmware pasó a escribir de
+verdad la configuración del motor de timing (`fw/src/app/drx_timing_cfg.c`, nuevo): `TIMING_STATUS`
+baja de `0x6` (los dos lotes inválidos por D-09 con los registros en su valor de reset) a `0x1`
+(`radial_done` solo), y `TRIG_COUNT` avanza a 223,7 pulsos/s medidos contra los 223,47 predichos.
+Eso cubre la medida «en placa» que le faltaba a ZM2 salvo el osciloscopio en los pines de `trig_out`.
+`tools/make_boot.sh` empaquetaba además el bitstream equivocado (`drx_top_tieoff.bin`, sin PS7, con
+el AXI-Lite inerte) — corregido el mismo día. `STATUS (overrun)` y `GATE_TRUNCATED` siguen en `0x7`
+a propósito: nadie programa descriptores del AXI DMA todavía, eso es Z4.4. Detalle completo en
+`bringup/README.md` y en `fases.md#z4`, entrada del 1-oct.
+
 Lo que sí está hecho y verificado, además de lo de arriba:
 
 - El sitio de documentación se construye y se despliega solo a
@@ -207,12 +223,12 @@ firmware real (FreeRTOS, ensamblado de rayos, lwIP) sigue siendo el resto de Z4,
 de esto se probó en una ZedBoard física. Dos bloqueos de entorno nuevos en esta máquina, mismo patrón
 que el Pi-hole del 21-sep (de sistema, no arquitectónicos): `xsct` necesita `Xvfb` y, aparte,
 `libtinfo.so.5` (Ubuntu 22.04 solo trae `libtinfo6`; el paquete `libtinfo5` vive en `universe`) —
-ninguno estaba instalado, los dos resueltos con `apt-get install`. Hallazgo real sin investigar
-todavía: `bootgen` avisa de solapamiento de rangos entre `fsbl.elf`/`drx_top.bin`/`drx_app.elf` — la
-imagen se genera igual y la reproducibilidad byte a byte se cumple, pero no está confirmado si es el
-falso positivo conocido de bootgen para particiones de bitstream (sin dirección de carga real, se
-cargan por PCAP) o un problema real de mapa de memoria; si aparece un fallo de arranque en placa,
-empezar por aquí. Detalle completo en `fases.md#z1`, entrada del 26-sep.
+ninguno estaba instalado, los dos resueltos con `apt-get install`. El aviso de solapamiento de rangos que `bootgen` emite entre
+`fsbl.elf`/`drx_top.bin`/`drx_app.elf` quedó **cerrado como falso positivo el 1-oct-2026**, con
+datos: `bootgen -arch zynq -read BOOT.BIN` da `load_addr` `0x0` para el FSBL (longitud `0x18008`),
+`0x0` para el bitstream y `0x00100000` para `drx_app.elf` — el FSBL termina muy por debajo de
+`0x100000`, y el único solapamiento es contra el `0x0` del bitstream, que no es una dirección de
+memoria (se carga por PCAP). Ya no es deuda abierta. Detalle completo en `fases.md#z1`, entrada del 26-sep.
 
 **Montar el runner de CI `[self-hosted, vivado]`** ya **no** está en esta lista: cerrado el
 21-sep-2026. El bloqueo de `gh auth login` era de credenciales (necesitaba `--web` o un PAT, no

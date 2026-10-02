@@ -40,6 +40,7 @@
 #include "xil_printf.h"
 
 #include "drx_status_task.h"
+#include "drx_timing_cfg.h"
 
 #if LWIP_IPV6==1
 #include "lwip/ip.h"
@@ -237,7 +238,15 @@ int main_thread()
 	/* Z4.2: bring-up del driver de registros AXI-Lite (drx_regs_hw.c), antes
 	 * de lwIP y sin depender de el -- si el enlace Ethernet no esta arriba
 	 * todavia se puede seguir viendo por UART que el PS7 llega al mapa de
-	 * registros de drx_top. */
+	 * registros de drx_top.
+	 *
+	 * El motor de timing se arranca ANTES y de forma sincrona, no como tarea:
+	 * en reset los registros de timing valen 0, D-09 marca los dos lotes
+	 * invalidos y TIMING_STATUS vale 0x6. Si la tarea de estado arrancase
+	 * primero imprimiria ese 0x6 de reset como si fuese un fallo. Ver
+	 * fw/src/app/drx_timing_cfg.c. */
+	(void)DrxTiming_Start();
+
 	DrxStatusTask_Create();
 
 	/* initialize lwIP before calling sys_thread_new */

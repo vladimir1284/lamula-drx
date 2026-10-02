@@ -11,24 +11,45 @@
 #   3. Semilla de implementación fija (`-seed`) y sin pasos dependientes del
 #      número de hilos.
 #
-# ESTADO: ejecutado por primera vez el 21-sep-2026 (CI, self-hosted). Llega
-# hasta donde puede llegar hoy: falta fsbl.elf/drx_app.elf (Z4), así que el
-# empaquetado real de BOOT.BIN -- y con él ZM0 -- sigue pendiente de eso.
+# ESTADO: ejecutado por primera vez el 21-sep-2026 (CI, self-hosted). Desde el
+# 26-sep-2026 empaqueta fsbl.elf y drx_app.elf reales (Z4.2) y BOOT.BIN sale
+# reproducible byte a byte. NUNCA se ha arrancado una ZedBoard desde SD: el
+# bring-up físico del 1-oct-2026 fue por JTAG (ver bringup/README.md).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 platform="${1:-zedboard}"
 outdir="${2:-$repo_root/build/boot/$platform}"
-gwdir="$repo_root/build/gw/$platform"
+# El bitstream tiene que ser el del flujo `-top zynq`, que es el que lleva el
+# PS7 y, con él, el esclavo AXI-Lite `m_axi_regs` que direcciona el firmware
+# (fw/src/app/drx_regs_hw.c). `build/gw/$platform/` guarda el otro flujo,
+# `drx_top_tieoff`: mismo datapath, pero sin PS7 y con el AXI-Lite atado a
+# valores inertes. Hasta el 1-oct-2026 este script empaquetaba ese, así que
+# todo BOOT.BIN anterior lleva un bitstream en el que el esclavo AXI que
+# drx_app direcciona no existe. Nadie lo detectó porque nunca se arrancó
+# desde SD.
+#
+# Es además el mismo directorio del que tools/build_vitis.sh saca el XSA: el
+# bitstream y el BSP/FSBL/app que van dentro de BOOT.BIN salen de la misma
+# corrida de Vivado, que es la única forma de que el mapa de direcciones del
+# firmware case con el del hardware.
+gwdir="$repo_root/build/gw/${platform}_zynq"
 fwdir="$repo_root/build/fw/$platform"
 
 for tool in bootgen; do
   command -v "$tool" >/dev/null || { echo "falta $tool en el PATH" >&2; exit 1; }
 done
 
+bit="$gwdir/drx_zynq_top.bin"
+[[ -f "$bit" ]] || {
+  echo "falta $bit: correr primero 'vivado -mode batch -source tcl/build.tcl \
+-tclargs -platform $platform -top zynq -step xsa'" >&2
+  exit 1
+}
+
 mkdir -p "$outdir"
 cp "$repo_root/tcl/boot/boot.bif" "$outdir/boot.bif"
-cp "$gwdir/drx_top_tieoff.bin" "$outdir/drx_top.bin"
+cp "$bit" "$outdir/drx_top.bin"
 for artefact in fsbl.elf drx_app.elf; do
   [[ -f "$fwdir/$artefact" ]] && cp "$fwdir/$artefact" "$outdir/$artefact"
 done

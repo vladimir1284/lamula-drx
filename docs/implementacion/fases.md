@@ -1305,6 +1305,81 @@ Trabajo:
       bring-up físico" que el propio nombre de la fase promete sigue pendiente de alguien con acceso
       a la placa y un cable serie/Ethernet.
 
+!!! success "1-oct-2026: el motor de timing corriendo en silicio, y `BOOT.BIN` deja de llevar el bitstream equivocado"
+    Dos cosas en la misma sesión, las dos sobre la ZedBoard física que la escalera de bring-up
+    (`bringup/README.md`) dejó caracterizada. **No es Z4.3** tal como la define el orden congelado
+    el 26-sep —framer del contrato, `vector_source` por DMA, MM2S, `test_stimulus_select`—; es el
+    paso de bring-up que faltaba entre Z4.2 y Z4.4, y la medida «en placa» que es lo único que le
+    falta al hito ZM2.
+
+    - **`tools/make_boot.sh` empaquetaba `drx_top_tieoff.bin`**, el flujo **sin** PS7, con el
+      AXI-Lite atado a valores inertes — mientras que el FSBL y `drx_app.elf` se compilan contra
+      `build/gw/zedboard_zynq/drx_zynq_top.xsa`, donde `m_axi_regs` sí existe. Todo `BOOT.BIN`
+      anterior al 1-oct-2026 lleva por tanto un bitstream en el que el esclavo AXI que el firmware
+      direcciona no está presente. Nadie lo detectó porque **`BOOT.BIN` nunca se arrancó desde SD**:
+      el bring-up físico fue por JTAG. Corregido a `build/gw/${platform}_zynq/drx_zynq_top.bin` —
+      el mismo directorio del que `tools/build_vitis.sh` saca el XSA, que es lo que garantiza que
+      el mapa de direcciones del firmware y el del hardware salgan de la misma corrida de Vivado.
+      Con la corrección, `BOOT.BIN` sigue saliendo reproducible byte a byte.
+    - **El aviso de solapamiento de `bootgen` queda cerrado como falso positivo**, con datos y no
+      por analogía. `bootgen -arch zynq -read BOOT.BIN` da `load_addr` = `0x00000000` para
+      `fsbl.elf` (longitud `0x18008`), `0x00000000` para el bitstream y `0x00100000` para
+      `drx_app.elf` (longitud `0x30008`). El FSBL termina en `0x18008`, muy por debajo de
+      `0x100000`: el único solapamiento es contra el `0x0` del bitstream, que no es una dirección
+      de memoria — una partición de bitstream se carga por PCAP, no a DDR. Ya no es deuda abierta.
+    - **`fw/src/app/drx_timing_cfg.c` + `fw/include/drx_timing_cfg.h` (nuevos):** el firmware por
+      fin escribe la configuración del motor de timing. Hasta ahora todos los registros de timing
+      valían su valor de reset, 0, que D-09 rechaza (`pulse_width` 0 no está en
+      `PULSE_WIDTH_CYCLES`, `bins` 0 está por debajo del mínimo de 1) — con los dos lotes
+      inválidos `drx_timing_engine` mantenía el secuenciador parado, no salía ningún `pulse_trig`
+      y por tanto no había `ray_start`. Eso es exactamente lo que se vio en placa como
+      `TIMING_STATUS = 0x6` con `TRIG_COUNT` clavado en 0. La secuencia que implementa
+      `DrxTiming_Start()` es: parar el secuenciador (los registros solo son seguros de escribir con
+      el motor parado, cabecera de `drx_prf_batch_seq.sv`) → escribir → **releer por AXI-Lite y
+      comparar** → limpiar los sticky de reset → arrancar → medir. La relectura no es adorno:
+      separa un camino de registros roto (los valores no vuelven) de un rechazo de D-09 (vuelven
+      bien pero `TIMING_STATUS` marca el lote inválido), que son dos fallos con el mismo síntoma
+      visible.
+    - **Todos los valores se derivan de `fw/include/drx_params.h`**, ninguno es un número suelto
+      (D-02). `prf_div` de cada lote es el máximo de **dos** pisos, no uno: el de rango no ambiguo
+      del lote (D-09, que el RTL sí comprueba) y `PRF_DIV_MIN`, el techo de PRF del sistema
+      (1200 Hz), que `drx_timing_config_valid.sv` **no** comprueba. Para el lote bajo manda el
+      primero (767.198 > 208.333); para el alto manda el segundo, porque `PRF_DIV_MIN_HIGH` vale
+      191.800 y `config/params.toml` ya avisa de que ese piso es no-vinculante hoy. Los bins por
+      lote se calculan como `prf_div / R1`, acotados por `BINS_MODE_FINE` y con un bin de guarda,
+      porque un rayo de N bins ocupa `N · R1` ciclos y pasarse del PRI dispara `ray_truncated`.
+      Configuración resultante: lote bajo `prf_div` 767.198 (81,47 Hz) / `pulse_width` 825 /
+      3687 bins / 6 pulsos; lote alto 208.333 (300,00 Hz) / 200 / 1000 bins / 41 pulsos; los 4
+      canales de `drx_trigger_gen` escalonados a 0/10/20/30 µs con anchos de 1/2/4/8 µs, para que
+      una sola punta de osciloscopio pueda identificar cuál es cuál en los pines de `trig_out` del
+      Pmod JA.
+    - **Verificado en ZedBoard**, por JTAG, con el bitstream y el XSA ya existentes (ni una línea
+      de RTL cambió, así que no hizo falta P&R nuevo). Por `/dev/ttyACM0`:
+      `drx_timing: en 1000 ms TRIG_COUNT avanzo 217 (esperado ~223), TIMING_STATUS = 0x1`. El
+      `0x1` es `radial_done` y **solo** `radial_done`: los bits 1 y 2 (`config_invalid` de los dos
+      lotes) están en 0, es decir D-09 acepta la configuración en silicio. La tarea de estado
+      confirma el régimen permanente: `TRIG_COUNT` avanza ~223,7 pulsos/s medidos contra los
+      223,47 que predice `(n_bajo + n_alto) / duración del radial` — 0,1 % de diferencia, que es
+      la confirmación de que la PRF en placa es la pedida, no solo de que el contador se mueve.
+    - **Hallazgo de método:** la primera ventana de medida eran 500 ms y dio 99 pulsos frente a
+      los 111 del promedio, un 11 % de menos que no era un fallo del motor. Los pulsos no están
+      repartidos de forma uniforme dentro de un radial —6 pulsos a ~81 Hz en el lote bajo, 41 a
+      300 Hz en el alto—, así que una ventana corta que arranca en el borde del radial cae casi
+      entera en la parte dispersa. Ventana subida a 1000 ms (casi 5 radiales) y criterio convertido
+      en una banda de ±12,5 % alrededor del promedio: así deja de ser «`TRIG_COUNT` se movió» y
+      pasa a ser «`TRIG_COUNT` se mueve a la PRF pedida».
+    - **`STATUS (overrun) = 0x7` y `GATE_TRUNCATED = 0x7` siguen activos, y es lo esperado.**
+      `rtl/drx_zynq_top.sv:175` conecta `m_ray_ready` a `s_axis_ray_tready` del AXI DMA, y **nadie
+      programa descriptores todavía** — eso es Z4.4. Con `TREADY` en bajo para siempre, el
+      `drx_ray_packer` no drena, `gate_ready` se queda en bajo, cada banco de `drx_range_gate`
+      desborda (`overrun`) y cada `ray_start` nuevo encuentra el banco a medias
+      (`ray_truncated`, D-14). Los dos diagnósticos están reportando correctamente la ausencia de
+      consumidor, no un fallo del motor de timing. El bin de guarda que descuenta
+      `bins_for_pri()` no se puede comprobar hasta que el DMA drene de verdad.
+    - Siguiente paso: **Z4.3** de verdad, tal como lo fija el orden congelado — framer/parser del
+      contrato en C, `vector_source` con modo Throttled(DDR) alimentado por DMA, AXI DMA MM2S y el
+      mensaje `test_stimulus_select`.
+
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
 Trabajo:

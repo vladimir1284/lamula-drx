@@ -16,6 +16,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "drx_params.h"
+
 uint32_t DrxReg_Read(uint32_t offset);
 void DrxReg_Write(uint32_t offset, uint32_t value);
 
@@ -33,6 +35,45 @@ void DrxReg_ClearGateTruncated(uint32_t mask);
 
 uint32_t DrxReg_ReadTimingStatus(void);
 void DrxReg_ClearTimingStatus(uint32_t mask);
+
+/* --- Motor de timing (Z2, D-13/D-09/D-15) --------------------------------
+ *
+ * Los registros de configuracion de abajo solo son seguros de escribir con el
+ * secuenciador parado: drx_prf_batch_seq.sv no los vuelve a leer hasta el
+ * primer pulso tras rearmar, asi que un cambio a mitad de radial no corrompe
+ * el lote en curso pero si puede dejar el siguiente a medias. El orden
+ * correcto es DrxReg_TimingDisable() -> DrxReg_WriteTimingConfig() ->
+ * DrxReg_TimingEnable(), y es el que implementa drx_timing_cfg.c.
+ *
+ * Unidades: prf_div, pulse_width, trig_delay y trig_width estan todos en
+ * ciclos de FS_HZ. bins_* es un conteo de muestras decimadas, no de ciclos.
+ */
+typedef struct {
+    uint32_t prf_div_low;   /* ciclos de FS_HZ por PRI del lote bajo  */
+    uint32_t prf_div_high;  /* idem, lote alto                        */
+    uint16_t pulse_width_low;   /* tiene que estar en DRX_PULSE_WIDTH_CYCLES */
+    uint16_t pulse_width_high;
+    uint16_t n_pulses_low;  /* pulsos antes de pasar al lote alto     */
+    uint16_t n_pulses_high; /* pulsos antes de radial_done            */
+    uint32_t bins_low;      /* bins de range-gate del lote bajo (D-15) */
+    uint32_t bins_high;
+    uint32_t trig_delay[DRX_N_TRIGGERS];
+    uint32_t trig_width[DRX_N_TRIGGERS]; /* cada uno tiene que ser >= 1 */
+} DrxTimingConfig;
+
+void DrxReg_TimingDisable(void);
+void DrxReg_TimingEnable(void);
+bool DrxReg_TimingEnabled(void);
+
+void DrxReg_WriteTimingConfig(const DrxTimingConfig *cfg);
+
+/* Relee por AXI-Lite los registros RW que acaba de escribir
+ * DrxReg_WriteTimingConfig y los compara con `cfg`. Separa dos fallos que de
+ * otro modo se confunden: un camino de escritura/lectura roto (los valores no
+ * vuelven) frente a una configuracion que el hardware rechaza por D-09 (los
+ * valores vuelven bien pero TIMING_STATUS marca el lote invalido). Imprime
+ * por UART cada registro que no coincide. */
+bool DrxReg_VerifyTimingConfig(const DrxTimingConfig *cfg);
 
 /* true si VERSION == DRX_REGS_VERSION (fw/include/drx_regs.h): confirma que
  * el firmware que corre y el bitstream cargado hablan el mismo mapa de
