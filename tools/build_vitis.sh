@@ -31,7 +31,15 @@ mkdir -p "$outdir"
 # repo -- el mismo que usa el Makefile. Fuera de él, `python3` pelado falla con
 # ModuleNotFoundError y no con algo que se pueda confundir con un fallo de Vitis.
 py="$repo_root/.venv/bin/python"
-[[ -x "$py" ]] || py=python3
+[[ -x "$py" ]] || {
+  # Antes caía a `python3` pelado, y el fallo salía como
+  # `ModuleNotFoundError: No module named 'numpy'` en mitad de un script que
+  # dice llamarse build_vitis: parecía un problema de Vitis. El venv del repo
+  # es la única forma soportada de correr los generadores (dependencias
+  # pinadas en requirements-dev.txt), así que se pide explícitamente.
+  echo "falta $py: correr primero 'make venv'" >&2
+  exit 1
+}
 "$py" "$repo_root/tools/gen_stimulus_catalog.py" --platform "$platform"
 
 xsct "$repo_root/tcl/gen_bsp.tcl" "$xsa" "$outdir"

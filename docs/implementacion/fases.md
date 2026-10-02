@@ -1577,6 +1577,18 @@ Trabajo:
     encoders SSI (P-02), así que todo rayo sale marcado `azel_invalid`, y el `timestamp_ns` se deriva
     de `trig_count` y FS_HZ: monótono y exacto en ciclos, pero no atado a ninguna hora de pared.
 
+    **CI en rojo desde Z4.3, arreglado aquí.** El job `gateware` del runner propio no tiene entorno
+    de Python: es otro job, con su propio checkout limpio, y no hereda el `.venv` que monta el job
+    de substrato. Desde Z4.3 `tools/build_vitis.sh` genera el catálogo de estímulos con el modelo
+    dorado, que necesita numpy, así que el paso «BSP/FSBL/app (Vitis)» moría en 0,13 s con
+    `ModuleNotFoundError: No module named 'numpy'` — después de 27 minutos de síntesis. Las corridas
+    de Z4.3 y de la primera de Z4.4 quedaron ambas en rojo por esto, y **no se miró hasta después de
+    pushear Z4.4**: la lección operativa es que un push no está cerrado hasta que el job termina.
+    `ci.yml` monta ahora el venv en ese job (con `$HOME/.local/bin` en el PATH, porque `uv` está
+    instalado para el usuario y el servicio systemd del runner no lo trae), y `build_vitis.sh` deja
+    de caer a un `python3` pelado: falla diciendo «correr primero `make venv`». Verificado corriendo
+    los dos pasos en el propio workspace del runner antes de volver a pushear.
+
     - Siguiente paso: **Z4.5** — status/BITE sobre el contrato y actuación de AFC, que obliga a
       regenerar el IP del DDS Compiler con `S_AXIS_CONFIG` y a repasar la matriz 16/16 de D-12.
 

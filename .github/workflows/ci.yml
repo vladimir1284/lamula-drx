@@ -89,6 +89,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # El runner propio NO hereda el entorno de Python del job de substrato:
+      # son dos jobs y cada uno parte de un checkout limpio. Hace falta aquí
+      # porque desde Z4.3 `tools/build_vitis.sh` genera el catálogo de
+      # estímulos con el modelo dorado, y eso necesita numpy — que no está en
+      # el `python3` del sistema. Sin este paso el job moría en 0,13 s con
+      # `ModuleNotFoundError: No module named 'numpy'`, y así murieron las
+      # corridas de Z4.3 y Z4.4.
+      #
+      # `uv` está instalado para el usuario, no en /usr/local, y el servicio
+      # systemd del runner no trae ~/.local/bin en el PATH.
+      - name: Entorno de Python
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          make venv
+
       # El cierre de temporización se corre TAMBIÉN con el FS_HZ real de la ZU9
       # aunque no haya placa: es la única forma de que la deuda de la entrada D2
       # del registro delta no se descubra el día que llegue el hardware.
