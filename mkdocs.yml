@@ -70,6 +70,15 @@ nav:
       - Substrato Z0 (qué existe y cómo se corre): implementacion/substrato.md
       - Mapa de registros AXI-Lite (v1, Z1): implementacion/registros.md
       - Infraestructura: implementacion/infraestructura.md
+  - Documentación de IPs:
+      - Visión General y Flujo de Datos: ip/index.md
+      - IP Fuente de Muestras SSA (vector_source): ip/vector_source.md
+      - IP Cadena DDC (drx_ddc): ip/drx_ddc.md
+      - IP Motor de Timing y Triggers (drx_timing_engine): ip/drx_timing_engine.md
+      - IP Range Gate y Ping-Pong (drx_range_gate): ip/drx_range_gate.md
+      - IP Empaquetador de Rayos (drx_ray_packer): ip/drx_ray_packer.md
+      - IP Mapa de Registros AXI-Lite (drx_axil_regs): ip/drx_axil_regs.md
+      - IP Unidades Aritméticas (round & saturate): ip/drx_round_saturate.md
   - Verificación:
       - Plan de testing: pruebas/plan-testing.md
       - Modelo dorado (oráculo): pruebas/modelo-dorado.md
