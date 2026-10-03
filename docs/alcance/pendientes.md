@@ -1987,3 +1987,34 @@ tienen que cambiar a la vez o el reparto por canal se desplaza sin ningún error
 Mientras tanto, la medida de rayos de Z4.4 corre en BRAM-loop, cuyo contenido
 (`tools/gen_vector_source_init.py`) es exactamente el caso `tono_if` del catálogo —comprobado array
 a array—, así que la comparación contra el modelo dorado sigue siendo posible.
+
+### P-17 · Sin presupuesto de latencia para la ISR del S2MM { #p-17 }
+
+**Estado:** abierto, encontrado 2-oct-2026 (bring-up de Z4.5) · **Dueño:** Z5 · **Bloquea:** nada
+hoy en ZedBoard. Sí el dimensionado de la ZU9 y la campaña de soak.
+
+Nadie ha medido **cuánto tiempo puede estar el Cortex-A9 sin atender la interrupción de fin de
+descriptor del S2MM antes de perder un rayo**. El anillo de `fw/src/app/drx_ray.c` tiene
+`DRX_RAY_BUFFERS` buffers; mientras la ISR no corra, nadie los devuelve al DMA, y cuando se agotan
+el range-gate desborda (`STATUS (overrun)`). Ese número —el margen en milisegundos— no está escrito
+en ningún sitio ni se deriva de ningún parámetro: hoy es un efecto lateral de cuántos buffers se
+reservaron.
+
+El hallazgo salió por accidente y con el instrumento equivocado. Durante el bring-up de Z4.5,
+`xsct` detiene el A9 en cada `mrd`, y una ráfaga de 300 lecturas lo dejó parado ~7 s: el anillo se
+secó y aparecieron `STATUS (overrun) = 0x7` donde 600 s de marcha ociosa no daban ninguno (detalle
+en [fases.md](../implementacion/fases.md#z4), entrada del 2-oct noche). **Eso en sí no es un riesgo
+de producción** —no habrá un depurador leyendo DDR en la ZU9— pero demuestra que el margen existe,
+que es finito y que nadie sabe cuánto vale.
+
+Por qué importa más en la ZU9 que aquí, y esto es inferencia, no medida: con dos FMC213 el caudal
+hacia DDR es mucho mayor, así que el mismo número de buffers cubre menos tiempo. Y el candidato
+realista a robar ese tiempo no es un depurador sino el propio sistema — una sección crítica larga,
+una tarea de prioridad alta, el transporte de Z4.6 copiando un rayo entero, o la pila de red con
+las interrupciones deshabilitadas.
+
+**Condición de cierre:** un número medido, no estimado — cuántos milisegundos de ISR bloqueada
+aguanta el anillo a PRF nominal, obtenido deshabilitando interrupciones a propósito durante un
+intervalo creciente hasta ver el primer `overrun`, y comparado con el que predice
+`DRX_RAY_BUFFERS × PRI`. Con eso, o se dimensiona `DRX_RAY_BUFFERS` contra un presupuesto declarado
+de latencia de interrupción, o se declara el presupuesto y se verifica en el soak de 72 h de Z5.
