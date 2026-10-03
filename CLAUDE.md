@@ -322,8 +322,9 @@ mapa de registros **v10** (`TIMING_CTRL` bit 1, `timing_paced`, reset 0 — con 
 netlist es la de v9). Verificado comparando la traza paceada contra la del mismo motor sin pacear,
 1804 avances muestra a muestra, **y con RTL mutado**: quitar `advance` del `assign` de
 `pulse_trig` da «10 pulsos con el motor parado», quitarlo de los `always_ff` hace divergir la
-traza en el avance 134. **Lo que falta: la medida en placa** — el barrido de los ocho vectores con
-`timing_paced = 1` contra el modelo dorado, y el P&R. Y esto NO convierte Throttled(DDR) en fuente
+traza en el avance 134. P&R cierra en **WNS = 2,394 ns, WHS = 0,013 ns**, mejor que los 2,304 ns de Z4.5.
+**Lo que falta: la medida en placa** — el barrido de los ocho vectores con `timing_paced = 1`
+contra el modelo dorado. Y esto NO convierte Throttled(DDR) en fuente
 de tiempo real: no valida nada dependiente de la tasa.
 
 **Infraestructura de medida, 3-oct-2026.** `tools/net_drx_link.sh` deja el enlace cableado al DRx

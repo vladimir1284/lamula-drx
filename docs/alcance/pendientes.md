@@ -2025,9 +2025,13 @@ en BRAM-loop. Y el validador D-09 comprueba PRF × rango en ciclos: con el motor
 real se estira, así que el check queda **conservador** (nunca rechaza de más) pero deja de hablar
 del PRF real. Una configuración paceada no es una configuración de tiempo real validada.
 
+**P&R:** cierra en **WNS = 2,394 ns, WHS = 0,013 ns**, mejor que los 2,304 ns de Z4.5 — el pacer
+no añade camino combinacional a la ruta crítica, solo clock-enables sobre registros que ya
+existían.
+
 **Falta para darlo por cerrado en placa:** correr el barrido de los ocho vectores con
-`timing_paced = 1` y comparar cada rayo contra el modelo dorado. El RTL y el firmware están; la
-medida no.
+`timing_paced = 1` y comparar cada rayo contra el modelo dorado. El RTL, el firmware y el P&R
+están; la medida no.
 
 Mientras tanto, la medida de rayos de Z4.4 corre en BRAM-loop, cuyo contenido
 (`tools/gen_vector_source_init.py`) es exactamente el caso `tono_if` del catálogo —comprobado array

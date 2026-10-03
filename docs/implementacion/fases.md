@@ -2058,8 +2058,13 @@ Trabajo:
     sigue midiendo en BRAM-loop. Y el validador D-09 comprueba PRF × rango en ciclos: con el motor
     paceado el PRF real se estira, así que el check queda conservador (nunca rechaza de más) pero
     deja de hablar del PRF real. Una configuración paceada no es una configuración de tiempo real
-    validada. **Falta la medida en placa:** el barrido de los ocho vectores con `timing_paced = 1`
-    contra el modelo dorado. El RTL y el firmware están; el P&R y la corrida, no.
+    validada. **P&R cerrado el mismo día, y mejora:** `-top zynq -step impl` da
+    **WNS = 2,394 ns, WHS = 0,013 ns** («All user specified timing constraints are met»), contra
+    los 2,304 ns de Z4.5. Era lo esperable y conviene decir por qué, porque un P&R que mejora
+    suele significar que algo no se sintetizó: el pacer es un AND de tres bits y los `advance`
+    son clock-enables sobre registros que ya existían, no caminos combinacionales nuevos; la ruta
+    crítica sigue siendo PS7↔interconnect↔`drx_axil_regs`, sin tocar. **Falta la medida en
+    placa:** el barrido de los ocho vectores con `timing_paced = 1` contra el modelo dorado.
 
 
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
