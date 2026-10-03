@@ -2214,3 +2214,33 @@ cerrado como artefacto de medida del cliente de prueba**, 3-oct-2026.
 Lo que esto NO dice: que el pool no se pueda llenar nunca. Dice que a 223,4 rayos/s, con un
 consumidor que vacía el socket sin pausas, no se llena. El DSP real tiene su propia latencia de
 proceso, y `queue_full` sigue siendo el contador que hay que mirar cuando aparezca.
+
+### P-20 · `first_after_config` existe en el contrato y el firmware nunca lo pone { #p-20 }
+
+**Estado:** abierto, encontrado 3-oct-2026 (al escribir el conductor del barrido) · **Dueño:**
+Z4.6 · **Bloquea:** nada funcional. Sí la solidez de cualquier medida que tenga que saber a qué
+configuración pertenece un rayo.
+
+`RayFlag.FIRST_AFTER_CONFIG` (valor 8) está en el esquema desde Z0 y `DrxRayContext` tiene el
+campo, pero `fw/src/app/drx_ray_ctx.c` lo escribe siempre a `false`:
+
+```c
+out->first_after_config = false;
+```
+
+Nadie lo había necesitado hasta ahora porque nada cambiaba de configuración en caliente. Con el
+catálogo de estímulos elegible por mensaje (Z4.3) y el barrido de P-16, sí hace falta: tras un
+`test_stimulus_select` hay rayos en vuelo que todavía llevan el vector viejo, y el DDC tarda en
+vaciar su tubería. Sin la bandera, `tools/sweep_catalogo.py` tiene que decidirlo por tiempo
+(`--settle`, 2 s por defecto), que es una heurística y no una medida.
+
+**Por qué importa más de lo que parece.** Un `--settle` corto da un falso FALLO (se midió el
+vector viejo). Uno largo no da un falso ACIERTO —el vector nuevo ya suena— pero alarga el barrido
+y, lo que es peor, convierte un fallo real de conmutación en un PASS: si el firmware no llegara a
+cambiar de vector, un `--settle` generoso no lo distinguiría de uno que sí cambió, porque el
+criterio no mira la configuración sino el reloj.
+
+**Condición de cierre:** que `drx_ray_ctx.c` ponga `first_after_config` en el primer rayo que
+empieza después de aplicar una configuración —cualquiera: `config`, `afc`,
+`test_stimulus_select`— y que el conductor lo use en vez del temporizador. El mismo enganche que
+ya aplica `apply_at_seq` entre rayos en `drx_ray.c` es donde va.

@@ -2058,7 +2058,34 @@ Trabajo:
     sigue midiendo en BRAM-loop. Y el validador D-09 comprueba PRF × rango en ciclos: con el motor
     paceado el PRF real se estira, así que el check queda conservador (nunca rechaza de más) pero
     deja de hablar del PRF real. Una configuración paceada no es una configuración de tiempo real
-    validada. **P&R cerrado el mismo día, y mejora:** `-top zynq -step impl` da
+    validada. **El conductor del barrido existe y está validado ANTES que el bitstream**, que era el punto:
+    `tools/sweep_catalogo.py` no reimplementa nada —contrato y reensamblado de `mock_dsp.py`,
+    medida espectral y oráculo de `dump_ray.py` con sus tolerancias— y lo propio es el bucle y el
+    criterio. Se ejercitaron sus cuatro ramas contra la placa corriendo todavía el firmware sin
+    P-16, de modo que el día que se corran juntos lo único sin probar sea P-16:
+
+    | rama | cómo se provocó | resultado |
+    |---|---|---|
+    | coincide | BRAM-loop contra `tono_if` | −9,03 dBFS medidos y de modelo, pico en continua |
+    | discrimina | el MISMO flujo contra `tono_desplazado` | DISCREPA: el modelo pone el pico en −208, se mide en 0. Exit 1 |
+    | sin rayo | `test_stimulus_select` en bucle | `config_ack error=ok` y 7 s sin un solo rayo |
+    | rechazo | `--id-crudo 99` | `config_ack error=vector_unknown`. Exit 1 |
+
+    La tercera fila es un resultado por sí sola: **P-16 reproducido desde el lado del DSP por
+    primera vez**. Hasta hoy solo se había visto por JTAG, en `GATE_TRUNCATED`; ahora se ve como lo
+    verá quien use el receptor — se pide un vector, el DRx dice que sí, y deja de haber rayos.
+
+    Y el ensayo sacó un bug propio, de los de divergencia silenciosa: la vuelta a BRAM-loop al
+    terminar las pasadas (`DrxStimulusTask`) limpiaba el bit de DDR pero **no** el de pacing,
+    porque es un camino distinto de `DrxStimulus_Stop()`. Los dos pasan ahora por `set_modo_ddr()`.
+
+    Lo más flojo de la medida, dicho antes de que muerda: el criterio de «este rayo ya es del
+    vector nuevo» es temporal (`--settle`), porque `DrxRayContext.first_after_config` existe en el
+    contrato pero el firmware lo deja siempre en `false`. Si algún vector da un falso fallo
+    intermitente, el primer sospechoso es ese número y no el DDC. Lo correcto es que el firmware
+    ponga la bandera.
+
+    **P&R cerrado el mismo día, y mejora:** `-top zynq -step impl` da
     **WNS = 2,394 ns, WHS = 0,013 ns** («All user specified timing constraints are met»), contra
     los 2,304 ns de Z4.5. Era lo esperable y conviene decir por qué, porque un P&R que mejora
     suele significar que algo no se sintetizó: el pacer es un AND de tres bits y los `advance`
