@@ -137,7 +137,7 @@ def test_el_retune_de_afc_cambia_el_incremento_sin_reiniciar_la_fase():
     explicar.
     """
     base = NcoTaylor.from_params(PARAMS)
-    nuevo_inc = base.phase_inc + 1_000_000
+    nuevo_inc = base.phase_inc + 1_000_000  # clock-const-ok: delta de fase, no reloj
     k = 7
 
     retune = NcoTaylor.from_params(PARAMS, retune_at=k, retune_inc=nuevo_inc)

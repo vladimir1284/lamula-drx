@@ -387,12 +387,26 @@ cambiarlo.
   **entre rayos** (`apply_at_seq` del mensaje `afc`), nunca dentro de uno, así que la discontinuidad
   cae en una frontera donde a nadie le importa.
 
+- **El strobe va REGISTRADO, y eso no es un detalle de estilo.** Los `*_clear` de este mismo módulo
+  son combinacionales desde `write_commit` y están bien así, porque leen `wdata_r` directamente: el
+  dato que acompaña al pulso ya es el bueno. `nco_pinc_we` no puede serlo. Su consumidor
+  (`drx_ddc_top`) latchea `nco_pinc` con el flanco en que ve el pulso, y `nco_pinc_r` no vale lo
+  nuevo hasta el final de ese ciclo. Con el strobe combinacional, **el DDC se llevaba la palabra de
+  la escritura anterior**. Un ciclo de retardo alinea el pulso con el dato. Medido en placa, no
+  deducido — ver el hallazgo del 2-oct-2026 en [fases.md](fases.md#z4).
+
 Verificación en L0: `sim/tb/tb_drx_axil_regs.py` gana
-`test_nco_pinc_arranca_en_nco_phase_inc_y_pulsa_al_escribir`, que separa las tres cosas que importan
-—valor de reset, lectura/escritura y strobe— porque fallan por motivos distintos. El strobe se
-comprueba contando ciclos: tiene que durar **uno** y pulsar en **cada** escritura, incluso si el
-valor no cambia. Un pulso largo le metería la misma configuración varias veces al core, que no tiene
-TREADY con el que rechazarlas.
+`test_nco_pinc_arranca_en_nco_phase_inc_y_pulsa_al_escribir`, que separa las cuatro cosas que
+importan —valor de reset, lectura/escritura, strobe y **alineación del strobe con el dato**— porque
+fallan por motivos distintos. El strobe tiene que durar **uno** y pulsar en **cada** escritura,
+incluso si el valor no cambia: un pulso largo le metería la misma configuración varias veces al
+core, que no tiene TREADY con el que rechazarlas.
+
+La cuarta comprobación se añadió **después** de que el bug saliera en placa, y es la lección del
+episodio: contar pulsos no bastaba. El strobe duraba un ciclo y el registro acababa en el valor
+correcto —las dos cosas que el test comprobaba— y aun así el consumidor se llevaba la palabra
+equivocada. El test de ahora muestrea `nco_pinc` **en los ciclos en que `nco_pinc_we` está alto** y
+exige que ya valga lo nuevo; comprobado que falla contra el RTL anterior y pasa contra el corregido.
 
 ### Semántica del slave
 

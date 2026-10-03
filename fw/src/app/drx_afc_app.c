@@ -140,3 +140,44 @@ bool DrxAfcApp_SelfTest(void)
                (unsigned long)retune, (unsigned long)DrxReg_ReadNcoPinc());
     return ok;
 }
+
+/* --- A/B espectral del retune ----------------------------------------------
+ *
+ * Ver la cabecera para por que los dos lados salen del mismo arranque.
+ */
+#include "FreeRTOS.h"
+#include "task.h"
+
+bool DrxAfcApp_RetuneAB(uint32_t pinc, uint32_t hold_ms)
+{
+    const uint32_t original = DrxReg_ReadNcoPinc();
+
+    xil_printf("drx_afc: A/B del retune -- lado A (NCO_PINC %lu) congelado, "
+               "%lu ms para leerlo por JTAG\r\n",
+               (unsigned long)original, (unsigned long)hold_ms);
+    vTaskDelay(pdMS_TO_TICKS(hold_ms));
+
+    DrxRay_Thaw();
+    DrxReg_WriteNcoPinc(pinc);
+    if (DrxReg_ReadNcoPinc() != pinc) {
+        xil_printf("drx_afc: A/B abortado, NCO_PINC no acepto %lu\r\n",
+                   (unsigned long)pinc);
+        return false;
+    }
+
+    /* El anillo tiene que dar la vuelta entera antes de congelar: un buffer a
+     * medio escribir cuando se solto el `Thaw` lleva muestras de las dos
+     * palabras de fase, y ese rayo no es ni A ni B. */
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    if (!DrxRay_Freeze()) {
+        xil_printf("drx_afc: A/B abortado, no se pudo congelar el lado B\r\n");
+        return false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    xil_printf("drx_afc: A/B del retune -- lado B (NCO_PINC %lu)\r\n",
+               (unsigned long)pinc);
+    DrxRay_DumpLast(0u);
+    return true;
+}

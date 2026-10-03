@@ -37,4 +37,21 @@ uint32_t DrxAfcApp_LastPinc(void);
  * Imprime el resultado por UART. */
 bool DrxAfcApp_SelfTest(void);
 
+/* A/B espectral del retune, en placa (Z4.5). `DrxAfcApp_SelfTest` prueba que
+ * NCO_PINC cambia; esto prueba que el NCO MEZCLA a la frecuencia nueva, que es
+ * otra pregunta y solo se contesta mirando el espectro de un rayo.
+ *
+ * Secuencia: espera `hold_ms` con el rayo nominal todavia congelado --ese es el
+ * lado A, y el hueco existe para que `tools/dump_ray.py` lo lea por JTAG antes
+ * de que el buffer vuelva al anillo--, descongela, escribe `pinc`, deja pasar
+ * rayos con la palabra nueva y congela otro, que es el lado B. Imprime la
+ * direccion de los dos y deja el NCO retuneado: restaurarlo aqui no cambiaria
+ * el buffer ya congelado y solo serviria para confundir la lectura.
+ *
+ * Los dos lados salen del MISMO arranque a proposito. Medirlos en arranques
+ * distintos obligaria a dar por supuesto que nada mas cambio entre los dos.
+ *
+ * Devuelve false si no se pudo congelar el segundo rayo. */
+bool DrxAfcApp_RetuneAB(uint32_t pinc, uint32_t hold_ms);
+
 #endif /* DRX_AFC_APP_H */

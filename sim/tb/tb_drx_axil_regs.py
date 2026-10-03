@@ -20,7 +20,7 @@ from pathlib import Path
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import RisingEdge
+from cocotb.triggers import ReadOnly, RisingEdge
 from drx_model.params import load
 
 PARAMS = load("zedboard")
@@ -127,30 +127,42 @@ async def axil_read(dut, addr: int) -> int:
             return data
 
 
-async def _escribe_contando_strobe(dut, addr: int, data: int) -> int:
-    """Escribe en `addr` y devuelve en cuántos ciclos estuvo alto `nco_pinc_we`.
+async def _escribe_contando_strobe(dut, addr: int, data: int) -> tuple[int, list[int]]:
+    """Escribe en `addr`; devuelve los ciclos con `nco_pinc_we` alto y qué valía
+    `nco_pinc` en cada uno de ellos.
 
-    Muestrea ANTES del flanco, igual que el resto de este fichero: `nco_pinc_we`
-    es combinacional desde `write_commit`, y leerlo después del `await` vería el
-    valor ya bajado.
+    Muestrea DESPUÉS del flanco, al revés que los `*_clear` de este mismo
+    fichero. No es una inconsistencia: aquellos son combinacionales desde
+    `write_commit`, y `nco_pinc_we` va registrado desde que se corrigió el
+    desfase de un ciclo (ver la cabecera del bloque NCO_PINC en
+    `rtl/drx_axil_regs.sv`).
+
+    Devolver además el DATO es el punto de la corrección. Contar pulsos no
+    bastaba: el strobe duraba un ciclo y el registro acababa en el valor
+    correcto, las dos cosas que este test comprobaba, y aun así el consumidor se
+    llevaba la palabra de la escritura anterior porque el pulso llegaba un ciclo
+    antes que el dato.
     """
     pulsos = 0
+    vistos: list[int] = []
     corriendo = True
 
     async def muestreador() -> None:
         nonlocal pulsos
         while corriendo:
-            alto = int(dut.nco_pinc_we.value)
             await RisingEdge(dut.clk)
-            if alto:
+            await ReadOnly()
+            if int(dut.nco_pinc_we.value):
                 pulsos += 1
+                vistos.append(int(dut.nco_pinc.value))
 
     tarea = cocotb.start_soon(muestreador())
     await axil_write(dut, addr, data)
     await RisingEdge(dut.clk)
+    await RisingEdge(dut.clk)
     corriendo = False
     tarea.kill()
-    return pulsos
+    return pulsos, vistos
 
 
 @cocotb.test()
@@ -458,21 +470,37 @@ async def test_nco_pinc_arranca_en_nco_phase_inc_y_pulsa_al_escribir(dut):
     assert int(dut.nco_pinc_we.value) == 0
 
     nuevo = (PARAMS.nco_phase_inc + 0x0010_0000) & 0xFFFF_FFFF
-    pulsos = await _escribe_contando_strobe(dut, REG_NCO_PINC_ADDR, nuevo)
+    pulsos, vistos = await _escribe_contando_strobe(dut, REG_NCO_PINC_ADDR, nuevo)
 
     assert pulsos == 1, f"nco_pinc_we tiene que pulsar un solo ciclo, pulsó {pulsos}"
+    assert vistos == [nuevo], (
+        f"con el strobe alto, nco_pinc tiene que valer ya {nuevo}; valía {vistos}. "
+        "Un desfase aquí hace que el DDC se lleve la palabra de la escritura "
+        "anterior, que es el bug medido en placa el 2-oct-2026"
+    )
     assert int(dut.nco_pinc.value) == nuevo
     assert await axil_read(dut, REG_NCO_PINC_ADDR) == nuevo
 
     # Reescribir el MISMO valor también pulsa: quien decide si reprogramar es el
     # par remoto (mensaje `afc`), no este módulo.
-    pulsos = await _escribe_contando_strobe(dut, REG_NCO_PINC_ADDR, nuevo)
+    pulsos, vistos = await _escribe_contando_strobe(dut, REG_NCO_PINC_ADDR, nuevo)
     assert pulsos == 1, "una escritura del mismo valor también tiene que pulsar"
+    assert vistos == [nuevo]
+
+    # Y una escritura de OTRO valor también llega alineada: el dato nuevo tiene
+    # que acompañar al pulso, no al siguiente.
+    otro = (nuevo ^ 0x0F0F_0F0F) & 0xFFFF_FFFF
+    pulsos, vistos = await _escribe_contando_strobe(dut, REG_NCO_PINC_ADDR, otro)
+    assert pulsos == 1
+    assert vistos == [otro], (
+        f"segunda escritura: el strobe tiene que venir con {otro}, vino con {vistos}"
+    )
 
     # Y ninguna otra dirección lo mueve.
-    pulsos = await _escribe_contando_strobe(dut, REG_CTRL_ADDR, 0x1)
+    pulsos, vistos = await _escribe_contando_strobe(dut, REG_CTRL_ADDR, 0x1)
     assert pulsos == 0, "solo NCO_PINC genera el strobe"
-    assert int(dut.nco_pinc.value) == nuevo
+    assert vistos == []
+    assert int(dut.nco_pinc.value) == otro
 
 
 @cocotb.test()

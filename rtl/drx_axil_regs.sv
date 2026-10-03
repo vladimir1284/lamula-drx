@@ -257,15 +257,33 @@ module drx_axil_regs
   // escritura, `nco_pinc_we` nunca pulsa, el core nunca recibe configuracion y
   // la cadena es bit a bit la de v8 -- que es lo que permite seguir usando la
   // matriz de D-12 como oraculo del camino sin AFC.
+  //
+  // El strobe va REGISTRADO, al reves que los `*_clear` de mas abajo, y la
+  // diferencia no es de estilo. Aquellos son write-1-to-clear y leen `wdata_r`
+  // directamente, asi que el dato que acompana al pulso es correcto en el mismo
+  // ciclo. Este no: el consumidor (`drx_ddc_top`) latchea `nco_pinc` con el
+  // flanco en que ve `nco_pinc_we`, y `nco_pinc_r` no vale lo nuevo hasta el
+  // final de ese ciclo. Con el strobe combinacional, el DDC se llevaba la
+  // palabra de la escritura ANTERIOR.
+  //
+  // No es teoria: medido en placa el 2-oct-2026. Con `NCO_PINC = 0` escrito, el
+  // pico del rayo salia donde correspondia a la palabra anterior, y al escribir
+  // despues la nominal la salida se fue a cero exacto (|max| = 0) porque el NCO
+  // aplico el 0 de antes. Un ciclo de retardo alinea el pulso con el dato.
   logic [31:0] nco_pinc_r;
-  assign nco_pinc = nco_pinc_r;
-  assign nco_pinc_we = write_commit && (awaddr_r == REG_NCO_PINC_ADDR);
+  logic        nco_pinc_we_r;
+  assign nco_pinc    = nco_pinc_r;
+  assign nco_pinc_we = nco_pinc_we_r;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      nco_pinc_r <= 32'(NCO_PHASE_INC);
-    end else if (write_commit && awaddr_r == REG_NCO_PINC_ADDR) begin
-      nco_pinc_r <= wdata_r;
+      nco_pinc_r    <= 32'(NCO_PHASE_INC);
+      nco_pinc_we_r <= 1'b0;
+    end else begin
+      nco_pinc_we_r <= write_commit && (awaddr_r == REG_NCO_PINC_ADDR);
+      if (write_commit && awaddr_r == REG_NCO_PINC_ADDR) begin
+        nco_pinc_r <= wdata_r;
+      end
     end
   end
 

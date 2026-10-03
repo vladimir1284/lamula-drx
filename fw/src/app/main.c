@@ -41,11 +41,18 @@
 
 #include "drx_afc_app.h"
 #include "drx_control_boot.h"
+#include "drx_params.h"
 #include "drx_ray.h"
 #include "drx_status_task.h"
 #include "drx_timing_cfg.h"
 #include "drx_stimulus.h"
 #include "drx_stimulus_catalog.h"
+
+/* Cuanto se queda congelado el lado A del A/B del retune antes de soltarlo.
+ * Es tiempo para una persona con `tools/dump_ray.py` y una sesion de JTAG, no
+ * un parametro del sistema: arrancar xsct y correr el modelo dorado no baja de
+ * medio minuto. */
+#define DRX_AFC_AB_HOLD_MS 120000u
 
 #if LWIP_IPV6==1
 #include "lwip/ip.h"
@@ -326,6 +333,22 @@ int main_thread()
 		vTaskDelay(pdMS_TO_TICKS(100));
 		DrxRay_DumpLast(0u);
 		(void)DrxControlBoot_RaySelfTest();
+
+		/* Z4.5: A/B espectral del retune. Lo que falta por medir no es que
+		 * NCO_PINC cambie --eso ya lo dijo la autoprueba de arriba-- sino
+		 * que el NCO mezcle de verdad a la frecuencia nueva.
+		 *
+		 * La palabra se deriva de los parametros generados, no se clava:
+		 * se baja el NCO en un cuarto de la banda decimada, asi que el pico
+		 * tiene que salir de continua y caer cerca de -0,25 de fs_dec. Un
+		 * desplazamiento mas grande se saldria de la banda y uno mas
+		 * pequeno no se distinguiria de la resolucion del espectro.
+		 *
+		 * `1u << 30` es 2^32/4, con lo que el calculo entero no desborda en
+		 * 32 bits: (2^32/4)/R1 == (2^32 * (0,25/R1)). */
+		DrxAfcApp_RetuneAB(
+			(uint32_t)DRX_NCO_PHASE_INC - ((1u << 30) / DRX_R1),
+			DRX_AFC_AB_HOLD_MS);
 	}
 
 	DrxStatusTask_Create();

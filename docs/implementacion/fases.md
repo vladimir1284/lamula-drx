@@ -1702,9 +1702,102 @@ Trabajo:
            elaboración posterior falla con `ERROR: [Synth 8-439] module 'dds_compiler_nco' not
            found`, que parece un problema del RTL y no lo es. `ip/` no es directorio de build, es
            fuente versionada con productos derivados al lado, y nadie lo serializa.
-        4. **Nada de esto corrió en una ZedBoard.** `DrxAfcApp_SelfTest` está escrito y enganchado en
-           `main.c`, pero hace falta recompilar el XSA con el bitstream nuevo y volver a entrar por
-           JTAG.
+        4. ~~Nada de esto corrió en una ZedBoard.~~ **Hecho el mismo día (noche), y encontró un bug
+           real** — ver la entrada siguiente.
+
+!!! success "2-oct-2026 (noche): bring-up de Z4.5 en placa — el AFC actúa, y el camino registro→DDC estaba roto"
+    El bring-up hizo exactamente aquello para lo que existe: encontrar lo que la simulación no podía
+    ver. **La actuación AFC funciona en silicio y el A/B espectral cierra**, pero por el camino
+    apareció un desfase de un ciclo entre el strobe y el dato que dejaba al DDC mezclando con la
+    palabra de la escritura **anterior**.
+
+    **Lo que se midió bien a la primera:** `drx_status: mapa de registros v9 confirmado por
+    AXI-Lite`; `drx_afc: actuacion AFC OK (NCO_PINC 1030792151 -> 1032889303 -> 1030792151)`; 231
+    rayos en 1000 ms con `overrun=0x0 truncated=0x0`; y la línea de BITE viva con `BITE=0x40`
+    (`CONFIG_REJECTED`) y `last_error=12` (`afc_out_of_range`) — la palabra fuera de rango que mete a
+    propósito la autoprueba, recorriendo entera la cadena hasta la trama `status`. Que ese código de
+    error llegue hasta ahí es justo lo que `DrxStatusTask_AttachControl` existe para conseguir, y es
+    el camino que Z4.6 usará con el control del socket.
+
+    **El bug: el NCO iba una escritura por detrás.** El lado B del A/B dio el pico en continua en vez
+    de en −0,2495 de fs_dec, con `NCO_PINC` leído de vuelta por JTAG en el valor correcto. Tres
+    medidas, la tercera una predicción falsable que se cumplió:
+
+    | palabra escrita | palabra que aplicó el NCO | medido |
+    |---|---|---|
+    | 1025629931 | 1030792151 (la nominal anterior) | pico en +0,00000 de fs_dec |
+    | 0 | 1025629931 | pico en −0,25000 de fs_dec |
+    | 1030792151 | 0 | salida a cero exacto, `\|max\| = 0`, −210 dBFS |
+
+    La tercera es la que lo cierra: si el NCO aplica el `0` anterior, deja de mezclar, el tono del
+    IF se queda fuera de la banda diezmada y los filtros lo tiran. Eso es lo que pasó, al LSB.
+
+    **Causa, en `rtl/drx_axil_regs.sv`:** `nco_pinc_we` era combinacional sobre `write_commit`, así
+    que estaba en alto el mismo ciclo en que `nco_pinc_r` todavía valía lo viejo —el registro no se
+    actualiza hasta el final de ese ciclo— y `drx_ddc_top` latchea el dato con el strobe. Corregido
+    registrando el strobe un ciclo. **De paso mejora la temporización**: al salir un camino
+    combinacional del crítico, el P&R sube de **WNS = 1,626 ns a WNS = 2,304 ns** (WHS = 0,022 ns,
+    todas las restricciones cumplidas).
+
+    **Por qué no lo vio nada de lo anterior, que es la parte que importa.** `tb_l1_ddc.sv` deja
+    `nco_pinc` estable **antes** de pulsar el strobe, así que ni la matriz 16/16 de D-12 ni el caso
+    `afc_retune` —los dos verdes esa misma mañana— ejercitaron nunca esta alineación: verificaban el
+    DDC, no el traspaso registro→DDC. Y el L0 comprobaba el valor del registro y la duración del
+    pulso por separado, que es exactamente lo que el bug respetaba. El test de ahora muestrea
+    `nco_pinc` **en los ciclos en que el strobe está alto**; comprobado que falla contra el RTL
+    anterior y pasa contra el corregido. La lección general: un strobe y su dato son **una sola
+    cosa** a efectos de verificación, y comprobarlos por separado deja pasar justo este fallo.
+
+    **A/B espectral, cerrado contra el modelo dorado con el bitstream corregido:**
+
+    | lado | NCO_PINC | medido | modelo |
+    |---|---|---|---|
+    | A | 1030792151 (nominal) | pico en +0,00000 de fs_dec, −9,02 dBFS | +0,00000, −9,02 dBFS |
+    | B | 1025629931 (retune) | pico en **−0,25000** de fs_dec, −9,01 dBFS | −0,24950, −9,02 dBFS |
+
+    Las dos medidas salen del **mismo arranque**: `DrxAfcApp_RetuneAB` (nuevo) congela el lado A, lo
+    deja 120 s para que `tools/dump_ray.py` lo lea por JTAG, descongela, escribe la palabra nueva,
+    deja pasar rayos y congela el lado B. Medirlos en arranques distintos obligaría a suponer que
+    nada más cambió entre los dos. La palabra se deriva de los parámetros generados
+    (`DRX_NCO_PHASE_INC - (1 << 30)/DRX_R1`, un cuarto de la banda diezmada), no se clava: más
+    desplazamiento se saldría de la banda y menos no se distinguiría de la resolución del espectro.
+
+    Con esto, **Z4.5 queda cerrada**: actuación AFC verificada en silicio contra el modelo dorado, y
+    no sólo «el registro cambia».
+
+!!! info "2-oct-2026 (noche): los `overrun` que aparecen en una sesión de JTAG son del JTAG, no del camino de datos"
+    Durante el bring-up, `dma_overruns` subió a 3 y `BITE` pasó a `0x42` (`CONFIG_REJECTED` +
+    `DMA_OVERRUN`). Perseguido hasta la causa, porque un overrun del camino de datos sería una
+    regresión seria de Z4.4 y aquí no lo es.
+
+    **Medido, no supuesto:**
+
+    | fase | duración | eventos `STATUS (overrun) = 0x7` |
+    |---|---|---|
+    | ociosa, sin tocar JTAG | 600 s | **0** |
+    | 300 lecturas `mrd` de un buffer VIVO del anillo | 8 s | **2** (repetido: 2) |
+    | 300 lecturas `mrd` de DDR no usada (`0x10000000`) | 8 s | **3** |
+
+    Que una dirección de DDR **sin relación con el DMA** dé el mismo resultado descarta que sea algo
+    del buffer concreto. Y el ancho de banda tampoco explica nada: 300 × 12 KB en 8 s son ~450 KB/s
+    contra un S2MM de ~9,8 MB/s sobre una DDR3 de varios GB/s.
+
+    **La causa es que `xsct` PARA el Cortex-A9 en cada `mrd`.** Medido por déficit de tick: durante
+    una ráfaga, 23 s de reloj de pared contra 16 s de `uptime` de FreeRTOS — el core estuvo detenido
+    ~7 s, justo lo que duró la ráfaga. Con el core parado, la interrupción de fin de descriptor del
+    S2MM no recicla buffers, el anillo se seca y el range-gate desborda. Los rayos se siguen
+    contando porque la ISR procesa los descriptores completados en lote al reanudar.
+
+    **Consecuencia práctica, y es de método:** cualquier contador de BITE leído durante o después de
+    una sesión de `tools/dump_ray.py` está contaminado. Las cifras limpias de Z4.4 (`dma_errors=0`,
+    `overrun=0x0`) no lo están porque salen de `DrxRay_SelfTest`, que corre **antes** de la primera
+    lectura por JTAG. Al interpretar un BITE en placa, mirar primero si hubo JTAG de por medio.
+
+    Esto es un artefacto del instrumento en ZedBoard, no un riesgo de la ZU9 —allí no habrá un
+    depurador leyendo DDR en producción—. Lo que sí deja como pregunta abierta, y es inferencia no
+    medida: cuánto tiempo puede estar el A9 sin atender la ISR del S2MM antes de perder un rayo. En
+    la ZU9, con dos FMC213 y mucho más caudal, ese margen es más estrecho. Dimensionarlo es trabajo
+    de Z5, no de aquí.
 
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 

@@ -216,7 +216,7 @@ Hallazgo nuevo abierto: **P-16**, Throttled(DDR) y el motor de timing no pueden 
 **Lo que NO hay: transporte.** El framer y el plano de control están, pero nadie abre un socket; el
 DSP real es Z4.6. Detalle en `fases.md#z4`, entrada del 1-oct (noche).
 
-**Z4.5 — actuación AFC y status/BITE: en curso, empezó 2-oct-2026. NO cerrada.** El NCO por fin se
+**Z4.5 — actuación AFC y status/BITE: cerrada, 2-oct-2026.** El NCO por fin se
 puede retunear en tiempo de ejecución: la IP del DDS Compiler se regeneró con `Phase_Increment
 {Programmable}` (antes `{Fixed}`, sin ningún puerto por el que cambiar el incremento de fase),
 mapa de registros **v9** (`NCO_PINC`, `0x58`, RW, reset = `NCO_PHASE_INC`), contrato **v0.7**
@@ -234,16 +234,36 @@ cambio de IP, corrido entero antes de commitear: el arranque del Phase Generator
 dorado**, que es lo que de verdad faltaba: que NCO_PINC cambie es un registro, que el NCO mezcle a
 la frecuencia nueva es otra cosa — el caso L1 `afc_retune__{fine,coarse}` pasa bit a bit (315
 muestras en fino, 157 en grueso, dentro de tolerancia D-12) con la palabra de fase escrita tras
-soltar el reset. **P&R con la IP programable dentro cierra: WNS = 1,626 ns, WHS = 0,015 ns**,
-bajando desde los 2,045 ns de Z4.4 — mismo camino crítico PS7↔interconnect↔`drx_axil_regs` que
-viene estrechándose desde Z2, vale la pena vigilarlo en cada registro nuevo. DSP48 sigue en
-159/220: el canal `S_AXIS_CONFIG` no cuesta multiplicadores. **Lo que falta para cerrar: el
-bring-up en placa** — recompilar BSP/`BOOT.BIN` desde el XSA nuevo, entrar por JTAG a ver
-`drx_afc: actuacion AFC OK` y la línea de `BITE`, y el A/B espectral con
-`tools/dump_ray.py --nco-pinc`. Hallazgo de infraestructura de esta sesión: `tcl/sim_l1.tcl` y
-`tcl/build.tcl` escriben en el mismo `ip/<core>/` y **no pueden correr a la vez** — el síntoma
-miente (`synth_ip` termina bien y la elaboración falla después con `module '<core>' not found`). Detalle en
-`fases.md#z4`, entrada del 2-oct.
+soltar el reset. DSP48 sigue en 159/220: el canal `S_AXIS_CONFIG` no cuesta multiplicadores.
+
+**El bring-up en placa cerró Z4.5 esa misma noche, y encontró un bug que ninguna simulación podía
+ver.** En silicio: `mapa de registros v9 confirmado por AXI-Lite`, `drx_afc: actuacion AFC OK`, 231
+rayos en 1000 ms con `overrun=0x0 truncated=0x0`, y la línea de BITE con `BITE=0x40`
+(`CONFIG_REJECTED`) y `last_error=12` (`afc_out_of_range`) — la palabra fuera de rango de la
+autoprueba recorriendo entera la cadena hasta la trama `status`. Pero el A/B espectral dio el pico
+en continua con la palabra de retune puesta: **el NCO iba una escritura por detrás**. Causa en
+`rtl/drx_axil_regs.sv`: `nco_pinc_we` era combinacional sobre `write_commit`, así que estaba en alto
+el mismo ciclo en que `nco_pinc_r` todavía valía lo viejo, y `drx_ddc_top` latchea el dato con el
+strobe. Confirmado con una predicción falsable —escribir la nominal aplicó el `0` anterior y la
+salida se fue a cero exacto, `|max| = 0`— y corregido registrando el strobe un ciclo. **Ni la matriz
+16/16 de D-12 ni el caso `afc_retune` lo vieron porque `tb_l1_ddc.sv` deja `nco_pinc` estable antes
+de pulsar el strobe**: verificaban el DDC, no el traspaso registro→DDC; y el L0 comprobaba registro
+y pulso por separado, que es justo lo que el bug respetaba. El test de ahora muestrea `nco_pinc` en
+los ciclos en que el strobe está alto, y se comprobó que falla contra el RTL anterior. **Con la
+corrección el A/B cierra: lado A (nominal) pico en continua a −9,02 dBFS; lado B
+(`NCO_PINC = 1025629931`) pico en −0,25000 de fs_dec a −9,01 dBFS, contra −0,24950 y −9,02 dBFS del
+modelo** — los dos lados del mismo arranque, vía `DrxAfcApp_RetuneAB`. Y el P&R **mejora** al sacar
+un camino combinacional del crítico: **WNS = 2,304 ns, WHS = 0,022 ns** (venía de 1,626 ns).
+
+Dos hallazgos de método de esa noche, los dos medidos: `tcl/sim_l1.tcl` y `tcl/build.tcl` escriben
+en el mismo `ip/<core>/` y **no pueden correr a la vez** —el síntoma miente, `synth_ip` termina bien
+y la elaboración falla después con `module '<core>' not found`—; y **los `overrun` que aparecen en
+una sesión de JTAG son del JTAG**: `xsct` para el Cortex-A9 en cada `mrd` (23 s de reloj de pared
+contra 16 s de `uptime` de FreeRTOS durante una ráfaga), la ISR del S2MM no recicla buffers y el
+range-gate desborda. 0 eventos en 600 s ociosos contra 2-3 eventos por cada 300 lecturas, y también
+leyendo DDR sin relación con el DMA. Cualquier BITE leído durante una sesión de `tools/dump_ray.py`
+está contaminado; las cifras de Z4.4 no lo están porque salen de `DrxRay_SelfTest`, anterior a la
+primera lectura por JTAG. Detalle en `fases.md#z4`, entradas del 2-oct.
 
 Lo que sí está hecho y verificado, además de lo de arriba:
 
