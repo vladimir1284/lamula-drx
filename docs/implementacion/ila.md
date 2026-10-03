@@ -169,3 +169,74 @@ la hipótesis es falsa y el atasco está en otro sitio.
 El firmware se deja **sin tocar** para la captura, a propósito: arreglar la
 hipótesis antes de medirla dejaría P-21 cerrado por coincidencia, sin saber si
 era eso.
+
+
+## Primera captura, 3-oct-2026
+
+El instrumento funciona de punta a punta: once probes con nombre en el `.ltx`,
+captura por `tools/ila_p21.tcl` y decodificación por `tools/ila_p21_leer.py`.
+Pero la primera captura **no es la de P-21**: al recargar la placa apareció
+otro fallo delante, y el ILA lo identificó en una sola foto.
+
+4096 ciclos consecutivos, **todos idénticos**:
+
+```
+s_vec: valid=0 ready=0 last=0
+m_ray: valid=1 ready=0 last=0
+ctrl : ddr_mode=0 timing_enable=1 timing_paced=0 moved=1 pulse_trig=0 stalled=0
+vs_valid=0b111  vs_ready=0b111  ddc_valid=0b000
+gate_valid=0b111  gate_ready=0b000  overrun=0b111  truncated=0b000
+```
+
+Se lee de corrido, y en los dos sentidos:
+
+- **Aguas abajo está todo parado en el DMA.** `m_ray_valid = 1` con
+  `m_ray_ready = 0` durante 65 µs seguidos: el empaquetador ofrece y el S2MM
+  no toma ni un beat. Detrás, `gate_valid = 0b111` con `gate_ready = 0b000` y
+  `overrun = 0b111` — la contrapresión sube por la cadena exactamente como
+  está diseñada, y el range-gate desborda porque nadie vacía.
+- **Aguas arriba tampoco entrega el DMA.** `s_vec_valid = 0`: el MM2S no
+  ofrece un solo beat. No es que `vector_source` lo rechace.
+- **La PL está sana.** `vs_valid = vs_ready = 0b111` y `moved = 1`: en
+  BRAM-loop las muestras siguen avanzando hacia el DDC sin problema, y el
+  motor de timing corre (`timing_enable = 1`).
+
+Los dos canales del mismo `axi_dma` parados a la vez, con la PL moviéndose,
+señala al DMA y no a la lógica. Los registros lo confirman, leídos con el
+A9 parado a propósito (nada estaba fluyendo, así que la contaminación por
+`mrd` que documenta `fases.md` no aplica aquí):
+
+```
+MM2S_DMACR = 0x00010003   RS=1    MM2S_DMASR = 0x00010008   Halted=0, sin bits de error
+S2MM_DMACR = 0x00017003   RS=1    S2MM_DMASR = 0x00010008   Halted=0, sin bits de error
+MM2S_CURDESC = 0x0023cb80   MM2S_TAILDESC = 0x0023cbc0
+S2MM_CURDESC = 0x00236b00   S2MM_TAILDESC = 0x00236bc0
+```
+
+Los dos canales **corriendo**, con descriptores pendientes
+(`CURDESC != TAILDESC`), **sin un solo bit de error** y sin avanzar. Un DMA
+que no da error y no progresa está esperando en su lado de memoria: la
+búsqueda del descriptor por HP0 no vuelve. Y el procesador sí llega a la DDR
+—la aplicación corre desde ahí, con UART, lwIP y el motor de timing vivos—,
+así que lo que no responde es el puerto AFI/HP0, no la DDR.
+
+*(Nota de lectura: el bit 1 de `DMACR` es reservado, no `Reset`.
+`0x00010002` es el valor por defecto limpio del registro.)*
+
+### Cómo se llegó ahí, y la regla que sale de esto
+
+El primer arranque fallido es justo el siguiente a reprogramar la PL **con el
+S2MM transmitiendo rayos a 225/s**. Reconfigurar la PL con transacciones AXI
+vivas en HP0 deja la transacción colgada en el lado PS, donde ni la
+reconfiguración de la PL ni `ps7_init`/`ps7_post_config` llegan.
+
+Comprobado que no se recupera por software: dos recargas completas del
+bitstream de producción, dos del de depuración, y un ciclo explícito de
+`FPGA_RST_CTRL` (`0xF8000240` a `0xF` y de vuelta a `0x0`, con el SLCR
+desbloqueado) — el síntoma no se mueve.
+
+**Regla: parar el camino de rayos antes de reprogramar la PL.** Y si ya
+pasó, hace falta un reset del PS — apagar y encender la placa.
+
+No está excluido que la causa sea otra; lo que sí está medido es que el
+síntoma sobrevive a todo lo que se puede hacer sin tocar la placa.

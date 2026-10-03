@@ -2357,3 +2357,20 @@ la hipótesis antes de medirla cerraría P-21 por coincidencia.
 
 Las lecturas de `MM2S_DMASR` por JTAG de la primera sesión dieron patrones de bits implausibles
 (errores de SG en un canal que estaba entregando rayos) y no se usaron como evidencia.
+
+**La captura de P-21 sigue pendiente, por un bloqueo de hardware.** Al cargar el bitstream de
+depuración apareció otro fallo delante: el AXI DMA no mueve nada en NINGUNO de los dos canales,
+con los dos corriendo (`RS = 1`), con descriptores pendientes y **sin un solo bit de error**. El
+ILA lo dejó claro en una sola foto de 4096 ciclos idénticos — `m_ray_valid = 1` con
+`m_ray_ready = 0`, `s_vec_valid = 0`, y la PL moviéndose por dentro
+(`vs_valid = vs_ready = 0b111`) —, o sea que lo parado es el DMA y no la lógica. El primer
+arranque fallido es el siguiente a reprogramar la PL con el S2MM transmitiendo a 225 rayos/s:
+una transacción colgada en HP0, del lado PS, donde no llegan ni la reconfiguración de la PL ni
+`ps7_init`. No se recupera por software — probadas cuatro recargas y un ciclo explícito de
+`FPGA_RST_CTRL`. **Hace falta apagar y encender la placa.** Detalle y la regla que sale de esto
+("parar el camino de rayos antes de reprogramar la PL") en
+[docs/implementacion/ila.md](../implementacion/ila.md#primera-captura-3-oct-2026).
+
+Lo que sí deja demostrado esa captura: el instrumento funciona, y la contrapresión de la cadena
+se comporta como está diseñada (`gate_valid = 0b111` contra `gate_ready = 0b000`, `overrun`
+subiendo). Cuando la placa vuelva, el armado correcto es `-trigger flanco`.

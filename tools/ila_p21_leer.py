@@ -49,35 +49,53 @@ POR_CANAL = [
 ]
 
 
-def lee_csv(ruta: Path) -> list[dict[str, str]]:
+def lee_csv(ruta: Path) -> tuple[list[dict[str, str]], dict[str, str]]:
+    """Devuelve las filas y el radix por columna.
+
+    `write_hw_ila_data` mete una fila `Radix - UNSIGNED,...` JUSTO debajo de
+    la cabecera, y cada columna puede venir en una base distinta (los probes
+    salen en HEX, los contadores de muestra en UNSIGNED). Leerlo todo como
+    decimal daría valores plausibles y equivocados.
+    """
     lineas = ruta.read_text().splitlines()
     for i, linea in enumerate(lineas):
         if linea.startswith("Sample in Buffer"):
-            return list(csv.DictReader(lineas[i:]))
-    raise SystemExit(f"{ruta}: no encuentro la cabecera 'Sample in Buffer'")
+            filas = list(csv.DictReader(lineas[i:]))
+            break
+    else:
+        raise SystemExit(f"{ruta}: no encuentro la cabecera 'Sample in Buffer'")
+
+    radix = {}
+    if filas and str(filas[0].get("Sample in Buffer", "")).startswith("Radix"):
+        cabecera = filas.pop(0)
+        for clave, valor in cabecera.items():
+            if clave:
+                radix[clave] = valor.split("-")[-1].strip()
+    return filas, radix
 
 
-def columna(fila: dict[str, str], prefijo: str) -> int | None:
+def columna(fila: dict[str, str], prefijo: str, radix: dict[str, str]) -> int | None:
     """Las columnas salen con el rango pegado: `dbg_ctrl[5:0]`."""
     for clave, valor in fila.items():
         if clave and clave.split("[")[0].endswith(prefijo):
-            return int(valor, 0)
+            base = 16 if radix.get(clave, "HEX") == "HEX" else 10
+            return int(valor, base)
     return None
 
 
-def decodifica(fila: dict[str, str]) -> dict[str, int]:
+def decodifica(fila: dict[str, str], radix: dict[str, str]) -> dict[str, int]:
     out: dict[str, int] = {}
     for probe, nombres in CAMPOS.items():
-        valor = columna(fila, probe)
+        valor = columna(fila, probe, radix)
         if valor is None:
             continue
         for bit, nombre in enumerate(nombres):
             out[nombre] = (valor >> bit) & 1
     for probe in POR_CANAL:
-        valor = columna(fila, probe)
+        valor = columna(fila, probe, radix)
         if valor is not None:
             out[probe.removeprefix("dbg_")] = valor
-    cnt = columna(fila, "dbg_idle_cnt")
+    cnt = columna(fila, "dbg_idle_cnt", radix)
     if cnt is not None:
         out["idle_cnt"] = cnt
     return out
@@ -109,7 +127,7 @@ def main() -> int:
     if len(sys.argv) != 2:
         print(__doc__)
         return 2
-    filas = lee_csv(Path(sys.argv[1]))
+    filas, radix = lee_csv(Path(sys.argv[1]))
     if not filas:
         print("captura vacía")
         return 1
@@ -119,18 +137,18 @@ def main() -> int:
     disparo = None
     for fila in filas:
         trigger = fila.get("TRIGGER") or fila.get("Trigger")
-        if trigger and int(trigger, 0):
+        if trigger and int(trigger, 10):
             disparo = fila
             break
     if disparo is None:
         print("AVISO: ninguna muestra marcada como disparo; se usa la última")
         disparo = filas[-1]
 
-    d = decodifica(disparo)
+    d = decodifica(disparo, radix)
     imprime("muestra del disparo (cadena parada)", d)
 
     print()
-    anterior = decodifica(filas[max(0, filas.index(disparo) - 1)])
+    anterior = decodifica(filas[max(0, filas.index(disparo) - 1)], radix)
     imprime("última muestra con actividad antes del disparo", anterior)
 
     print()

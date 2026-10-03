@@ -17,7 +17,7 @@
 # La placa tiene que estar YA cargada y corriendo con el bitstream de
 # depuración; este script no programa nada.
 
-array set opt {ltx {} out {} timeout 600 url localhost:3121}
+array set opt {ltx {} out {} timeout 600 url localhost:3121 trigger flanco}
 for {set i 0} {$i < [llength $argv]} {incr i} {
   set flag [string trimleft [lindex $argv $i] -]
   if {[info exists opt($flag)]} {
@@ -44,7 +44,10 @@ current_hw_device $dev
 set_property PROBES.FILE      $opt(ltx) $dev
 set_property FULL_PROBES.FILE $opt(ltx) $dev
 # Refresca SIN reprogramar: el bitstream y el firmware ya están corriendo.
-refresh_hw_device -update_hw_probes false $dev
+# Sin `-update_hw_probes false`: ese flag le dice a Vivado que NO lea la
+# información de probes, y entonces `get_hw_probes` devuelve vacío y el
+# armado por nombre falla.
+refresh_hw_device $dev
 
 set ila [lindex [get_hw_ilas -of_objects $dev] 0]
 if {$ila eq {}} {
@@ -75,15 +78,41 @@ puts "probes: [get_hw_probes -of_objects $ila]"
 # Condición AND en los dos casos: un probe con todos los bits a "no importa"
 # evalúa a verdadero y no estorba en un AND -- en un OR forzaría a capturar
 # siempre.
+# CONTROL.TRIGGER_MODE no se toca: es de solo lectura, y con
+# C_ADV_TRIGGER=false ya vale BASIC_ONLY.
 set_property CONTROL.TRIGGER_POSITION  4095  $ila
-set_property CONTROL.TRIGGER_MODE      BASIC_ONLY $ila
 set_property CONTROL.TRIGGER_CONDITION AND   $ila
 set_property CONTROL.CAPTURE_MODE      BASIC $ila
 set_property CONTROL.CAPTURE_CONDITION AND   $ila
 
+# `-trigger flanco` (por defecto) dispara con la SUBIDA de `stalled`: es lo
+# que hay que usar con la placa sana, porque deja todo el buffer de
+# almacenamiento calificado por delante del atasco.
+#
+# `-trigger nivel` dispara con `stalled` ya alto. Hace falta cuando la cadena
+# YA esta parada al armar -- entonces no hay flanco que esperar y el disparo
+# por flanco no llegaria nunca. Se pierde la historia previa, pero la muestra
+# del disparo sigue enseñando el estado congelado de los once probes, que es
+# lo que contesta "quien tiene valid alto y ready bajo".
 set p2 [get_hw_probes *dbg_ctrl* -of_objects $ila]
-set_property TRIGGER_COMPARE_VALUE eq6'bR_____ $p2
-set_property CAPTURE_COMPARE_VALUE eq6'b__1___ $p2
+#
+# `-trigger ya` no espera nada: dispara en el acto y guarda 4096 ciclos
+# consecutivos del estado actual, sin calificar. Es una foto, no una
+# investigación -- sirve para leer de una vez quién tiene `valid` alto y
+# `ready` bajo AHORA MISMO, sin saber todavía si hay atasco.
+if {$opt(trigger) eq "nivel"} {
+  set_property TRIGGER_COMPARE_VALUE eq6'b1XXXXX $p2
+  set_property CAPTURE_COMPARE_VALUE eq6'bXX1XXX $p2
+} elseif {$opt(trigger) eq "flanco"} {
+  set_property TRIGGER_COMPARE_VALUE eq6'bRXXXXX $p2
+  set_property CAPTURE_COMPARE_VALUE eq6'bXX1XXX $p2
+} elseif {$opt(trigger) eq "ya"} {
+  set_property CONTROL.TRIGGER_POSITION 0 $ila
+  set_property CONTROL.CAPTURE_MODE ALWAYS $ila
+  set_property TRIGGER_COMPARE_VALUE eq6'bXXXXXX $p2
+} else {
+  error "-trigger desconocido: $opt(trigger) (flanco | nivel | ya)"
+}
 
 puts "armado; esperando disparo (hasta $opt(timeout) s)"
 run_hw_ila $ila
@@ -92,9 +121,21 @@ wait_on_hw_ila -timeout [expr {$opt(timeout) / 60.0}] $ila
 # `wait_on_hw_ila` vuelve igual si disparó que si se le acabó el tiempo. La
 # diferencia está en CORE_STATUS, y hay que mirarla: subir una captura sin
 # disparo daría 4096 muestras del estado sano y una conclusión al revés.
-set estado [get_property CORE_STATUS $ila]
-puts "CORE_STATUS = $estado"
-if {[string match "*Full*" $estado] == 0} {
+# El nombre de la propiedad de estado cambia entre versiones de Vivado, y
+# `get_property` sobre una que no existe aborta el script.
+set estado "desconocido"
+foreach prop {STATUS.CORE_STATUS CORE_STATUS CAPTURE_STATUS} {
+  if {![catch {set v [get_property $prop $ila]}]} {
+    set estado $v
+    puts "$prop = $v"
+    break
+  }
+}
+if {$estado eq "desconocido"} {
+  puts "no encuentro la propiedad de estado; propiedades del ILA:"
+  report_property $ila
+}
+if {[string match -nocase "*full*" $estado] == 0} {
   puts "AVISO: el ILA no llegó a llenarse (sin disparo en $opt(timeout) s)."
   puts "       La cadena no se atascó, o el umbral de `stalled` no se alcanzó."
 }
