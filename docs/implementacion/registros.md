@@ -81,7 +81,7 @@ palabras — subió de 6/16 en v3 porque el bloque de Z2 no cabía). Implementad
 | `0x04` | CTRL     | RW                | `[0]`         | `mode_coarse`: 0 = fino (valor de reset), 1 = grueso. Compartido por los `N_CH` canales de `drx_ddc_quad_top` (decimación/tamaño de celda). Desde v5 (D-15) ya NO llega a `drx_range_gate` — el conteo de bins de range-gate es BINS_LOW/BINS_HIGH, no una elección fino/grueso fija. Bits `[31:1]` reservados: leen 0, una escritura ahí no tiene efecto. |
 | `0x08` | STATUS   | RO + write-1-to-clear | `[N_CH-1:0]` | Bit `c` = `overrun` sticky del canal `c` de range-gate (`drx_range_gate_quad_top.overrun[c]`). El latch sticky vive en `drx_range_gate` (puerto `clear` nuevo — ver más abajo); este bloque solo lo lee y pulsa la limpieza en origen. Si hay un overrun genuino el mismo ciclo que la limpieza, gana el set. |
 | `0x0C` | OVERFLOW | RO + write-1-to-clear | `[N_CH-1:0]` | Bit `c` = overflow de saturación del DDC del canal `c` (`drx_ddc_quad_top.overflow[c]`, combinación de las ramas I/Q de `drx_ddc_top`). A diferencia de STATUS, el latch sticky vive **dentro de `drx_axil_regs`**, no en la fuente: `drx_saturate` es deliberadamente combinacional y sin estado (ver su cabecera), así que añadir un latch ahí habría tocado más de lo necesario en un núcleo ya verificado bit a bit. Misma prioridad set-sobre-clear que STATUS. |
-| `0x10` | TIMING_CTRL | RW | `[0]` | `enable` de `drx_prf_batch_seq` (arranca/detiene el secuenciador de 2 lotes, D-13). Reset: 0 (detenido). |
+| `0x10` | TIMING_CTRL | RW | `[1:0]` | Bit 0 = `enable` de `drx_prf_batch_seq` (arranca/detiene el secuenciador de 2 lotes, D-13). Reset: 0 (detenido). Bit 1 (v10) = `timing_paced`: 0 = el motor cuenta ciclos de reloj (reset, el comportamiento de v3..v9); 1 = cuenta avances de muestra. Ver [P-16 en v10](#p-16-en-v10). Bits `[31:2]` reservados: leen 0. |
 | `0x14` | TIMING_STATUS | RO + write-1-to-clear | `[2:0]` | Bit 0 = `radial_done` sticky de `drx_prf_batch_seq` (radial completo: lote bajo + lote alto). Bits 1/2 (v4, D-09; ampliado en v5/D-15) = `config_invalid` del lote bajo/alto — cubre pulse_width fuera de tabla, no cabe en su PRI, prf_div bajo el piso de rango, o bins sobre el techo de BRAM; mientras cualquiera esté en 1, `drx_timing_engine` mantiene el secuenciador sin correr, sin importar TIMING_CTRL. Los tres bits comparten el mismo patrón set-sobre-clear que OVERFLOW. Bits `[31:3]` reservados: leen 0. |
 | `0x18` | PRF_DIV_LOW | RW | `[31:0]` | `prf_div` del lote bajo (vigilancia/PRF baja), ciclos de `FS_HZ` por PRI. Validado en RTL desde v5 (D-09 completo): junto con "cabe en su propio PRI" (desde v4, ver PULSE_WIDTH), un `prf_div` que dé un rango no ambiguo por debajo de 460 km (piso fijo) también deja el lote inválido — ver [Z2 en v5](#z2-en-v5). |
 | `0x1C` | PRF_DIV_HIGH | RW | `[31:0]` | `prf_div` del lote alto (Doppler/PRF alta). Mismas condiciones que PRF_DIV_LOW. |
@@ -508,3 +508,47 @@ sitios distintos:
   **WNS = 1,295 ns, WHS = 0,012 ns** (cierra, pero es la cifra más ajustada medida hasta hoy sobre
   este top — ver [`fases.md#z2`](fases.md#z2), entrada correspondiente, para la tendencia completa
   y por qué merece vigilarse).
+
+### P-16 en v10 { #p-16-en-v10 }
+
+**3-oct-2026.** `TIMING_CTRL` bit 1, `timing_paced`, reset 0. Un solo bit, y resuelve
+[P-16](../alcance/pendientes.md#p-16) entero sin tocar el block design, el AXI DMA ni el
+entrelazado que monta el firmware.
+
+**El problema que arregla.** `drx_prf_batch_seq` cuenta ciclos de reloj: un PRI dura `prf_div`
+ciclos de `fs` (D-13) y `ray_start` corta el rayo ahí (D-14). La cadena del DDC, en cambio, avanza
+solo con `valid`. Mientras la fuente entregue una muestra por ciclo son la misma cosa, y por eso
+nadie lo había notado en año y medio de RTL. En Throttled(DDR) no lo son: `vector_source` junta
+`N_CH` beats de 16 bits para formar un conjunto, así que presenta uno cada `N_CH+1` ciclos como
+mucho. Con `N_CH = 3` el rayo tarda ~4 PRI en llenarse, `ray_start` lo trunca, `GATE_TRUNCATED`
+sube y no se completa ni un rayo.
+
+**Lo que hace el bit.** Con 1, el motor cuenta **avances de muestra**: los ciclos en que la fuente
+entrega un conjunto y el DDC lo toma. Las dos mitades se frenan entonces con el mismo factor y el
+rayo se llena con los mismos `prf_div / R₁` bins a cualquier tasa. Un avance lo define
+`rtl/drx_sample_pacer.sv` como `valid && ready` en **todos** los canales a la vez — no en uno
+suelto: `vector_source` los mueve en bloque a propósito, y contar por el canal 0 adelantaría el
+motor respecto de los lentos sin dar ningún error visible.
+
+**Por qué un bit y no siempre activo.** En tiempo real `valid` está siempre alto y pacear no
+cambia nada, así que la tentación de cablearlo a 1 es real. Pero en BRAM-loop `advance` es
+`ready`, y si el DDC aplicara contrapresión en algún momento eso movería las cifras de Z4.4, que
+están cerradas y medidas (231 rayos/s, `overrun=0x0`). Con el bit a 0 la síntesis colapsa el
+enable y la netlist es la de v9.
+
+**Por qué no se deriva de `vector_source_ddr`.** Hoy el modo DDR es el único que lo necesita, así
+que atar los dos bits parece gratis. No lo es: poder pacear en BRAM-loop, o correr DDR sin pacear,
+es exactamente lo que distingue «el pacer está mal» de «el modo DDR está mal». Que vayan juntos es
+una **política**, y su sitio es `fw/src/app/drx_stimulus.c`, no el mapa de registros.
+
+**Cuidado con el orden.** Cambiar este bit altera lo que significa `prf_div`, así que hacerlo a
+mitad de radial deja ese radial con dos bases de tiempo. `DrxReg_TimingSetPaced()` no toca el bit
+de `enable`; quien lo llame debe parar el secuenciador primero. Y desde v10
+`DrxReg_TimingEnable()`/`Disable()` hacen lectura-modificación-escritura en vez de escribir la
+palabra cruda: un `DrxReg_Write(TIMING_CTRL, 1u)` borraría el bit de pacing al arrancar el motor,
+y el síntoma sería que el barrido no produce ningún rayo, sin ninguna otra pista.
+
+Verificación en L0: `sim/tb/tb_drx_sample_pacer.py` (qué cuenta como avance, las 64 combinaciones
+de `valid`/`ready` con y sin `paced`) y `sim/tb/tb_drx_timing_paced.py` (la traza paceada contra la
+del mismo motor sin pacear, dos radiales completos muestra a muestra). `tb_drx_axil_regs.py` gana
+los dos bits de `TIMING_CTRL` como independientes.

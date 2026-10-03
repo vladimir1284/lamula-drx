@@ -72,6 +72,18 @@ void DrxReg_TimingDisable(void);
 void DrxReg_TimingEnable(void);
 bool DrxReg_TimingEnabled(void);
 
+/* TIMING_CTRL bit 1 (mapa v10, P-16): el motor de timing cuenta avances de
+ * muestra en vez de ciclos de reloj. Son lo mismo mientras la fuente entregue
+ * una muestra por ciclo; en Throttled(DDR) `vector_source` junta N_CH beats
+ * por conjunto, el rayo tarda ~N_CH veces el PRI en llenarse y `ray_start` lo
+ * trunca antes -- sin esto, con el motor en marcha no se completa ni un rayo.
+ *
+ * Cambiar solo con el secuenciador parado (`DrxReg_TimingDisable()` antes):
+ * cambia lo que significa `prf_div`, y hacerlo a mitad de radial deja ese
+ * radial con dos bases de tiempo. Las dos funciones preservan el otro bit. */
+void DrxReg_TimingSetPaced(bool paced);
+bool DrxReg_TimingPaced(void);
+
 void DrxReg_WriteTimingConfig(const DrxTimingConfig *cfg);
 
 /* Relee por AXI-Lite los registros RW que acaba de escribir

@@ -38,6 +38,10 @@ rtl/drx_timing_config_valid.sv
 # deliberadamente SIN conectar a vector_source/el lado Tx -- ver la cabecera
 # de drx_top.sv.
 rtl/drx_timing_engine.sv
+# P-16 (3-oct-2026): define "un avance de muestra" para que el motor de timing
+# pueda contarlos en vez de contar ciclos. Sin dependencias; lo instancia
+# drx_top junto a vector_source.
+rtl/drx_sample_pacer.sv
 rtl/drx_axil_regs.sv
 # drx_top.sv va al final a propósito: desde esta integración instancia
 # vector_source + drx_ddc_quad_top + drx_range_gate_quad_top, así que tiene que

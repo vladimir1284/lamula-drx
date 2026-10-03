@@ -212,7 +212,7 @@ P&R cierra en **WNS = 2,045 ns, WHS = 0,016 ns**. Dos hallazgos de placa que cos
 cada uno: **el PRI tiene que ser múltiplo de R₁** o `ray_truncated` se dispara en cada pulso sin
 haber perdido ningún rayo, y **el `overrun` del arranque** no es de régimen permanente (el
 range-gate lleva llenando bancos que nadie vaciaba desde antes de que el consumidor existiera).
-Hallazgo nuevo abierto: **P-16**, Throttled(DDR) y el motor de timing no pueden correr a la vez.
+Hallazgo nuevo: **P-16**, Throttled(DDR) y el motor de timing no pueden correr a la vez — resuelto en RTL el 3-oct-2026, ver más abajo.
 **Lo que NO hay: transporte.** El framer y el plano de control están, pero nadie abre un socket; el
 DSP real es Z4.6. Detalle en `fases.md#z4`, entrada del 1-oct (noche).
 
@@ -302,12 +302,29 @@ desapareció con ellos** (`cortos=0 largos=0 enc_fail=0`; cabía esperar ~7,7 ev
 el desajuste de metadato en el borde de lote era efecto secundario de la parada, no un fallo
 independiente. Cerrado por consecuencia, no por ILA. Lo que sí se mueve ahora es `cola` (pool sin
 hueco), y es la contrapresión haciendo su trabajo: el rayo que no cabe cuesta un rayo, no una
-ráfaga de once. Queda como [P-19](docs/alcance/pendientes.md#p-19), abierto: 124 ppm durante una
-tormenta de WiFi del host contra **25 ppm** en una corrida de control con el host sano — la
-tormenta explica el exceso, no el suelo, y el suelo no está medido. **Lo que falta para cerrar ZM4:** solo el barrido
-del catálogo de estímulos contra rayos reales, bloqueado por
-[P-16](docs/alcance/pendientes.md#p-16). Detalle en `fases.md#z4`, entradas del 2-oct (noche) y
-del 3-oct.
+ráfaga de once. [P-19](docs/alcance/pendientes.md#p-19) nació y murió el mismo
+día: 124 ppm durante una tormenta de WiFi del host, 25 ppm con el host sano y **0 en 201 032
+rayos** con un cliente que solo hace `recv_into` sobre un buffer fijo. Era el reensamblado en
+Python de `tools/mock_dsp.py`, no la placa. **Lo que falta para cerrar ZM4:** solo el barrido
+del catálogo de estímulos contra rayos reales. Detalle en `fases.md#z4`, entradas del 2-oct
+(noche) y del 3-oct.
+
+**P-16 resuelto en RTL, 3-oct-2026 — por una tercera vía que el hallazgo no contemplaba.** P-16
+daba dos salidas, las dos caras: ensanchar el stream del MM2S (tres cambios simultáneos, y
+`N_CH × 16 = 48` bits no es potencia de dos, así que 64 con un carril muerto) o renunciar al
+catálogo elegible en caliente con el motor de timing en marcha. El problema real no era que el
+DMA fuera lento: era que **las dos mitades miden el tiempo con reglas distintas** —
+`drx_prf_batch_seq` cuenta ciclos de reloj, la cadena del DDC avanza solo con `valid`—, y con la
+fuente a una muestra por ciclo eso no se nota. Ahora el motor puede contar **avances de muestra**:
+`rtl/drx_sample_pacer.sv` (nuevo, define qué cuenta como un avance y lleva toda la lógica nueva),
+un puerto `advance` en `drx_prf_batch_seq`/`drx_trigger_one_shot`, paso a través en el resto, y
+mapa de registros **v10** (`TIMING_CTRL` bit 1, `timing_paced`, reset 0 — con el bit en 0 la
+netlist es la de v9). Verificado comparando la traza paceada contra la del mismo motor sin pacear,
+1804 avances muestra a muestra, **y con RTL mutado**: quitar `advance` del `assign` de
+`pulse_trig` da «10 pulsos con el motor parado», quitarlo de los `always_ff` hace divergir la
+traza en el avance 134. **Lo que falta: la medida en placa** — el barrido de los ocho vectores con
+`timing_paced = 1` contra el modelo dorado, y el P&R. Y esto NO convierte Throttled(DDR) en fuente
+de tiempo real: no valida nada dependiente de la tasa.
 
 **Infraestructura de medida, 3-oct-2026.** `tools/net_drx_link.sh` deja el enlace cableado al DRx
 con perfil persistente (192.168.1.1/24 estática, `never-default`): el perfil por defecto de

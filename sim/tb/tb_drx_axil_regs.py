@@ -505,19 +505,35 @@ async def test_nco_pinc_arranca_en_nco_phase_inc_y_pulsa_al_escribir(dut):
 
 @cocotb.test()
 async def test_timing_ctrl_enable_rw(dut):
-    """TIMING_CTRL bit 0 controla `timing_enable`; bits altos son reservados."""
+    """TIMING_CTRL bit 0 = `timing_enable`, bit 1 (v10) = `timing_paced`; el
+    resto siguen siendo reservados."""
     cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
     await _reset(dut)
 
     assert int(dut.timing_enable.value) == 0, "timing_enable arranca detenido"
+    # El valor de reset de `timing_paced` es 0 y eso NO es un detalle: con 0
+    # el motor cuenta ciclos, o sea un sistema que nunca escriba aqui se
+    # comporta exactamente como v3..v9 (P-16).
+    assert int(dut.timing_paced.value) == 0, "timing_paced arranca sin pacear"
     assert await axil_read(dut, REG_TIMING_CTRL_ADDR) == 0
 
     await axil_write(dut, REG_TIMING_CTRL_ADDR, 0xFFFF_FFFF)
     assert int(dut.timing_enable.value) == 1
-    assert await axil_read(dut, REG_TIMING_CTRL_ADDR) == 1, "bits reservados de TIMING_CTRL leen 0"
+    assert int(dut.timing_paced.value) == 1
+    assert await axil_read(dut, REG_TIMING_CTRL_ADDR) == 0b11, (
+        "bits 31:2 de TIMING_CTRL leen 0"
+    )
+
+    # Los dos bits son independientes: pacear sin arrancar el secuenciador es
+    # una combinacion util -- es como se aisla un fallo del pacer de un fallo
+    # del modo (ver la cabecera de drx_sample_pacer.sv).
+    await axil_write(dut, REG_TIMING_CTRL_ADDR, 0b10)
+    assert int(dut.timing_enable.value) == 0
+    assert int(dut.timing_paced.value) == 1
 
     await axil_write(dut, REG_TIMING_CTRL_ADDR, 0x0)
     assert int(dut.timing_enable.value) == 0
+    assert int(dut.timing_paced.value) == 0
 
 
 @cocotb.test()

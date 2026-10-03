@@ -31,6 +31,10 @@ module drx_trigger_gen
 
     input logic arm,
 
+    // P-16: paso a traves hacia los NTriggers canales. Este modulo no tiene
+    // logica propia (ver la cabecera), tampoco para esto.
+    input logic advance,
+
     input logic [DelayBits-1:0] delay[NTriggers],
     input logic [WidthBits-1:0] width[NTriggers],
 
@@ -54,6 +58,7 @@ module drx_trigger_gen
           .rst_n(rst_n),
 
           .arm(arm),
+          .advance(advance),
 
           .delay(delay[gt]),
           .width(width[gt]),

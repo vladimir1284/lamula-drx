@@ -153,6 +153,9 @@ module drx_axil_regs
 
     // Z2 (v3, D-13) — registro -> planta, hacia drx_timing_engine.
     output logic        timing_enable,
+    // TIMING_CTRL bit 1 (v10, P-16): el motor cuenta avances de muestra en vez
+    // de ciclos. Ver `drx_sample_pacer.sv`.
+    output logic        timing_paced,
     output logic [31:0] prf_div_low,
     output logic [31:0] prf_div_high,
     output logic [15:0] pulse_width_low,
@@ -337,6 +340,7 @@ module drx_axil_regs
   // reportándolo en TIMING_STATUS bits 1/2 (ver más abajo).
   // -----------------------------------------------------------------------
   logic        timing_enable_r;
+  logic        timing_paced_r;
   logic [31:0] prf_div_low_r, prf_div_high_r;
   logic [15:0] pulse_width_low_r, pulse_width_high_r;
   logic [15:0] n_pulses_low_r, n_pulses_high_r;
@@ -345,6 +349,7 @@ module drx_axil_regs
   logic [31:0] trig_width_r[4];
 
   assign timing_enable    = timing_enable_r;
+  assign timing_paced     = timing_paced_r;
   assign prf_div_low      = prf_div_low_r;
   assign prf_div_high     = prf_div_high_r;
   assign pulse_width_low  = pulse_width_low_r;
@@ -365,6 +370,7 @@ module drx_axil_regs
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       timing_enable_r    <= 1'b0;
+      timing_paced_r     <= 1'b0;  // cuenta ciclos, el comportamiento de v3..v9
       prf_div_low_r       <= '0;
       prf_div_high_r      <= '0;
       pulse_width_low_r   <= '0;
@@ -379,7 +385,10 @@ module drx_axil_regs
       end
     end else if (write_commit) begin
       unique case (awaddr_r)
-        REG_TIMING_CTRL_ADDR: timing_enable_r <= wdata_r[0];
+        REG_TIMING_CTRL_ADDR: begin
+          timing_enable_r <= wdata_r[0];
+          timing_paced_r  <= wdata_r[1];
+        end
         REG_PRF_DIV_LOW_ADDR: prf_div_low_r <= wdata_r;
         REG_PRF_DIV_HIGH_ADDR: prf_div_high_r <= wdata_r;
         REG_PULSE_WIDTH_ADDR: begin
@@ -515,7 +524,10 @@ module drx_axil_regs
       REG_OVERFLOW_ADDR: begin
         for (int c = 0; c < N_CH; c++) rdata_next[c] = overflow_sticky_r[c];
       end
-      REG_TIMING_CTRL_ADDR: rdata_next[0] = timing_enable_r;
+      REG_TIMING_CTRL_ADDR: begin
+        rdata_next[0] = timing_enable_r;
+        rdata_next[1] = timing_paced_r;
+      end
       REG_TIMING_STATUS_ADDR: begin
         rdata_next[0] = radial_done_sticky_r;
         rdata_next[1] = config_invalid_low_sticky_r;

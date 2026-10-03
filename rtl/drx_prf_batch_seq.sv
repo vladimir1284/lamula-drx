@@ -62,6 +62,19 @@ module drx_prf_batch_seq #(
     // responsabilidad de quien controla `enable`, no de este módulo.
     input logic enable,
 
+    // P-16: un "paso" del secuenciador. Con `advance` constante a 1 este
+    // modulo es exactamente el de v1..v9 -- `prf_div` cuenta ciclos de `fs`,
+    // como dice la convencion de PRI de arriba. Con `advance` paceado por el
+    // avance de muestras (`drx_sample_pacer.sv`), `prf_div` cuenta MUESTRAS,
+    // que es lo mismo mientras la fuente entregue una por ciclo y lo correcto
+    // cuando no.
+    //
+    // Es un paso, NO un armado: `enable` sigue decidiendo si el secuenciador
+    // corre, y es `enable` -- no `advance` -- quien borra `width_cnt`. Juntar
+    // los dos conceptos dejaria `tx_gate` en pulsos de un ciclo cada vez que
+    // la fuente se frena, que es precisamente el caso para el que existe.
+    input logic advance,
+
     // Lote bajo: vigilancia, PRF baja, pocos pulsos, rango largo (D-13).
     input logic [ PrfDivBits-1:0] prf_div_low,
     input logic [PulseWidthBits-1:0] pulse_width_low,
@@ -99,7 +112,12 @@ module drx_prf_batch_seq #(
   // propio): así el primer pulso cae exactamente en el ciclo 0 tras salir de
   // reset/rearmar, igual que `start_cycle=0` en el modelo, sin un ciclo de
   // latencia de más que el modelo no tiene.
-  assign pulse_trig = enable && (pri_cnt == '0);
+  // `advance` entra TAMBIEN aqui, no solo en los `always_ff`: `pri_cnt` se
+  // queda en 0 durante todos los ciclos en que el motor no avanza, asi que sin
+  // este termino `pulse_trig` saldria ancho en vez de un ciclo -- y lo
+  // consumen `ray_start` (D-14) y el contador TRIG_COUNT, que contarian varias
+  // veces el mismo pulso de PRF.
+  assign pulse_trig = enable && advance && (pri_cnt == '0);
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -107,7 +125,7 @@ module drx_prf_batch_seq #(
       pulse_idx   <= '0;
       batch_sel   <= 1'b0;  // un radial siempre arranca por el lote bajo (D-13)
       radial_done <= 1'b0;
-    end else if (enable) begin
+    end else if (enable && advance) begin
       radial_done <= 1'b0;
       if (pri_cnt == prf_div_sel - 1) begin
         pri_cnt <= '0;
@@ -145,14 +163,14 @@ module drx_prf_batch_seq #(
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       width_cnt <= '0;
-    end else if (enable) begin
+    end else if (!enable) begin
+      width_cnt <= '0;
+    end else if (advance) begin
       if (pulse_trig) begin
         width_cnt <= pulse_width;
       end else if (width_cnt != '0) begin
         width_cnt <= width_cnt - 1'b1;
       end
-    end else begin
-      width_cnt <= '0;
     end
   end
 

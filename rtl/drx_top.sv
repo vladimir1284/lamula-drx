@@ -239,6 +239,11 @@ module drx_top
   // empaquetar de entrada (eso sí funciona, ver la cabecera de
   // drx_trigger_gen.sv). Este es el único sitio que empaqueta.
   logic        timing_enable;
+  logic        timing_paced;
+  // Lo conduce `u_sample_pacer`, instanciado mas abajo junto a la fuente de
+  // muestras (es donde viven `vs_valid`/`vs_ready`). Declarado aqui porque
+  // `u_timing_engine` lo consume antes en el fichero.
+  logic        timing_advance;
   logic [31:0] prf_div_low, prf_div_high;
   logic [15:0] pulse_width_low, pulse_width_high;
   logic [15:0] n_pulses_low, n_pulses_high;
@@ -291,6 +296,7 @@ module drx_top
       .ray_truncated_clear(gate_clear_truncated_packed),
 
       .timing_enable   (timing_enable),
+      .timing_paced    (timing_paced),
       .prf_div_low     (prf_div_low),
       .prf_div_high    (prf_div_high),
       .pulse_width_low (pulse_width_low),
@@ -333,6 +339,7 @@ module drx_top
       .clk   (clk),
       .rst_n (rst_n),
       .enable(timing_enable),
+      .advance(timing_advance),
 
       .prf_div_low     (prf_div_low),
       .pulse_width_low (pulse_width_low),
@@ -395,6 +402,30 @@ module drx_top
       .valid(vs_valid),
       .data (vs_data),
       .last (vs_last)
+  );
+
+  // P-16: el motor de timing cuenta avances de muestra en vez de ciclos
+  // cuando TIMING_CTRL bit 1 esta en alto. Con el bit en 0 (reset) `advance`
+  // es constante 1 y el motor es el de v3..v9. Ver `drx_sample_pacer.sv`.
+  // Empaquetado para el pacer: sus puertos son buses y no arrays
+  // desempaquetados por un limite de Verilator/cocotb, no por diseno -- ver
+  // su cabecera.
+  logic [N_CH-1:0] vs_valid_pk;
+  logic [N_CH-1:0] vs_ready_pk;
+  always_comb begin
+    for (int c = 0; c < N_CH; c = c + 1) begin
+      vs_valid_pk[c] = vs_valid[c];
+      vs_ready_pk[c] = vs_ready[c];
+    end
+  end
+
+  drx_sample_pacer #(
+      .N_CH(N_CH)
+  ) u_sample_pacer (
+      .paced(timing_paced),
+      .valid(vs_valid_pk),
+      .ready(vs_ready_pk),
+      .advance(timing_advance)
   );
 
   logic                      ddc_valid[N_CH];

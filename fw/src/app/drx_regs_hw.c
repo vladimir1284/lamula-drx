@@ -100,19 +100,45 @@ static const uint32_t kTrigWidthOffset[DRX_N_TRIGGERS] = {
     DRX_REG_TRIG_WIDTH_3_OFFSET,
 };
 
+/* Lectura-modificacion-escritura desde v10, no una escritura cruda: el bit 1
+ * de TIMING_CTRL es `timing_paced` (P-16) y un `DrxReg_Write(..., 1u)` lo
+ * borraria al arrancar el motor. Ese es exactamente el fallo silencioso que
+ * esta forma evita -- el barrido del catalogo quedaria sin pacear sin ningun
+ * sintoma salvo que no sale ningun rayo. */
 void DrxReg_TimingDisable(void)
 {
-    DrxReg_Write(DRX_REG_TIMING_CTRL_OFFSET, 0u);
+    uint32_t ctrl = DrxReg_Read(DRX_REG_TIMING_CTRL_OFFSET);
+    DrxReg_Write(DRX_REG_TIMING_CTRL_OFFSET, ctrl & ~DRX_REG_TIMING_CTRL_ENABLE_MASK);
 }
 
 void DrxReg_TimingEnable(void)
 {
-    DrxReg_Write(DRX_REG_TIMING_CTRL_OFFSET, 1u);
+    uint32_t ctrl = DrxReg_Read(DRX_REG_TIMING_CTRL_OFFSET);
+    DrxReg_Write(DRX_REG_TIMING_CTRL_OFFSET, ctrl | DRX_REG_TIMING_CTRL_ENABLE_MASK);
 }
 
 bool DrxReg_TimingEnabled(void)
 {
-    return (DrxReg_Read(DRX_REG_TIMING_CTRL_OFFSET) & 1u) != 0u;
+    return (DrxReg_Read(DRX_REG_TIMING_CTRL_OFFSET) & DRX_REG_TIMING_CTRL_ENABLE_MASK) != 0u;
+}
+
+/* P-16: el motor cuenta avances de muestra en vez de ciclos. Solo seguro con
+ * el secuenciador parado -- cambia el significado de `prf_div` a mitad de
+ * radial -- y por eso no se toca desde aqui el bit de enable. */
+void DrxReg_TimingSetPaced(bool paced)
+{
+    uint32_t ctrl = DrxReg_Read(DRX_REG_TIMING_CTRL_OFFSET);
+    if (paced) {
+        ctrl |= DRX_REG_TIMING_CTRL_PACED_MASK;
+    } else {
+        ctrl &= ~DRX_REG_TIMING_CTRL_PACED_MASK;
+    }
+    DrxReg_Write(DRX_REG_TIMING_CTRL_OFFSET, ctrl);
+}
+
+bool DrxReg_TimingPaced(void)
+{
+    return (DrxReg_Read(DRX_REG_TIMING_CTRL_OFFSET) & DRX_REG_TIMING_CTRL_PACED_MASK) != 0u;
 }
 
 /* PULSE_WIDTH y N_PULSES empaquetan los dos lotes en una palabra: lote bajo en

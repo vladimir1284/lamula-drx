@@ -1983,6 +1983,85 @@ Trabajo:
        se confundió una vez con un problema de baudios.
 
 
+!!! success "3-oct-2026 (más tarde): P-16 resuelto en RTL — el motor de timing cuenta muestras"
+    P-16 llevaba desde el 1-oct con dos salidas escritas, las dos caras: ensanchar el stream del
+    MM2S (tres cambios que tienen que aterrizar a la vez, y `N_CH × 16 = 48` bits no es potencia
+    de dos, así que serían 64 con un carril muerto) o aceptar que el catálogo elegible en caliente
+    solo sirve sin el motor de timing. **La tercera vía la propuso vladimir y no estaba en la
+    lista: sincronizar el motor con el avance de muestras.**
+
+    El problema no es que el DMA vaya lento. Es que las dos mitades miden el tiempo con reglas
+    distintas: `drx_prf_batch_seq` cuenta ciclos de reloj (un PRI = `prf_div` ciclos de `fs`,
+    D-13; `ray_start` corta ahí, D-14) y la cadena del DDC avanza solo con `valid`. Con la fuente
+    a una muestra por ciclo son la misma cosa — por eso nadie lo había notado. En Throttled(DDR)
+    `vector_source` junta `N_CH` beats por conjunto, el rayo tarda ~4 PRI en llenarse,
+    `ray_start` lo trunca y no se completa ninguno.
+
+    Si el motor cuenta **avances de muestra**, las dos mitades se frenan con el mismo factor y el
+    rayo se llena con los mismos `prf_div / R₁` bins a cualquier tasa. En tiempo real `valid` está
+    siempre alto, así que un avance es un ciclo y el motor es el de v3..v9 — no por argumento, por
+    construcción: con `advance` constante a 1 la síntesis colapsa el enable.
+
+    **Lo nuevo, con el criterio explícito de tocar lo mínimo del diseño principal:**
+
+    | pieza | qué cambia |
+    |---|---|
+    | `rtl/drx_sample_pacer.sv` | **nuevo**. Define qué cuenta como un avance. Toda la lógica nueva vive aquí |
+    | `rtl/drx_prf_batch_seq.sv` | un puerto `advance` |
+    | `rtl/drx_trigger_one_shot.sv` | un puerto `advance` |
+    | `rtl/drx_trigger_gen.sv`, `rtl/drx_timing_engine.sv` | paso a través, no tienen lógica propia |
+    | mapa de registros **v10** | `TIMING_CTRL` bit 1, `timing_paced`, reset 0 |
+
+    **La intrusión en el motor no se puede evitar, y conviene decirlo en vez de fingirlo.** La
+    primera idea era no tocarlo: `drx_prf_batch_seq` YA tiene un `enable` que es un clock-enable
+    de verdad (`pri_cnt`, `pulse_idx`, `batch_sel`, `radial_done` viven todos dentro de
+    `else if (enable)`), así que bastaría con meter el tick ahí. No basta: `width_cnt` tiene
+    `else width_cnt <= '0'`, o sea `enable` bajo lo BORRA, y gatearlo con el tick dejaría
+    `tx_gate` en pulsos de un ciclo cada vez que la fuente se frena — justo el caso para el que
+    existe. Hacen falta dos conceptos separados, `enable` (armado) y `advance` (paso).
+
+    **Y un detalle que casi se escapa, que habría sido un fallo silencioso.** `pulse_trig` es
+    combinacional sobre `pri_cnt == '0'`. Gateando solo los `always_ff`, `pri_cnt` se queda en 0
+    durante todos los ciclos sin avance y `pulse_trig` sale **ancho** en vez de un ciclo. Lo
+    consumen `ray_start` (D-14) y el contador `TRIG_COUNT`, que contarían varias veces el mismo
+    pulso de PRF. El `advance` entra también en ese `assign`.
+
+    **La verificación, que es donde está el trabajo.** `sim/tb/tb_drx_timing_paced.py` no compara
+    contra el modelo dorado: compara la traza paceada —muestreada SOLO en los ciclos de avance—
+    contra la del mismo motor sin pacear. Dos radiales completos, 1804 avances,
+    `(pulse_trig, batch_sel, tx_gate)` muestra a muestra, con un patrón de avance irregular a
+    propósito (el MM2S no entrega a cadencia regular, y un hueco periódico podría esconder un
+    error que dependiera de la alineación con el PRI). El oráculo es el motor viejo porque lo que
+    falta por probar no es la corrección del secuenciador —ya la cubre `tb_drx_prf_batch_seq.py`
+    contra `model/drx_model/timing.py`— sino la EQUIVALENCIA de las dos bases de tiempo.
+
+    **Los dos tests se comprobaron contra RTL mutado**, que es la única forma de saber que muerden:
+
+    | mutante | qué pasa |
+    |---|---|
+    | `advance` fuera del `assign` de `pulse_trig` | «10 pulsos con el motor parado» |
+    | `advance` fuera de los `always_ff` | la traza diverge en el avance 134 |
+
+    Y uno de los dos resultados es informativo por sí solo: el test de equivalencia **no** caza el
+    primer mutante, porque muestrea solo en los avances y el pulso ancho le es invisible. Por eso
+    hacen falta los dos y no uno.
+
+    **Firmware.** `DrxReg_TimingEnable()`/`Disable()` pasan a lectura-modificación-escritura: un
+    `DrxReg_Write(TIMING_CTRL, 1u)` borraría el bit de pacing al arrancar el motor, y el síntoma
+    sería que el barrido no produce ningún rayo sin ninguna otra pista. `DrxStimulus_Select()`
+    enciende el pacing junto con el modo DDR y `DrxStimulus_Stop()` lo apaga, los dos bracketeados
+    con el secuenciador parado — los bits del registro son independientes a propósito, que vayan
+    juntos es una política y su sitio es el firmware.
+
+    **Lo que NO cierra.** Throttled(DDR) sigue sin ser una fuente de tiempo real; el nombre ya lo
+    decía. No valida rayos/s, caudal del transporte ni temporización del anillo del DMA — eso se
+    sigue midiendo en BRAM-loop. Y el validador D-09 comprueba PRF × rango en ciclos: con el motor
+    paceado el PRF real se estira, así que el check queda conservador (nunca rechaza de más) pero
+    deja de hablar del PRF real. Una configuración paceada no es una configuración de tiempo real
+    validada. **Falta la medida en placa:** el barrido de los ocho vectores con `timing_paced = 1`
+    contra el modelo dorado. El RTL y el firmware están; el P&R y la corrida, no.
+
+
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
 Trabajo:

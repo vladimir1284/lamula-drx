@@ -30,6 +30,7 @@ N_TRIGGERS = 4
 async def _reset(dut) -> None:
     dut.rst_n.value = 0
     dut.arm.value = 0
+    dut.advance.value = 1  # P-16: sin pacear, el comportamiento de v1..v9
     for ch in range(N_TRIGGERS):
         dut.delay[ch].value = 0
         dut.width[ch].value = 1

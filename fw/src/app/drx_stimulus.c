@@ -244,6 +244,25 @@ drx_dsp_error_t DrxStimulus_Select(uint8_t vector_id, uint16_t repeat)
     uint32_t ctrl = DrxReg_Read(DRX_REG_CTRL_OFFSET);
     DrxReg_Write(DRX_REG_CTRL_OFFSET, ctrl | DRX_REG_CTRL_VECTOR_SOURCE_DDR_MASK);
 
+    /* P-16: en Throttled(DDR) el motor de timing TIENE que contar avances de
+     * muestra. `vector_source` junta N_CH beats de 16 bits por conjunto, asi
+     * que contando ciclos el rayo tarda ~N_CH veces el PRI en llenarse,
+     * `ray_start` lo trunca y no se completa ninguno.
+     *
+     * Los dos bits de registro son independientes a proposito (ver
+     * drx_sample_pacer.sv); que vayan juntos es una POLITICA, y su sitio es
+     * aqui, no el mapa de registros. Se bracketea con el secuenciador parado
+     * porque pacear cambia lo que significa `prf_div`, y hacerlo a mitad de
+     * radial deja ese radial con dos bases de tiempo. */
+    const bool timing_corria = DrxReg_TimingEnabled();
+    if (timing_corria) {
+        DrxReg_TimingDisable();
+    }
+    DrxReg_TimingSetPaced(true);
+    if (timing_corria) {
+        DrxReg_TimingEnable();
+    }
+
     if (!submit_pass()) {
         g_status.running = false;
         xil_printf("drx_stimulus: no se pudo encolar la primera pasada\r\n");
@@ -274,6 +293,19 @@ void DrxStimulus_Stop(void)
 
     uint32_t ctrl = DrxReg_Read(DRX_REG_CTRL_OFFSET);
     DrxReg_Write(DRX_REG_CTRL_OFFSET, ctrl & ~DRX_REG_CTRL_VECTOR_SOURCE_DDR_MASK);
+
+    /* De vuelta a BRAM-loop, de vuelta a contar ciclos: ahi la fuente entrega
+     * una muestra por ciclo y pacear no cambia nada, pero dejarlo encendido
+     * ataria el motor al `ready` del DDC sin ninguna razon. Mismo bracketeo
+     * que en Select(). */
+    const bool timing_corria = DrxReg_TimingEnabled();
+    if (timing_corria) {
+        DrxReg_TimingDisable();
+    }
+    DrxReg_TimingSetPaced(false);
+    if (timing_corria) {
+        DrxReg_TimingEnable();
+    }
 }
 
 void DrxStimulus_GetStatus(DrxStimulusStatus *out)

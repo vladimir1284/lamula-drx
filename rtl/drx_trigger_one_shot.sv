@@ -31,6 +31,17 @@ module drx_trigger_one_shot #(
 
     input logic arm,
 
+    // P-16: un "paso" del canal, igual que en `drx_prf_batch_seq.sv`. Con
+    // `advance` constante a 1 este modulo es el de v1..v9. Se pacea junto con
+    // el secuenciador y no al margen: si `tx_gate` se estira con el avance de
+    // muestras y `trig_out` siguiera contando ciclos, las dos salidas que
+    // describen el MISMO pulso de PRF dejarian de coincidir, y el unico sitio
+    // donde eso se ve es un osciloscopio en los pines del Pmod (ZM2).
+    //
+    // `arm` llega ya alineado con un avance -- `pulse_trig` lleva el mismo
+    // termino -- asi que gatear aqui no pierde ningun armado.
+    input logic advance,
+
     // Se asume `width >= 1` (igual que `Batch.pulse_width_cycles` en el
     // modelo): con `width == 0`, `width_cnt <= width - 1'b1` envolvería. Ese
     // invariante lo garantiza quien escribe el registro, no este módulo --
@@ -51,31 +62,33 @@ module drx_trigger_one_shot #(
       delay_cnt <= '0;
       width_cnt <= '0;
       trig_out <= 1'b0;
-    end else if (arm) begin
-      // Un `arm` nuevo manda siempre, esté pendiente o activo lo que hubiera
-      // antes (ver la cabecera).
-      if (delay == '0) begin
-        pending  <= 1'b0;
-        width_cnt <= width - 1'b1;
-        trig_out <= 1'b1;
-      end else begin
-        pending   <= 1'b1;
-        delay_cnt <= delay - 1'b1;
-        trig_out  <= 1'b0;
-      end
-    end else if (pending) begin
-      if (delay_cnt == '0) begin
-        pending  <= 1'b0;
-        width_cnt <= width - 1'b1;
-        trig_out <= 1'b1;
-      end else begin
-        delay_cnt <= delay_cnt - 1'b1;
-      end
-    end else if (trig_out) begin
-      if (width_cnt == '0) begin
-        trig_out <= 1'b0;
-      end else begin
-        width_cnt <= width_cnt - 1'b1;
+    end else if (advance) begin
+      if (arm) begin
+        // Un `arm` nuevo manda siempre, esté pendiente o activo lo que hubiera
+        // antes (ver la cabecera).
+        if (delay == '0) begin
+          pending   <= 1'b0;
+          width_cnt <= width - 1'b1;
+          trig_out  <= 1'b1;
+        end else begin
+          pending   <= 1'b1;
+          delay_cnt <= delay - 1'b1;
+          trig_out  <= 1'b0;
+        end
+      end else if (pending) begin
+        if (delay_cnt == '0) begin
+          pending   <= 1'b0;
+          width_cnt <= width - 1'b1;
+          trig_out  <= 1'b1;
+        end else begin
+          delay_cnt <= delay_cnt - 1'b1;
+        end
+      end else if (trig_out) begin
+        if (width_cnt == '0) begin
+          trig_out <= 1'b0;
+        end else begin
+          width_cnt <= width_cnt - 1'b1;
+        end
       end
     end
   end

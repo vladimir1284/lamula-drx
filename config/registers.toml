@@ -84,7 +84,19 @@
 # asi que un sistema que nunca escriba aqui se comporta exactamente como v8 --
 # condicion necesaria para que la matriz de 16 corridas de D-12 siga siendo el
 # oraculo del camino sin AFC.
-schema_version = 9
+# v10 (3-oct-2026, P-16) anade el bit 1 de TIMING_CTRL, que v3..v9
+# documentaban como reservado y "lee 0": `timing_paced`. Con 0 (valor de
+# reset) el motor de timing cuenta CICLOS DE RELOJ, como siempre; con 1
+# cuenta AVANCES DE MUESTRA (`drx_sample_pacer.sv`). Son lo mismo mientras la
+# fuente entregue una muestra por ciclo, y dejan de serlo en Throttled(DDR),
+# donde `vector_source` junta N_CH beats por conjunto: ahi el rayo tarda ~N_CH
+# veces el PRI en llenarse, `ray_start` lo trunca y no se completa ninguno
+# (P-16). Mismo criterio de bump que v4 y v8: redefinir un bit que el mapa
+# declaraba como siempre 0 es un cambio de semantica visible desde firmware.
+# El bit NO se deriva de `vector_source_ddr` a proposito -- poder pacear sin
+# DDR, o correr DDR sin pacear, es lo que distingue un fallo del pacer de un
+# fallo del modo.
+schema_version = 10
 
 # Bytes direccionables: 2^addr_width = 128 B = 32 palabras de 32 bits. Las
 # primeras 23 palabras (0x00-0x58) están implementadas (Z1 + Z2 v3/v5/v6 +
@@ -122,7 +134,7 @@ doc = "Bit c: overflow sticky de la saturación final del DDC del canal c (drx_d
 name = "timing_ctrl"
 offset = 0x10
 access = "rw"
-doc = "Bit 0: enable de drx_prf_batch_seq (arranca/detiene el secuenciador de 2 lotes). Valor de reset: 0 (detenido). Bits 31:1 reservados: leen 0, una escritura ahí no tiene efecto."
+doc = "Bit 0: enable de drx_prf_batch_seq (arranca/detiene el secuenciador de 2 lotes). Valor de reset: 0 (detenido). Bit 1 (v10): timing_paced -- 0 = el motor cuenta ciclos de reloj (valor de reset, el comportamiento de v3..v9); 1 = cuenta avances de muestra, o sea los ciclos en que la fuente entrega un conjunto de N_CH muestras y el DDC lo toma (drx_sample_pacer.sv). Son lo mismo mientras la fuente vaya a una muestra por ciclo; en Throttled(DDR) no lo son y sin esto no se completa ningún rayo (P-16). No lo cambies con el secuenciador corriendo: cambia el significado de prf_div a mitad de radial. Bits 31:2 reservados: leen 0, una escritura ahí no tiene efecto."
 
 [[register]]
 name = "timing_status"

@@ -39,6 +39,11 @@ BINS_HIGH_TEST = 222
 async def _reset(dut) -> None:
     dut.rst_n.value = 0
     dut.enable.value = 0
+    # P-16: `advance` a 1 fijo reproduce el modulo de v1..v9 -- `prf_div`
+    # cuenta ciclos. El pacing tiene su propio banco
+    # (`tb_drx_sample_pacer.py` y `test_l0_timing_paced.py`); este banco
+    # es justamente el que prueba que no cambia nada cuando no se usa.
+    dut.advance.value = 1
     dut.prf_div_low.value = 1
     dut.pulse_width_low.value = 0
     dut.n_pulses_low.value = 1

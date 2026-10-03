@@ -72,6 +72,15 @@ module drx_timing_engine
     input logic rst_n,
     input logic enable,
 
+    // P-16: un "paso" del motor completo -- secuenciador de lotes y
+    // generador de triggers a la vez, que es la unica forma de que las dos
+    // salidas sigan describiendo el mismo pulso. Con `advance` constante a 1
+    // este motor es el de v1..v9; con el avance de muestras
+    // (`drx_sample_pacer.sv`), `prf_div` pasa a contar muestras en vez de
+    // ciclos. Ver la cabecera del pacer para por que eso es lo correcto y
+    // que es lo que NO arregla.
+    input logic advance,
+
     // Lote bajo / lote alto -- ver `drx_prf_batch_seq.sv`.
     input logic [ PrfDivBits-1:0] prf_div_low,
     input logic [PulseWidthBits-1:0] pulse_width_low,
@@ -149,6 +158,7 @@ module drx_timing_engine
       .clk(clk),
       .rst_n(rst_n),
       .enable(enable_gated),
+      .advance(advance),
 
       .prf_div_low(prf_div_low),
       .pulse_width_low(pulse_width_low),
@@ -177,6 +187,7 @@ module drx_timing_engine
       .rst_n(rst_n),
 
       .arm(pulse_trig),
+      .advance(advance),
 
       .delay(trig_delay),
       .width(trig_width),

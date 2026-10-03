@@ -1956,8 +1956,8 @@ v0.5 tiene que migrar.
 
 ### P-16 · El modo Throttled(DDR) no puede coexistir con el motor de timing { #p-16 }
 
-**Estado:** abierto, encontrado 1-oct-2026 (Z4.4) · **Dueño:** Z4.6 o después · **Bloquea:**
-barrer el catálogo de estímulos de Z4.3 contra rayos reales. No bloquea Z4.4.
+**Estado:** resuelto en RTL 3-oct-2026, pendiente de la medida en placa · **Dueño:** Z4.6 ·
+**Bloquea:** ya no el diseño; sí el barrido del catálogo hasta que se corra. Nunca bloqueó Z4.4.
 
 `rtl/vector_source.sv` en Throttled(DDR) llena un conjunto de N_CH muestras tomando una por beat de
 un AXI4-Stream de 16 bits y lo presenta durante un ciclo, así que el `s_valid` que ve
@@ -1976,13 +1976,58 @@ debajo de tiempo real, ver [fuente de muestras](../plataforma/fuente-de-muestras
 había dicho en ningún sitio es que eso impide producir rayos con el motor de timing en marcha, que
 es la combinación que hace falta para barrer los ocho vectores del catálogo contra rayos reales.
 
-**Condición de cierre:** el DMA entrega N_CH muestras por ciclo —un stream de N_CH·16 bits en vez
-de 16, con `vector_source` deshaciendo el entrelazado dentro de la palabra en lugar de a lo largo
-del tiempo— o se acepta explícitamente que el catálogo elegible en caliente solo sirve sin el motor
-de timing, y se documenta así en el contrato. La primera opción es un cambio de
-`tcl/gen_zynq_bd.tcl` (`c_m_axis_mm2s_tdata_width`), del camino DDR de `vector_source.sv` y del
-entrelazado que monta `fw/src/app/drx_stimulus.c`; ninguna de las tres es grande, pero las tres
-tienen que cambiar a la vez o el reparto por canal se desplaza sin ningún error visible.
+**Condición de cierre (escrita el 1-oct, superada el 3-oct).** Se planteaban dos salidas: que el
+DMA entregue N_CH muestras por ciclo —un stream de N_CH·16 bits en vez de 16, cambiando
+`tcl/gen_zynq_bd.tcl`, el camino DDR de `vector_source.sv` y el entrelazado de
+`fw/src/app/drx_stimulus.c`, las tres a la vez o el reparto por canal se desplaza sin error
+visible— o aceptar que el catálogo elegible en caliente solo sirve sin el motor de timing. La
+primera tiene además un pero que no estaba anotado: `N_CH × 16 = 48` bits no es potencia de dos y
+el AXI DMA de Xilinx solo acepta potencias de dos, así que serían 64 bits con un carril muerto.
+
+**3-oct-2026: cerrado por una tercera vía que ninguna de las dos contemplaba — sincronizar el
+motor con el avance de muestras.** El problema no es que el DMA vaya lento; es que las dos mitades
+miden el tiempo con reglas distintas. Si `drx_prf_batch_seq` cuenta AVANCES DE MUESTRA en vez de
+ciclos de reloj, las dos se frenan con el mismo factor y el rayo se llena con los mismos
+`prf_div / R₁` bins a cualquier tasa. En tiempo real `valid` está siempre alto, así que un avance
+es un ciclo y el motor es el de v3..v9 -- no por argumento, por construcción: con `advance`
+constante a 1 la síntesis colapsa el enable.
+
+Piezas, con el criterio de tocar lo mínimo del diseño principal:
+
+- `rtl/drx_sample_pacer.sv` (**nuevo**): define qué cuenta como un avance -- `valid && ready` en
+  TODOS los canales a la vez, no en uno suelto. Esa definición es la decisión entera, y por eso
+  tiene módulo y L0 propios en vez de ser tres `assign` dentro de `drx_top`.
+- Un puerto `advance` en `drx_prf_batch_seq.sv` y `drx_trigger_one_shot.sv`, paso a través en
+  `drx_trigger_gen.sv` y `drx_timing_engine.sv`. Es la única intrusión en el motor, y no se puede
+  evitar: el `enable` que ya existe NO sirve de paso porque borra `width_cnt`, así que gatearlo
+  con el tick dejaría `tx_gate` en pulsos de un ciclo.
+- Mapa de registros **v10**: `TIMING_CTRL` bit 1, `timing_paced`, reset 0. Detrás de un bit y no
+  siempre activo a propósito: en BRAM-loop `advance` es `ready`, y si el DDC aplicara
+  contrapresión alguna vez eso movería las cifras de Z4.4, que están cerradas y medidas.
+
+**Un detalle que casi se escapa y habría sido un fallo silencioso:** `pulse_trig` es combinacional
+sobre `pri_cnt == '0'`. Gateando solo los `always_ff`, `pri_cnt` se queda en 0 durante todos los
+ciclos sin avance y `pulse_trig` sale ANCHO -- y lo consumen `ray_start` (D-14) y `TRIG_COUNT`,
+que contarían varias veces el mismo pulso de PRF. El `advance` entra también en ese `assign`.
+
+**Verificación.** `sim/tb/tb_drx_timing_paced.py` compara la traza paceada, muestreada solo en los
+ciclos de avance, contra la del mismo motor sin pacear: dos radiales completos, 1804 avances,
+`(pulse_trig, batch_sel, tx_gate)` muestra a muestra. El oráculo aquí no es el modelo dorado sino
+el motor viejo, porque lo que falta por probar no es la corrección del secuenciador —ya la cubre
+`tb_drx_prf_batch_seq.py`— sino la EQUIVALENCIA de las dos bases de tiempo. Los dos tests se
+comprobaron contra RTL mutado: quitar `advance` del `assign` da «10 pulsos con el motor parado»,
+quitarlo de los `always_ff` hace que la traza diverja en el avance 134.
+
+**Lo que esto NO cierra.** Throttled(DDR) sigue sin ser una fuente de tiempo real, y el nombre ya
+lo decía. Cierra el barrido del catálogo contra rayos reales. No valida nada dependiente de la
+tasa -- rayos/s, caudal del transporte, temporización del anillo del DMA --; eso se sigue midiendo
+en BRAM-loop. Y el validador D-09 comprueba PRF × rango en ciclos: con el motor paceado el PRF
+real se estira, así que el check queda **conservador** (nunca rechaza de más) pero deja de hablar
+del PRF real. Una configuración paceada no es una configuración de tiempo real validada.
+
+**Falta para darlo por cerrado en placa:** correr el barrido de los ocho vectores con
+`timing_paced = 1` y comparar cada rayo contra el modelo dorado. El RTL y el firmware están; la
+medida no.
 
 Mientras tanto, la medida de rayos de Z4.4 corre en BRAM-loop, cuyo contenido
 (`tools/gen_vector_source_init.py`) es exactamente el caso `tono_if` del catálogo —comprobado array
@@ -2107,8 +2152,8 @@ toda la vigilancia que necesita.
 
 ### P-19 · El pool de transmisión pierde ~25 rayos por millón con el host sano { #p-19 }
 
-**Estado:** abierto, encontrado 3-oct-2026 · **Dueño:** Z4.6 o Z5 · **Bloquea:** nada hoy — la
-tubería de rayos no se detiene y el DSP ve el hueco de `seq`. Sí la cifra de rayos entregados.
+**Estado:** CERRADO 3-oct-2026 (mismo día), como artefacto de medida del cliente de prueba ·
+**Dueño:** Z4.6 · **Bloquea:** nada. El control está al final de la entrada.
 
 Es el residuo que queda tras sacar `lwip_send` de la tarea de rayos ([P-18](#p-18), `954579c`). El
 sumidero toma un hueco del pool de 4 tramas sin bloquear; si no hay, cuenta `queue_full` y descarta.
@@ -2148,5 +2193,20 @@ nadie vació el pool. No es una pérdida dispersa, es una parada corta y aislada
 **Condición de cierre:** distinguir entre (1) y el resto. Un cliente que solo haga `recv` a un
 buffer fijo, sin reensamblar ni asignar memoria, durante el mismo tiempo: si los descartes
 desaparecen, era el host y P-19 se cierra como artefacto de medida. Si se mantienen, hay que mirar
-los contadores de lwIP. Hasta entonces, **no se debe citar 223,4 rayos/s como tasa entregada sin
-decir que 25 de cada millón se pierden en el pool.**
+los contadores de lwIP.
+
+**Cerrado el mismo día: era el cliente.** El control corrió 900 s contra la misma placa, con el
+único cambio de un cliente que hace `recv_into` sobre un buffer fijo de 256 kB y cuenta bytes:
+
+| | rayos enviados | descartes en el pool |
+|---|---|---|
+| `tools/mock_dsp.py` (reensambla ~44 kB por rayo en Python) | 201 082 | 5 |
+| cliente mínimo, solo `recv_into` | 201 032 | **0** |
+
+Misma duración, misma tasa (28,9 Mbps), mismo firmware, `cola` clavada en 156 antes y después. El
+candidato (1) era el correcto y los otros dos quedan sin evidencia que los sostenga. **Estado:
+cerrado como artefacto de medida del cliente de prueba**, 3-oct-2026.
+
+Lo que esto NO dice: que el pool no se pueda llenar nunca. Dice que a 223,4 rayos/s, con un
+consumidor que vacía el socket sin pausas, no se llena. El DSP real tiene su propia latencia de
+proceso, y `queue_full` sigue siendo el contador que hay que mirar cuando aparezca.

@@ -79,9 +79,16 @@ validación funcional: solo la fidelidad temporal, que se cubre con BRAM-loop.
 
     Consecuencia práctica: la medida de rayos de Z4.4 corre en BRAM-loop, y el catálogo elegible en
     caliente de Z4.3 sirve para ejercitar el camino de datos, no para producir rayos con el motor
-    de timing en marcha. Para las dos cosas a la vez haría falta que el DMA entregase N_CH muestras
-    por ciclo, es decir un stream de N_CH·16 bits en vez de 16. Ver
-    [P-16](../alcance/pendientes.md#p-16).
+    de timing en marcha. Ver [P-16](../alcance/pendientes.md#p-16).
+
+    **Resuelto en RTL el 3-oct-2026, y no por donde se esperaba.** La salida que este párrafo daba
+    por única —que el DMA entregase N_CH muestras por ciclo, un stream de N_CH·16 bits— no hizo
+    falta. El problema no era la tasa del DMA sino que el motor de timing y la cadena de datos
+    miden el tiempo con reglas distintas: ciclos de reloj el primero, `valid` la segunda. Con el
+    motor contando **avances de muestra** (`rtl/drx_sample_pacer.sv`, `TIMING_CTRL` bit 1 del mapa
+    v10) las dos se frenan con el mismo factor y el rayo se llena con los bins que toca a
+    cualquier tasa. **Esto no sube la tasa de este modo**: sigue siendo «por debajo de tiempo
+    real», que es lo que su nombre dice y lo que esta tabla promete.
 
 ## Consecuencia para la portabilidad
 
