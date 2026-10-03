@@ -139,6 +139,23 @@ static bool ray_sink(const DrxRayHeader *header, const uint32_t *iq,
     if (len == 0u) {
         g_status.rays_dropped++;
         g_status.encode_fails++;
+        /* Las cifras del rayo que no se pudo enmarcar, en el momento. Contarlo
+         * no bastaba: `DrxRayFrame_Encode` rechaza por varias razones y desde
+         * fuera se ven igual. Y `drx_ray.c` no ayuda a distinguirlas, porque
+         * solo marca `short_rays` cuando el rayo llega CORTO (`n_words <
+         * esperadas`); uno que llega LARGO no lo marca nadie y aun asi el
+         * encoder lo rechaza, que compara con `!=`. Dos de los tres descartes
+         * del soak de 90 min tenian `cortos=0`, asi que esa es la sospecha.
+         * Se imprime siempre: a razon de uno cada ~30 minutos no inunda nada. */
+        xil_printf("drx_transport: rayo sin enmarcar idx=%lu trig=%lu "
+                   "bins=%lu n_ch=%lu n_words=%lu esperadas=%lu batch=%lu\r\n",
+                   (unsigned long)header->ray_index,
+                   (unsigned long)header->trig_count,
+                   (unsigned long)header->bin_count,
+                   (unsigned long)header->n_ch,
+                   (unsigned long)n_words,
+                   (unsigned long)((uint32_t)header->bin_count * (uint32_t)header->n_ch),
+                   (unsigned long)header->batch_high);
         return false;
     }
     if (!envia_bloqueando(g_ray_frame, len)) {

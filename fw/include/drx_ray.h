@@ -95,6 +95,7 @@ typedef struct {
     uint32_t bad_magic;        /* cabeceras sin DRX_RAY_MAGIC */
     uint32_t bad_n_ch;         /* cabeceras con un n_ch distinto del compilado */
     uint32_t short_rays;       /* rayos con menos bytes de los que su bin_count pide */
+    uint32_t long_rays;        /* y con mas: el encoder los rechaza igual (`!=`) */
     uint32_t trig_gaps;        /* saltos de trig_count distintos de 1 entre rayos */
     /* Cuanto salto la ULTIMA vez. Contar los saltos no basta para
      * diagnosticarlos: un +2 repetido (un pulso que no produjo rayo) y un salto

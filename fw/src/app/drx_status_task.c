@@ -166,16 +166,17 @@ static void DrxStatusTask(void *pvParameters)
          * Se imprimen solo cuando alguno no es cero, que en marcha normal es
          * nunca. */
         if ((rayos.dma_errors | rayos.resync | rayos.bad_magic |
-             rayos.bad_n_ch | rayos.short_rays | rayos.trig_gaps |
+             rayos.bad_n_ch | rayos.short_rays | rayos.long_rays | rayos.trig_gaps |
              rayos.ray_gaps | rayos.sink_drops) != 0u) {
             xil_printf("drx_status: rayo dma_err=%lu resync=%lu magic=%lu "
-                       "n_ch=%lu cortos=%lu trig_gaps=%lu(d=%lu) "
+                       "n_ch=%lu cortos=%lu largos=%lu trig_gaps=%lu(d=%lu) "
                        "ray_gaps=%lu sink_drops=%lu enc_fail=%lu snd_fail=%lu\r\n",
                        (unsigned long)rayos.dma_errors,
                        (unsigned long)rayos.resync,
                        (unsigned long)rayos.bad_magic,
                        (unsigned long)rayos.bad_n_ch,
                        (unsigned long)rayos.short_rays,
+                       (unsigned long)rayos.long_rays,
                        (unsigned long)rayos.trig_gaps,
                        (unsigned long)rayos.last_trig_delta,
                        (unsigned long)rayos.ray_gaps,

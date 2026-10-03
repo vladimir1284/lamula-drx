@@ -199,8 +199,15 @@ static void deliver(uint32_t index, uint32_t bytes)
     uint32_t n_words = (bytes / 4u) - DRX_RAY_META_WORDS;
     uint32_t esperadas = (uint32_t)header.bin_count * DRX_RAY_N_CH;
 
+    /* Asimetria deliberada hasta Z4.6, y costo una noche de soak entenderla:
+     * esto solo cuenta el rayo CORTO. Uno que llega LARGO no lo marca nadie
+     * aqui, y sin embargo `DrxRayFrame_Encode` lo rechaza igual, porque
+     * compara `n_words` con `bin_count * n_ch` usando `!=`. El resultado era
+     * un descarte con `cortos=0`, que parecia imposible. Se cuentan los dos. */
     if (n_words < esperadas) {
         g_status.short_rays++;
+    } else if (n_words > esperadas) {
+        g_status.long_rays++;
     }
 
     /* Continuidad. Los dos contadores avanzan de uno en uno y por caminos
