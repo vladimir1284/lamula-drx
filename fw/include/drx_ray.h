@@ -96,6 +96,11 @@ typedef struct {
     uint32_t bad_n_ch;         /* cabeceras con un n_ch distinto del compilado */
     uint32_t short_rays;       /* rayos con menos bytes de los que su bin_count pide */
     uint32_t trig_gaps;        /* saltos de trig_count distintos de 1 entre rayos */
+    /* Cuanto salto la ULTIMA vez. Contar los saltos no basta para
+     * diagnosticarlos: un +2 repetido (un pulso que no produjo rayo) y un salto
+     * grande aislado (el motor reconfigurandose) son causas distintas y hasta
+     * ahora se veian igual. */
+    uint32_t last_trig_delta;
     uint32_t ray_gaps;         /* saltos de ray_index distintos de 1: rayos perdidos */
     uint32_t sink_drops;       /* rayos que el sumidero no acepto */
     uint32_t last_trig_count;

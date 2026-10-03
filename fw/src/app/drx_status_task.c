@@ -169,16 +169,19 @@ static void DrxStatusTask(void *pvParameters)
              rayos.bad_n_ch | rayos.short_rays | rayos.trig_gaps |
              rayos.ray_gaps | rayos.sink_drops) != 0u) {
             xil_printf("drx_status: rayo dma_err=%lu resync=%lu magic=%lu "
-                       "n_ch=%lu cortos=%lu trig_gaps=%lu ray_gaps=%lu "
-                       "sink_drops=%lu\r\n",
+                       "n_ch=%lu cortos=%lu trig_gaps=%lu(d=%lu) "
+                       "ray_gaps=%lu sink_drops=%lu enc_fail=%lu snd_fail=%lu\r\n",
                        (unsigned long)rayos.dma_errors,
                        (unsigned long)rayos.resync,
                        (unsigned long)rayos.bad_magic,
                        (unsigned long)rayos.bad_n_ch,
                        (unsigned long)rayos.short_rays,
                        (unsigned long)rayos.trig_gaps,
+                       (unsigned long)rayos.last_trig_delta,
                        (unsigned long)rayos.ray_gaps,
-                       (unsigned long)rayos.sink_drops);
+                       (unsigned long)rayos.sink_drops,
+                       (unsigned long)red.encode_fails,
+                       (unsigned long)red.send_fails);
         }
 
         /* `last_error` se reporta una vez y se rearma; `rejects` no, porque la

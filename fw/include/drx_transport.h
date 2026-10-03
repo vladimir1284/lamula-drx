@@ -31,7 +31,14 @@
 typedef struct {
     uint32_t accepts;      /* conexiones aceptadas desde el arranque */
     uint32_t rays_sent;    /* tramas `ray` entregadas enteras */
-    uint32_t rays_dropped; /* rayos que no se pudieron enviar (ver abajo) */
+    uint32_t rays_dropped; /* rayos que no salieron, por cualquiera de las dos causas */
+    /* Las DOS causas, separadas. Juntas no se pueden diagnosticar: el primer
+     * soak de una hora dejo un descarte que no encajaba en ninguna de las dos
+     * hipotesis --`cortos=0` descartaba el rayo mal formado, y que la conexion
+     * sobreviviera descartaba el `send` fallido-- justamente porque el
+     * contador no distinguia. */
+    uint32_t encode_fails; /* DrxRayFrame_Encode devolvio 0 */
+    uint32_t send_fails;   /* el socket no acepto la trama entera */
     uint32_t status_sent;
     /* 64 bits, no 32: a 28,9 Mbps un contador de 32 bits envuelve cada ~20
      * minutos, y se vio envolver en el primer soak de una hora -- el total

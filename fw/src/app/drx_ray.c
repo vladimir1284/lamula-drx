@@ -210,6 +210,7 @@ static void deliver(uint32_t index, uint32_t bytes)
     if (g_status.rays > 0u) {
         if (header.trig_count != g_status.last_trig_count + 1u) {
             g_status.trig_gaps++;
+            g_status.last_trig_delta = header.trig_count - g_status.last_trig_count;
         }
         if (header.ray_index != g_status.last_ray_index + 1u) {
             g_status.ray_gaps++;

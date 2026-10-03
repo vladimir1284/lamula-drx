@@ -138,10 +138,12 @@ static bool ray_sink(const DrxRayHeader *header, const uint32_t *iq,
                                     &ctx, iq, n_words);
     if (len == 0u) {
         g_status.rays_dropped++;
+        g_status.encode_fails++;
         return false;
     }
     if (!envia_bloqueando(g_ray_frame, len)) {
         g_status.rays_dropped++;
+        g_status.send_fails++;
         return false;
     }
     g_status.rays_sent++;
