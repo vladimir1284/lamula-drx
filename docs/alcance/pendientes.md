@@ -2018,3 +2018,45 @@ aguanta el anillo a PRF nominal, obtenido deshabilitando interrupciones a propó
 intervalo creciente hasta ver el primer `overrun`, y comparado con el que predice
 `DRX_RAY_BUFFERS × PRI`. Con eso, o se dimensiona `DRX_RAY_BUFFERS` contra un presupuesto declarado
 de latencia de interrupción, o se declara el presupuesto y se verifica en el soak de 72 h de Z5.
+
+### P-18 · En el borde de lote, un rayo puede llevar la cabecera de uno y la carga útil del otro { #p-18 }
+
+**Estado:** abierto, encontrado 3-oct-2026 (soak de Z4.6) · **Dueño:** Z4.6 o Z5 · **Bloquea:**
+nada hoy — el rayo se descarta y el flujo sigue en sincronía. Sí la cifra de rayos entregados.
+
+Medido en placa, con las cifras del rayo que lo provocó:
+
+```
+rayo sin enmarcar idx=356735 trig=357002 bins=1002 n_ch=3 n_words=11067 esperadas=3006 batch=1
+```
+
+`11067 = 3689 × 3` es **exactamente un rayo del lote bajo**. La cabecera en banda dice `batch=1`
+y `bins=1002` (lote alto, `3006` palabras), y detrás viene la carga útil de un rayo de 3689 bins.
+Las dos mitades del mismo rayo describen lotes distintos.
+
+**Por qué pasa, hasta donde llega la evidencia.** El metadato en banda lo pone `drx_ray_packer` con
+la configuración vigente cuando empieza el rayo, y el conteo de bins con el que `drx_range_gate`
+corta viene del registro del lote ([D-15](decisiones.md#d-15)). En la frontera entre el lote bajo y
+el alto de un radial ([D-13](decisiones.md#d-13)) hay una ventana en la que el metadato ya refleja
+el lote nuevo y el gate todavía está vaciando un rayo del viejo. Que los descartes caigan **siempre**
+junto a saltos grandes de `trig_count` (d = 4, 8, 14, 22, nunca d = 2) y nunca en marcha estable
+apoya esa lectura. Es inferencia a partir de la correlación, no una captura del instante: no se ha
+mirado con ILA.
+
+**Frecuencia:** ~1 cada 400 000 rayos, unos 30 minutos a 223 rayos/s. Con ~47 rayos por radial hay
+del orden de 9 transiciones de lote por segundo, así que falla aproximadamente 1 de cada 17 000
+transiciones. Es una ventana estrecha, no un error sistemático — por eso Z4.4, que midió 1000 ms, no
+podía verlo.
+
+**Lo que NO es:** corrupción de datos que llegue al DSP. `DrxRayFrame_Encode` compara `n_words`
+contra `bin_count × n_ch` con `!=` y se niega a enmarcar el rayo, precisamente para que un rayo de
+longitud equivocada no desincronice al lector en el mensaje SIGUIENTE. El rayo se pierde, se cuenta
+(`long_rays`, `enc_fail`, `sink_drops`) y el DSP ve un hueco de `seq`. El coste es un radial con un
+rayo menos cada media hora, no un dato malo.
+
+**Condición de cierre:** que el metadato en banda y el corte del gate vengan del mismo instante, de
+forma que no exista ventana — o, si se demuestra que la ventana es inherente, que el rayo afectado
+se marque y se entregue con su longitud real en vez de descartarse. Lo primero es lo correcto; lo
+segundo solo si lo primero resulta caro. Antes de elegir hace falta mirar el borde con un ILA, que
+es lo único que convierte la correlación de arriba en una captura.
+

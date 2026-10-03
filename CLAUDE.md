@@ -276,7 +276,16 @@ reimplementa el contrato: todo lo que empaqueta sale de `contract/generated/drx_
 cierra sobre el mismo socket, sin JTAG:** un `afc` enviado por la red mueve el pico del espectro de
 continua a **−0,24950 de fs_dec, −10,45 dBFS**, exactamente las cifras del modelo dorado, medido
 sobre el I/Q que llega por el cable (`--spectrum`); y un `afc` fuera de rango vuelve como
-`last_error=afc_out_of_range` con `bite=config_rejected` latcheado. Dos bloqueos reales en el
+`last_error=afc_out_of_range` con `bite=config_rejected` latcheado. **Soak de cuatro corridas esa
+misma noche: 3,2 millones de rayos, 52 GB, 223,4 rayos/s sostenidos**, con el espectro del último
+rayo de cada corrida todavía en continua a −9,02 dBFS contra el modelo dorado — el dato no se
+degrada con las horas. Aparecieron ~4 descartes por millón, y atribuirlos costó tres pasadas de
+instrumentación que refutaron dos hipótesis antes de dar con
+[P-18](docs/alcance/pendientes.md#p-18), hallazgo nuevo: en la frontera entre los dos lotes de PRF
+de un radial, un rayo puede llevar la cabecera de un lote y la carga útil del otro
+(`bins=1002` con `n_words=11067 = 3689 × 3`). **No llega dato malo al DSP** — `DrxRayFrame_Encode`
+se niega a enmarcarlo, que es exactamente para lo que esa comprobación existe — pero cuesta un rayo
+cada media hora. Dos bloqueos reales en el
 camino, los dos del mismo tipo que el VREF de la DDR: (1) el preset de Digilent deja
 `PCW_ENET0_GRP_MDIO_IO` en `EMIO`, o sea saca el MDIO del PHY por la fábrica, donde no hay nada —
 sin MDIO no hay autonegociación, y el mensaje que engaña (`unable to determine type of EMAC`) ni
@@ -302,7 +311,7 @@ Lo que sí está hecho y verificado, además de lo de arriba:
 1. `docs/alcance/contexto.md` — qué es y qué no es, y la relación con los proyectos DSP y RCP.
 2. `docs/alcance/decisiones.md` — las doce decisiones congeladas (D-01…D-12). Ninguna se revierte
    sin discutirlo.
-3. `docs/alcance/pendientes.md` — hallazgos abiertos (P-01…P-17), supuestos de entorno a verificar y
+3. `docs/alcance/pendientes.md` — hallazgos abiertos (P-01…P-18), supuestos de entorno a verificar y
    riesgos de la estrategia ZedBoard.
 4. `docs/implementacion/fases.md` — el plan de trabajo.
 5. `AGENTS.md` — las reglas que no se negocian, antes de escribir la primera línea de código.

@@ -1870,10 +1870,47 @@ Trabajo:
     tanto la escucha del puerto del contrato. **Puesto a 0 el mismo día**: la dirección no cambia y
     el arranque va directo a `Board IP` y a `drx_transport: escuchando`.
 
+    **Soak, la misma noche: cuatro corridas, 3,2 millones de rayos, 52 GB.** La pregunta que D-16
+    dejaba abierta sobre la contrapresión tiene respuesta: `sink_drops` **no** se mantiene en 0,
+    pero la causa no es la red.
+
+    | corrida | duración | rayos | caudal | huecos de `seq` |
+    |---|---|---|---|---|
+    | 1 | 1 h | 804 090 | 13,0 GB | 3 |
+    | 2 | 1 h | 804 173 | 13,0 GB | 1 |
+    | 3 | 1,5 h | 1 206 179 | 19,5 GB | 3 |
+
+    223,4 rayos/s sostenidos a 28,9 Mbps, y **el espectro del último rayo de cada corrida sigue
+    cayendo en continua a −9,02 dBFS** contra el modelo dorado: el dato no se degrada con las horas.
+
+    Atribuir ese puñado de descartes costó tres pasadas de instrumentación, y cada una refutó la
+    hipótesis anterior:
+
+    1. **`descartados` era un solo contador** para las dos ramas del sumidero. La primera lectura
+       —rayo mal formado— chocaba con `cortos=0`, y la segunda —`send` fallido— chocaba con que la
+       conexión sobreviviera las tres horas, porque un `send` fallido cierra el socket. Separadas:
+       **`enc_fail=3, snd_fail=0`**. Es el encoder, no la red.
+    2. **`cortos=0` seguía siendo imposible**... hasta leer `drx_ray.c:202`, que solo cuenta
+       `short_rays` cuando `n_words < esperadas`. Un rayo que llega **largo** no lo marcaba nadie, y
+       `DrxRayFrame_Encode` lo rechaza igual porque compara con `!=`. Añadido `long_rays`.
+    3. **Volcar las cifras del rayo** convirtió la deducción en medida:
+       `bins=1002 n_ch=3 n_words=11067 esperadas=3006 batch=1`. Y `11067 = 3689 × 3` es exactamente
+       un rayo del lote bajo: la cabecera dice lote alto y la carga útil es la del bajo.
+
+    Eso es [P-18](../alcance/pendientes.md#p-18), hallazgo nuevo: en la frontera entre los dos lotes
+    de PRF de un radial hay una ventana en la que el metadato en banda ya refleja el lote nuevo y el
+    gate todavía vacía un rayo del viejo. ~1 cada 400 000 rayos, media hora. **No llega dato malo al
+    DSP** —el encoder se niega a enmarcarlo, que es justo para lo que esa comprobación existe— pero
+    cuesta un rayo. Y de paso explica por qué los descartes caen **siempre** junto a saltos grandes
+    de `trig_count` (d = 4, 8, 14, 22) y nunca en marcha estable.
+
+    Dos cosas más que el soak sacó, ya corregidas: `tx_bytes` era `uint32_t` y envolvía cada ~20
+    minutos a este caudal (el total impreso bajaba en vez de subir), y la línea de diagnóstico no
+    llevaba los contadores finos de `DrxRayStatus`, sin los cuales nada de lo de arriba se podía
+    distinguir desde fuera.
+
     **Lo que falta para cerrar ZM4:** barrer el catálogo de estímulos contra rayos reales —
-    bloqueado por [P-16](../alcance/pendientes.md#p-16), no por el transporte— y una corrida larga
-    que mida si `sink_drops` se mantiene en 0 con el DSP leyendo de verdad, que es la pregunta que
-    D-16 deja abierta sobre la contrapresión.
+    bloqueado por [P-16](../alcance/pendientes.md#p-16), no por el transporte.
 
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
