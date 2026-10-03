@@ -1956,8 +1956,10 @@ v0.5 tiene que migrar.
 
 ### P-16 · El modo Throttled(DDR) no puede coexistir con el motor de timing { #p-16 }
 
-**Estado:** resuelto en RTL 3-oct-2026, pendiente de la medida en placa · **Dueño:** Z4.6 ·
-**Bloquea:** ya no el diseño; sí el barrido del catálogo hasta que se corra. Nunca bloqueó Z4.4.
+**Estado:** ABIERTO. El 3-oct-2026 se resolvió una de sus tres causas y la medida en placa
+destapó las otras dos · **Dueño:** Z4.6 · **Bloquea:** el barrido del catálogo de estímulos
+contra rayos reales. Nunca bloqueó Z4.4. Leer hasta el final: el alcance de este hallazgo es
+mayor de lo que decía su primera redacción.
 
 `rtl/vector_source.sv` en Throttled(DDR) llena un conjunto de N_CH muestras tomando una por beat de
 un AXI4-Stream de 16 bits y lo presenta durante un ciclo, así que el `s_valid` que ve
@@ -2029,9 +2031,53 @@ del PRF real. Una configuración paceada no es una configuración de tiempo real
 no añade camino combinacional a la ruta crítica, solo clock-enables sobre registros que ya
 existían.
 
-**Falta para darlo por cerrado en placa:** correr el barrido de los ocho vectores con
-`timing_paced = 1` y comparar cada rayo contra el modelo dorado. El RTL, el firmware y el P&R
-están; la medida no.
+**La medida en placa, el mismo día: el pacing del motor era necesario pero NO suficiente.**
+Con el bitstream paceado cargado, `tools/sweep_catalogo.py` contra los ocho vectores. Lo que
+salió bien, que no es poco:
+
+- `GATE_TRUNCATED = 0x0` con el motor corriendo y `CTRL = 0x2` (DDR). Esa era la firma de P-16 y
+  ya no está: los rayos se completan, `bins=3689` enteros, `flags` sin `TRUNCATED`.
+- La autoprueba de arranque corre `tono_if` y `tono_sobre_escala` por DDR **con el motor de
+  timing en marcha**, dos pasadas cada uno, `errores=0`. Eso era imposible por definición antes.
+- Y el camino de tiempo real no se mueve: en BRAM-loop, con `timing_paced = 0`, el rayo sigue
+  dando −9,03 dBFS contra −9,03 dBFS del modelo. La equivalencia «con `advance` a 1 esto es v9»
+  queda comprobada en silicio y no solo por construcción.
+
+**Lo que salió mal, y es el fondo del asunto: hay una TERCERA base de tiempo y no la miré.**
+
+```
+rtl/drx_ddc_mixer.sv:99   assign nco_ready = 1'b1;      // "el DDS corre libre"
+tcl/gen_ip.tcl:238        CONFIG.Has_ACLKEN {false}
+```
+
+El DDS Compiler avanza un paso de fase por **ciclo de reloj**. No tiene `TREADY`
+(`Has_TREADY {false}`, decisión razonada de Z1) y no tiene clock enable, así que nada lo ata al
+ritmo de las muestras. Con la fuente entregando 1 de cada ~4 ciclos, entre dos muestras
+consecutivas la fase ha avanzado 4 pasos: el DDC mezcla a ~4× el IF, el tono cae fuera de la
+banda de paso del diezmado y la salida se va al suelo de ruido. Medido: **−87,3 dBFS** contra los
+−9,02 dBFS del modelo, con el pico en un bin arbitrario. Los tres vectores que llegaron a
+medirse dieron lo mismo.
+
+El análisis que justificó el pacer —«las dos mitades se frenan con el mismo factor»— era correcto
+para el motor de timing y el range-gate, y **estaba incompleto**: el NCO es una tercera mitad.
+El pacer arregla la LONGITUD del rayo; el DATO necesita que el NCO cuente muestras también.
+
+**Camino de arreglo, con su coste.** El XCI ya expone el parámetro
+(`ip/dds_compiler_nco/dds_compiler_nco.xci`, hoy `"ACLKEN": "false"`): regenerar la IP con
+`Has_ACLKEN {true}` y cablear `aclken = advance`, el mismo `advance` del pacer. Es simétrico con
+el resto y con `advance` a 1 no cambia nada. Dos cosas que hay que resolver con él:
+
+1. `aclken` congela el core ENTERO, incluido el canal `S_AXIS_CONFIG` por el que entra la palabra
+   de AFC (v9). Una escritura que caiga en un ciclo sin avance se perdería. `drx_ddc_top` ya
+   tiene el mecanismo: difiere la escritura mientras el core está en reset; hay que extenderlo a
+   «mientras no haya avance».
+2. El gate real del cambio es la **matriz de 16 corridas de D-12 contra xsim**, igual que cuando
+   la IP se regeneró con `Phase_Increment {Programmable}` en Z4.5. Son 2-3 h con tres en
+   paralelo, y no se puede saltar: cambiar la personalización de la IP es exactamente el caso que
+   esa matriz vigila.
+
+**Y una segunda causa, independiente, que el barrido también destapó:** ver
+[P-21](#p-21).
 
 Mientras tanto, la medida de rayos de Z4.4 corre en BRAM-loop, cuyo contenido
 (`tools/gen_vector_source_init.py`) es exactamente el caso `tono_if` del catálogo —comprobado array
@@ -2244,3 +2290,43 @@ criterio no mira la configuración sino el reloj.
 empieza después de aplicar una configuración —cualquiera: `config`, `afc`,
 `test_stimulus_select`— y que el conductor lo use en vez del temporizador. El mismo enganche que
 ya aplica `apply_at_seq` entre rayos en `drx_ray.c` es donde va.
+
+### P-21 · El MM2S se atasca tras unas pocas selecciones de estímulo { #p-21 }
+
+**Estado:** abierto, encontrado 3-oct-2026 (primer barrido del catálogo) · **Dueño:** Z4.6 ·
+**Bloquea:** el barrido del catálogo, junto con [P-16](#p-16). Independiente de él.
+
+Encadenando `test_stimulus_select`, el canal MMSS del AXI DMA deja de aceptar pasadas:
+
+```
+drx_stimulus: vector 2 (dos_tonos), repeat=0
+drx_stimulus: pasada sin completar tras 50 ms; sus descriptores quedan en el hardware
+...
+drx_stimulus: no se pudo encolar la primera pasada
+```
+
+**La mitad diagnosticada.** `DrxStimulus_Stop()` pausaba el DMA ANTES de drenar:
+`XAxiDma_Pause()` corta la búsqueda de descriptores a mitad de pasada, así que esa pasada nunca
+completa y `reap_pass()` —que solo devuelve al anillo lo que el hardware marcó como hecho— no
+recupera sus BD. El anillo tiene sitio para `DRX_STIMULUS_BD_RING / DRX_STIMULUS_BD_COUNT` = 4
+pasadas, o sea que a la cuarta fuga `XAxiDma_BdRingAlloc` falla para siempre. No se puede
+arreglar con `XAxiDma_Reset`: MM2S y S2MM son el MISMO `axi_dma` del block design y resetearlo se
+llevaría por delante el anillo de rayos. Corregido drenando antes de pausar, con tope de 50 ms.
+
+**La mitad que queda, y que el arreglo convirtió en medible.** Con el drenado puesto, el mensaje
+nuevo dice que la pasada **no completa en 50 ms**. Una pasada son 4000 conjuntos y el DDC debería
+tragárselos en menos de 1 ms aunque vaya a 1 de cada 4 ciclos, así que no es lentitud: la cadena
+se para de verdad en algún punto entre el MM2S y el DDC. Las dos primeras selecciones drenan
+bien y a partir de la tercera no, lo que sugiere que el atasco se produce durante el bucle
+normal y no al parar.
+
+**Por qué no se había visto.** Nadie había encadenado selecciones —Z4.3 probó el modo DDR con el
+motor de timing PARADO y con `repeat` finito— y hasta el pacing de P-16 el síntoma quedaba
+tapado: el motor seguía contando ciclos aunque no llegara una sola muestra, así que lo que se veía
+era `GATE_TRUNCATED` y no una parada.
+
+**Condición de cierre:** saber qué para la cadena. El siguiente paso es un ILA sobre
+`s_axis_valid`/`s_axis_ready` de `vector_source` y el `s_ready` del DDC, que distingue «el DMA no
+entrega» de «el DDC no acepta» — las lecturas de `MM2S_DMASR` por JTAG de la primera sesión dieron
+patrones de bits implausibles (errores de SG en un canal que estaba entregando rayos) y no se
+usaron como evidencia.

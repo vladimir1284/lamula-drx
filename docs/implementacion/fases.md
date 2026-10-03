@@ -1983,7 +1983,7 @@ Trabajo:
        se confundió una vez con un problema de baudios.
 
 
-!!! success "3-oct-2026 (más tarde): P-16 resuelto en RTL — el motor de timing cuenta muestras"
+!!! warning "3-oct-2026 (más tarde): el motor de timing cuenta muestras — necesario para P-16, y no suficiente"
     P-16 llevaba desde el 1-oct con dos salidas escritas, las dos caras: ensanchar el stream del
     MM2S (tres cambios que tienen que aterrizar a la vez, y `N_CH × 16 = 48` bits no es potencia
     de dos, así que serían 64 con un carril muerto) o aceptar que el catálogo elegible en caliente
@@ -2090,8 +2090,41 @@ Trabajo:
     los 2,304 ns de Z4.5. Era lo esperable y conviene decir por qué, porque un P&R que mejora
     suele significar que algo no se sintetizó: el pacer es un AND de tres bits y los `advance`
     son clock-enables sobre registros que ya existían, no caminos combinacionales nuevos; la ruta
-    crítica sigue siendo PS7↔interconnect↔`drx_axil_regs`, sin tocar. **Falta la medida en
-    placa:** el barrido de los ocho vectores con `timing_paced = 1` contra el modelo dorado.
+    crítica sigue siendo PS7↔interconnect↔`drx_axil_regs`, sin tocar.
+
+    **Y lo que la medida en placa dijo esa misma tarde: el pacing era necesario y NO suficiente.**
+
+    | | resultado |
+    |---|---|
+    | `GATE_TRUNCATED` con el motor corriendo en DDR | **`0x0`** — la firma de P-16 desaparece, los rayos salen enteros (`bins=3689`, sin `TRUNCATED`) |
+    | autoprueba de arranque por DDR con el motor en marcha | `tono_if` y `tono_sobre_escala`, 2 pasadas cada uno, `errores=0` — imposible por definición antes |
+    | BRAM-loop con `timing_paced = 0` | −9,03 dBFS medidos contra −9,03 del modelo: la equivalencia con v9, comprobada en silicio |
+    | el DATO en DDR paceado | **−87,3 dBFS** contra −9,02 del modelo, pico en un bin arbitrario |
+
+    La última fila es el fondo del asunto: **hay una tercera base de tiempo y el análisis no la
+    miró**. `rtl/drx_ddc_mixer.sv:99` ata `nco_ready` a 1 («el DDS corre libre») y
+    `tcl/gen_ip.tcl:238` tiene `CONFIG.Has_ACLKEN {false}`, así que el DDS Compiler avanza un paso
+    de fase por CICLO DE RELOJ, sin `TREADY` y sin clock enable. Con la fuente a 1 de cada ~4
+    ciclos, entre dos muestras la fase ha avanzado 4 pasos: el DDC mezcla a ~4× el IF, el tono cae
+    fuera de la banda de paso del diezmado y la salida se va al suelo de ruido. El argumento que
+    justificó el pacer —«las dos mitades se frenan con el mismo factor»— valía para el motor y el
+    range-gate; el NCO es una tercera mitad. El pacer arregla la LONGITUD del rayo; el DATO
+    necesita que el NCO cuente muestras también. El arreglo es simétrico —`Has_ACLKEN {true}` y
+    `aclken = advance`, el parámetro ya está en el XCI— y su gate es la matriz de 16 corridas de
+    D-12, 2-3 h, igual que cuando la IP se regeneró en Z4.5.
+
+    El barrido destapó además [P-21](../alcance/pendientes.md#p-21), independiente: el MM2S se
+    atasca tras unas pocas selecciones encadenadas. La mitad del fallo estaba en
+    `DrxStimulus_Stop()`, que pausaba el DMA ANTES de drenar y fugaba los descriptores de la
+    pasada en vuelo —el anillo aguanta cuatro y a la quinta ya no se encola nada—; corregido
+    drenando primero, y no con `XAxiDma_Reset` porque MM2S y S2MM son el mismo `axi_dma` y eso se
+    llevaría el anillo de rayos. La otra mitad la convirtió en medible el propio arreglo: la
+    pasada **no completa en 50 ms**, y 4000 conjuntos deberían consumirse en menos de 1 ms, así
+    que la cadena se para de verdad entre el MM2S y el DDC. Eso necesita un ILA.
+
+    **Lectura de la jornada:** escribir el conductor del barrido ANTES del bitstream fue lo que
+    permitió separar las tres cosas. Si hubieran llegado juntas, los −87 dBFS se habrían podido
+    achacar al conductor, al pacer o al DMA sin forma de distinguirlos.
 
 
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }

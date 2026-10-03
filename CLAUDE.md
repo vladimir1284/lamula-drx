@@ -323,8 +323,19 @@ netlist es la de v9). Verificado comparando la traza paceada contra la del mismo
 1804 avances muestra a muestra, **y con RTL mutado**: quitar `advance` del `assign` de
 `pulse_trig` da «10 pulsos con el motor parado», quitarlo de los `always_ff` hace divergir la
 traza en el avance 134. P&R cierra en **WNS = 2,394 ns, WHS = 0,013 ns**, mejor que los 2,304 ns de Z4.5.
-**Lo que falta: la medida en placa** — el barrido de los ocho vectores con `timing_paced = 1`
-contra el modelo dorado. Y esto NO convierte Throttled(DDR) en fuente
+**La medida en placa, el mismo día, dice que el pacing era necesario pero NO suficiente, y
+P-16 sigue abierto.** Lo que sí quedó: `GATE_TRUNCATED` baja a `0x0` con el motor corriendo en
+modo DDR —la firma de P-16 desaparece, los rayos se completan enteros— y el camino de tiempo
+real no se mueve (BRAM-loop con `timing_paced = 0` sigue dando −9,03 dBFS contra −9,03 del
+modelo, o sea la equivalencia con v9 está comprobada en silicio). Lo que falta es el DATO: hay
+una **tercera base de tiempo** que el análisis no miró — el DDS Compiler avanza un paso de fase
+por ciclo de reloj, sin `TREADY` y sin clock enable (`rtl/drx_ddc_mixer.sv:99`,
+`tcl/gen_ip.tcl:238`), así que con la fuente a 1 de cada 4 ciclos el DDC mezcla a ~4× el IF y la
+salida cae al suelo de ruido: **−87,3 dBFS medidos contra −9,02 del modelo**. El arreglo es
+simétrico (regenerar la IP con `Has_ACLKEN {true}` y cablear `aclken = advance`) y su gate es la
+matriz de 16 corridas de D-12, 2-3 h. Y el barrido destapó además
+[P-21](docs/alcance/pendientes.md#p-21), independiente: el MM2S se atasca tras unas pocas
+selecciones encadenadas. Y esto NO convierte Throttled(DDR) en fuente
 de tiempo real: no valida nada dependiente de la tasa.
 
 **Infraestructura de medida, 3-oct-2026.** `tools/net_drx_link.sh` deja el enlace cableado al DRx
@@ -349,7 +360,7 @@ Lo que sí está hecho y verificado, además de lo de arriba:
 1. `docs/alcance/contexto.md` — qué es y qué no es, y la relación con los proyectos DSP y RCP.
 2. `docs/alcance/decisiones.md` — las doce decisiones congeladas (D-01…D-12). Ninguna se revierte
    sin discutirlo.
-3. `docs/alcance/pendientes.md` — hallazgos abiertos (P-01…P-20), supuestos de entorno a verificar y
+3. `docs/alcance/pendientes.md` — hallazgos abiertos (P-01…P-21), supuestos de entorno a verificar y
    riesgos de la estrategia ZedBoard.
 4. `docs/implementacion/fases.md` — el plan de trabajo.
 5. `AGENTS.md` — las reglas que no se negocian, antes de escribir la primera línea de código.

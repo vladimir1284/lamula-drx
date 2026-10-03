@@ -35,6 +35,11 @@
 #define DRX_STIMULUS_TASK_PRIORITY (tskIDLE_PRIORITY + 1)
 #define DRX_STIMULUS_POLL_MS 10
 
+/* Cuanto espera DrxStimulus_Stop() a que la pasada en vuelo complete antes de
+ * pausar el DMA. Ver el comentario largo en DrxStimulus_Stop(): pausar con una
+ * pasada a medias fuga sus descriptores y el anillo solo aguanta cuatro. */
+#define DRX_STIMULUS_DRAIN_MS 50u
+
 /* Muestras del buffer entrelazado: una pasada completa del vector por los
  * N_CH canales. `vector_source` consume el stream canal 0, 1, ..., N_CH-1 y
  * repite, y exige que el total sea multiplo de N_CH -- un conjunto a medio
@@ -300,11 +305,51 @@ void DrxStimulus_Stop(void)
     g_status.looping = false;
     g_status.remaining = 0u;
 
+    /* DRENAR ANTES DE PAUSAR, y este orden es el arreglo entero.
+     *
+     * `XAxiDma_Pause` detiene la busqueda de descriptores a mitad de pasada,
+     * asi que la pasada en vuelo NUNCA completa; y `reap_pass()` solo
+     * devuelve al anillo los descriptores que el hardware marco como
+     * completados (`XAxiDma_BdRingFromHw`). Pausando primero, los BD de esa
+     * pasada se quedan en poder del hardware para siempre. El anillo tiene
+     * sitio para DRX_STIMULUS_BD_RING / DRX_STIMULUS_BD_COUNT = 4 pasadas, o
+     * sea que a la cuarta seleccion `XAxiDma_BdRingAlloc` falla y ya no se
+     * puede encolar nada mas.
+     *
+     * Medido en placa el 3-oct-2026: nueve `test_stimulus_select` seguidos y
+     * el decimo da "no se pudo encolar la primera pasada" para siempre. No se
+     * habia visto antes porque nadie habia encadenado selecciones, y porque
+     * hasta P-16 el sintoma quedaba tapado -- el motor de timing seguia
+     * contando ciclos aunque no llegara una sola muestra, asi que lo que se
+     * veia era `GATE_TRUNCATED`, no una parada.
+     *
+     * No se puede arreglar con `XAxiDma_Reset`: MM2S y S2MM son el MISMO
+     * `axi_dma` del block design, y resetearlo se llevaria por delante el
+     * anillo de rayos.
+     *
+     * Una pasada son 4000 conjuntos y el DDC los consume en ~0,3 ms, asi que
+     * este drenado termina enseguida en cuanto la cadena avanza. Si no
+     * termina es que la cadena esta parada de verdad, y eso se denuncia en
+     * vez de fugarse en silencio. */
+    for (unsigned i = 0u; g_in_flight && i < DRX_STIMULUS_DRAIN_MS; i++) {
+        if (reap_pass()) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+
     XAxiDma_BdRing *ring = XAxiDma_GetTxRing(g_dma);
     XAxiDma_Pause(&g_dma);
     (void)reap_pass();
     XAxiDma_BdRingStart(ring);
     XAxiDma_Resume(&g_dma);
+
+    if (g_in_flight) {
+        g_status.errors++;
+        xil_printf("drx_stimulus: pasada sin completar tras %u ms; sus "
+                   "descriptores quedan en el hardware\r\n",
+                   (unsigned)DRX_STIMULUS_DRAIN_MS);
+    }
 
     /* De vuelta a BRAM-loop, de vuelta a contar ciclos: ahi la fuente entrega
      * una muestra por ciclo y pacear no cambia nada, pero dejarlo encendido

@@ -185,9 +185,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--platform", default="zedboard")
     parser.add_argument("--solo", default=None,
                         help="lista separada por comas de vectores a barrer")
-    parser.add_argument("--settle", type=float, default=2.0,
+    # Los dos valores por defecto están puestos para el caso LENTO, que es el
+    # que importa. En BRAM-loop llegan 223 rayos/s y cualquier número sirve; en
+    # Throttled(DDR) paceado un rayo del lote bajo tarda ~1,9 s, y no por el
+    # pacing: un rayo de 3689 bins necesita 3689*R1 = 767 312 muestras, o sea
+    # 192 pasadas del bucle de 4000, y entre pasada y pasada hay el hueco de
+    # DRX_STIMULUS_POLL_MS (10 ms) que tarda la tarea en reencolar el DMA. Con
+    # `--settle 2` se descartaría UN rayo y el margen sería demasiado justo.
+    parser.add_argument("--settle", type=float, default=5.0,
                         help="segundos de rayos descartados tras el config_ack")
-    parser.add_argument("--timeout", type=float, default=10.0,
+    parser.add_argument("--timeout", type=float, default=25.0,
                         help="espera máxima por un rayo o un config_ack")
     parser.add_argument("--repeat", type=int, default=0,
                         help="`repeat` del test_stimulus_select. 0 = en bucle, "
