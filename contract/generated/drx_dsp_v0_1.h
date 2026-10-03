@@ -1,7 +1,7 @@
 /* GENERADO por tools/gen_contract.py a partir de
  * contract/schema/drx_dsp_v0_1.toml. NO EDITAR A MANO.
  *
- * Contrato DRx↔DSP v0.7 — lado DRx.
+ * Contrato DRx↔DSP v0.8 — lado DRx.
  *
  * Little-endian, empaquetado, sin relleno implícito. Los _Static_assert
  * de abajo fallan la compilación si el compilador añade relleno: es el
@@ -15,7 +15,8 @@
 
 #define DRX_DSP_MAGIC 0x4C4D4452u
 #define DRX_DSP_VERSION_MAJOR 0
-#define DRX_DSP_VERSION_MINOR 7
+#define DRX_DSP_VERSION_MINOR 8
+#define DRX_DSP_TCP_PORT 9470u
 
 /* Cabecera común a todo mensaje. */
 typedef struct __attribute__((packed)) {

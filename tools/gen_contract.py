@@ -77,6 +77,7 @@ def render_c(schema: dict) -> str:
         f"#define DRX_DSP_MAGIC 0x{meta['magic']:08X}u",
         f"#define DRX_DSP_VERSION_MAJOR {meta['version_major']}",
         f"#define DRX_DSP_VERSION_MINOR {meta['version_minor']}",
+        f"#define DRX_DSP_TCP_PORT {meta['tcp_port']}u",
         "",
     ]
     # El primer bloque de comentario abre con /* y el resto son continuaciones.
@@ -141,6 +142,7 @@ def render_rust(schema: dict) -> str:
         f"pub const MAGIC: u32 = 0x{meta['magic']:08X};",
         f"pub const VERSION_MAJOR: u8 = {meta['version_major']};",
         f"pub const VERSION_MINOR: u8 = {meta['version_minor']};",
+        f"pub const TCP_PORT: u16 = {meta['tcp_port']};",
         "",
     ]
 
@@ -208,6 +210,7 @@ def render_python(schema: dict) -> str:
         f"MAGIC = 0x{meta['magic']:08X}",
         f"VERSION_MAJOR = {meta['version_major']}",
         f"VERSION_MINOR = {meta['version_minor']}",
+        f"TCP_PORT = {meta['tcp_port']}",
         "",
     ]
 

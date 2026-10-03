@@ -45,13 +45,22 @@
 #include "drx_ray.h"
 #include "drx_status_task.h"
 #include "drx_timing_cfg.h"
+#include "drx_transport.h"
 #include "drx_stimulus.h"
 #include "drx_stimulus_catalog.h"
 
-/* Cuanto se queda congelado el lado A del A/B del retune antes de soltarlo.
- * Es tiempo para una persona con `tools/dump_ray.py` y una sesion de JTAG, no
- * un parametro del sistema: arrancar xsct y correr el modelo dorado no baja de
- * medio minuto. */
+/* A/B espectral del retune (Z4.5). APAGADO por defecto: la medida ya esta
+ * hecha y documentada (`fases.md#z4`, 2-oct noche), y dejarlo encendido cuesta
+ * dos cosas en cada arranque. Una, los `DRX_AFC_AB_HOLD_MS` de espera van por
+ * DELANTE de `lwip_init()`, asi que la red tarda dos minutos en levantar. Dos,
+ * el lado B se queda congelado para siempre y el anillo de rayos corre con
+ * DRX_RAY_BUFFERS-1 buffers, que es justo el margen que P-17 dice que nadie ha
+ * medido.
+ *
+ * Ponlo a 1 para repetir la medida. El tiempo de espera es para una persona
+ * con `tools/dump_ray.py` y una sesion de JTAG, no un parametro del sistema:
+ * arrancar xsct y correr el modelo dorado no baja de medio minuto. */
+#define DRX_AFC_AB_ON_BOOT 0
 #define DRX_AFC_AB_HOLD_MS 120000u
 
 #if LWIP_IPV6==1
@@ -217,19 +226,15 @@ void network_thread(void *p)
     xil_printf("%20s %6s %s\r\n", "Server", "Port", "Connect With..");
     xil_printf("%20s %6s %s\r\n", "--------------------", "------", "--------------------");
 
-    print_echo_app_header();
-    xil_printf("\r\n");
-    sys_thread_new("echod", echo_application_thread, 0,
-		THREAD_STACKSIZE,
-		DEFAULT_THREAD_PRIO);
+    /* Z4.6: el servidor de eco de la plantilla de Vitis se va, y en su lugar
+     * arranca el transporte del contrato DRx<->DSP. El eco sirvio para Z4.2
+     * --probar que la pila de red compilaba y enlazaba-- y ya no hace falta:
+     * lo que tiene que haber en este puerto es el contrato, no un eco. */
+    DrxTransportTask_Create();
     vTaskDelete(NULL);
 #endif
 #else
-    print_echo_app_header();
-    xil_printf("\r\n");
-    sys_thread_new("echod",echo_application_thread, 0,
-		THREAD_STACKSIZE,
-		DEFAULT_THREAD_PRIO);
+    DrxTransportTask_Create();
     vTaskDelete(NULL);
 #endif
     return;
@@ -346,9 +351,15 @@ int main_thread()
 		 *
 		 * `1u << 30` es 2^32/4, con lo que el calculo entero no desborda en
 		 * 32 bits: (2^32/4)/R1 == (2^32 * (0,25/R1)). */
+#if DRX_AFC_AB_ON_BOOT
 		DrxAfcApp_RetuneAB(
 			(uint32_t)DRX_NCO_PHASE_INC - ((1u << 30) / DRX_R1),
 			DRX_AFC_AB_HOLD_MS);
+#else
+		/* Sin el A/B, el rayo congelado de arriba sobra: devolverlo al anillo
+		 * deja los DRX_RAY_BUFFERS completos para el transporte. */
+		DrxRay_Thaw();
+#endif
 	}
 
 	DrxStatusTask_Create();
@@ -368,11 +379,7 @@ int main_thread()
 		if (server_netif.ip_addr.addr) {
 			xil_printf("DHCP request success\r\n");
 			print_ip_settings(&(server_netif.ip_addr), &(server_netif.netmask), &(server_netif.gw));
-			print_echo_app_header();
-			xil_printf("\r\n");
-			sys_thread_new("echod", echo_application_thread, 0,
-					THREAD_STACKSIZE,
-					DEFAULT_THREAD_PRIO);
+			DrxTransportTask_Create();
 			break;
 		}
 		mscnt += DHCP_FINE_TIMER_MSECS;
@@ -388,11 +395,7 @@ int main_thread()
 			xil_printf("%20s %6s %s\r\n", "Server", "Port", "Connect With..");
 			xil_printf("%20s %6s %s\r\n", "--------------------", "------", "--------------------");
 
-			print_echo_app_header();
-			xil_printf("\r\n");
-			sys_thread_new("echod", echo_application_thread, 0,
-					THREAD_STACKSIZE,
-					DEFAULT_THREAD_PRIO);
+			DrxTransportTask_Create();
 			break;
 		}
 	}

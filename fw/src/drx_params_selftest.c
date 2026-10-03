@@ -41,7 +41,7 @@ int main(void) {
   check(DRX_NCO_PHASE_BITS >= 32, "la palabra de fase del NCO se quedo corta");
 
   /* El contrato tiene que estar generado y ser coherente con el firmware. */
-  check(DRX_DSP_VERSION_MAJOR == 0 && DRX_DSP_VERSION_MINOR == 7,
+  check(DRX_DSP_VERSION_MAJOR == 0 && DRX_DSP_VERSION_MINOR == 8,
         "version del contrato DRx<->DSP inesperada");
   check(sizeof(drx_dsp_ray_t) > 0, "la cabecera de rayo no tiene campos");
 

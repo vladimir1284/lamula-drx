@@ -391,3 +391,47 @@ las mismas cifras que ya medía D-14.
 - Diagnóstico de tiempo muerto / BITE que D-14 ya dejaba abierto — sin relación con este cambio.
 - P&R real con este cambio — no se corrió en esta sesión (lógica combinacional adicional de bajo
   costo dentro de un módulo ya cerrado; la última cifra medida sigue siendo la de D-09/v4).
+
+## D-16 · El transporte DRx↔DSP es una sola conexión TCP, con el DRx escuchando { #d-16 }
+
+**Decisión, 2-oct-2026 (en sesión):** el contrato DRx↔DSP viaja sobre **una única conexión TCP**
+que lleva los dos sentidos. El **DRx escucha** en `tcp_port` (9470, constante del propio esquema) y
+el **DSP conecta**. Cierra el hueco que [D-08](#d-08) dejó abierto a propósito al congelar el
+esquema sin implementar el transporte.
+
+Hasta hoy no había ninguna decisión escrita: el esquema no menciona TCP, UDP ni puerto, y lo único
+dicho en el repo era «GEM 1GbE». Eso bastaba mientras nadie abría un socket; Z4.6 es justo el paso
+que lo hace.
+
+**TCP y no UDP.** El framer del DRx (`fw/src/app/drx_contract_io.c`, Z4.3) es incremental, con
+buffer de reensamblado: está escrito para un flujo de bytes y no supone que un `recv` traiga un
+mensaje entero. Montarlo sobre datagramas obligaría a reescribirlo y a inventar reordenación y
+reintento en el contrato, que hoy no los tiene — no hay ventana de recepción, ni ACK de rayo, ni
+hueco para retransmitir. El caudal no obliga a lo contrario: 231 rayos/s × 44 KB son ~80 Mbps, con
+sitio de sobra en 1GbE. El argumento habitual a favor de UDP en datos de radar —evitar el bloqueo
+de cabeza de línea— se aplica cuando llegar tarde es peor que no llegar; aquí el consumidor es un
+DSP que integra radiales, y perder uno en silencio es peor que recibirlo con jitter.
+
+**Una conexión, no dos.** Separar control y datos en dos sockets añade un estado de emparejamiento
+—qué conexión de control manda sobre qué conexión de datos— sin resolver nada: el contrato ya
+distingue sentido y tipo en la cabecera de cada mensaje, y `DrxFrame_IsDownstream` ya existe.
+
+**El DRx escucha.** El receptor no necesita conocer la dirección del DSP, que es una cosa menos que
+configurar en placa y una menos que equivocar. También hace el bring-up reproducible: el cliente de
+mentira (`tools/mock_dsp.py`) conecta y se va cuantas veces haga falta sin reiniciar la placa. La
+alternativa —el DRx conectando hacia un colector— obliga a reconfigurar y rearrancar el receptor
+cada vez que cambia el host del DSP.
+
+**El puerto vive en el esquema, no en el firmware.** Es exactamente lo que las dos puntas tienen
+que acordar, así que duplicarlo a mano en el C del DRx y en el cliente del DSP es la clase de
+desacuerdo que no da ningún síntoma hasta que nadie conecta. Se genera a C, Python y Rust como
+`DRX_DSP_TCP_PORT` / `TCP_PORT`. Sube `version_minor` a 8 aunque no cambie ni un byte del formato
+de cable: cambia el documento que las dos partes firman.
+
+**Lo que esta decisión NO resuelve, y hay que decirlo:** qué pasa cuando el DSP no lee lo bastante
+rápido. Hoy `DrxRay_SetSink` devuelve `false` y el rayo se cuenta en `sink_drops` — descartar el
+rayo nuevo, no bloquear la tarea de rayos ni crecer sin límite. Es la única opción que no rompe el
+tiempo real, pero significa que una congestión de red se traduce en huecos de radial, y el contrato
+no tiene hoy forma de avisar al DSP de cuántos se perdieron. Anotado como trabajo de Z5 junto con
+[P-17](pendientes.md#p-17); no bloquea el cierre de ZM4, que es demostrar el camino completo.
+

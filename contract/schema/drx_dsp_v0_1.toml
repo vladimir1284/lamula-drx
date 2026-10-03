@@ -21,9 +21,24 @@
 [meta]
 name = "drx_dsp"
 version_major = 0
-version_minor = 7
+version_minor = 8
 magic = 0x4C4D4452  # "LMDR" en ASCII, little-endian
 endianness = "little"
+# Punto final del transporte (v0.8, Z4.6). Vive aquí y no en el firmware porque
+# es justo lo que las dos puntas tienen que acordar: duplicarlo a mano en el C
+# del DRx y en el cliente del DSP es la clase de desacuerdo que no da ningún
+# síntoma hasta que nadie conecta. No cambia ningún byte del formato de cable;
+# sube `version_minor` igualmente porque cambia el documento que las dos partes
+# firman.
+#
+# El DRx ESCUCHA y el DSP conecta (ver D-16). Una sola conexión TCP lleva los
+# dos sentidos: el framer del DRx (`fw/src/app/drx_contract_io.c`) es
+# incremental y está escrito para un flujo de bytes, no para datagramas.
+#
+# 9470 está por debajo del rango efímero de Linux (32768-60999), así que el
+# arnés de interoperabilidad puede escuchar en el host sin chocar con un puerto
+# de salida, y por encima de los bien conocidos.
+tcp_port = 9470
 
 # ---------------------------------------------------------------------------
 # Cabecera común a todos los mensajes.

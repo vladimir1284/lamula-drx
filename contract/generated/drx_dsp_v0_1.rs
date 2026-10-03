@@ -1,7 +1,7 @@
 // GENERADO por tools/gen_contract.py a partir de
 // contract/schema/drx_dsp_v0_1.toml. NO EDITAR A MANO.
 //
-// Contrato DRx↔DSP v0.7 — lado DSP.
+// Contrato DRx↔DSP v0.8 — lado DSP.
 //
 // Little-endian, empaquetado. Los `assert!` de tamaño viven en los tests
 // del proyecto DSP; aquí van como constantes para que se puedan comprobar.
@@ -10,7 +10,8 @@
 
 pub const MAGIC: u32 = 0x4C4D4452;
 pub const VERSION_MAJOR: u8 = 0;
-pub const VERSION_MINOR: u8 = 7;
+pub const VERSION_MINOR: u8 = 8;
+pub const TCP_PORT: u16 = 9470;
 
 /// Cabecera común a todo mensaje.
 #[repr(C, packed)]

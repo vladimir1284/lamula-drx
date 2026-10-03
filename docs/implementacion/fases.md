@@ -1799,6 +1799,81 @@ Trabajo:
     la ZU9, con dos FMC213 y mucho más caudal, ese margen es más estrecho. Dimensionarlo es trabajo
     de Z5, no de aquí.
 
+!!! success "2-oct-2026 (noche): Z4.6 — hay socket, y el lazo de control cierra sobre él"
+    Primera vez que el contrato DRx↔DSP viaja por un cable. Hasta hoy se ejercitaba de dos maneras,
+    las dos a medias: el framer en C contra el Python generado **en el host**, y en placa con tramas
+    que el propio firmware se fabricaba. Nadie había abierto un socket.
+
+    **Forma, por [D-16](../alcance/decisiones.md#d-16):** una sola conexión TCP para los dos
+    sentidos, el DRx escucha, el DSP conecta. Contrato **v0.8**: el puerto (9470) pasa a ser una
+    constante del esquema, generada a C, Python y Rust. Vive ahí y no en el firmware porque es justo
+    lo que las dos puntas tienen que acordar — duplicarlo a mano es la clase de desacuerdo que no da
+    ningún síntoma hasta que nadie conecta.
+
+    **Piezas:** `fw/src/app/drx_transport.c` (tarea servidora; recibe en su propia tarea y envía
+    desde las de rayos y diagnóstico, con un mutex serializando los dos emisores),
+    `fw/src/app/drx_ray_ctx.c` (extraído de `drx_control_boot.c`, que era el único productor de
+    tramas `ray` hasta que el transporte fue el segundo), y `tools/mock_dsp.py`, que **no**
+    reimplementa el contrato: todo lo que empaqueta sale de `contract/generated/drx_dsp_v0_1.py`.
+    El servidor de eco de la plantilla de Vitis se va; cumplió su papel en Z4.2, que era probar que
+    la pila compilaba.
+
+    **Medido contra la ZedBoard:**
+
+    | magnitud | medido |
+    |---|---|
+    | rayos | 2239 en 10 s = **223,8/s** (predicho 223,47) |
+    | caudal | 36,20 MB, **28,9 Mbps** |
+    | huecos de `seq` | **0** |
+    | ping | 0 % de pérdida, 0,147 ms |
+
+    **El lazo de control cierra sobre el mismo socket, sin JTAG**, que es lo que hace que esto valga
+    como cierre y no como demostración. El cliente recibe el I/Q, así que el efecto de un `afc` se
+    mide en los propios rayos que llegan (`--spectrum`):
+
+    | | pico medido | modelo dorado |
+    |---|---|---|
+    | NCO nominal | +0,00000 de fs_dec, −9,02 dBFS | +0,00000, −9,02 dBFS |
+    | tras `afc 1025629931` por la red | **−0,24950 de fs_dec, −10,45 dBFS** | −0,24950, −10,45 dBFS |
+
+    Y el camino de error: un `afc` de 2³² vuelve como `last_error=afc_out_of_range` en el primer
+    `status`, rearmado a `ok` después, con `bite=config_rejected` latcheado. Restaurar el NCO
+    necesitó **una sola** escritura, que es la corrección del strobe de esta misma tarde
+    sosteniéndose.
+
+    **Dos bloqueos reales, los dos de la familia del VREF de la DDR** — un parámetro que el preset
+    de Digilent deja en su valor por defecto y un síntoma que apunta a otro sitio:
+
+    1. **`PCW_ENET0_GRP_MDIO_IO` valía `EMIO`.** El grupo MDIO estaba habilitado pero enrutado a la
+       FÁBRICA, donde no hay nada; en la ZedBoard el PHY lo tiene cableado a MIO 52/53. Sin MDIO no
+       se puede leer el PHY y la autonegociación nunca completa. Comprobado leyendo los MIO por
+       JTAG antes de tocar nada: `MIO_PIN_52` y `MIO_PIN_53` valían `0x200` —los cuatro `L*_SEL` a
+       cero, pin sin muxear— mientras `MIO_PIN_16` valía `0x2902` con `L0_SEL = 1`. Datos RGMII sí,
+       gestión no. Corregido en `tcl/gen_zynq_bd.tcl`; el P&R no se mueve (**WNS = 2,304 ns**), como
+       cabe esperar de un cambio de MIO del PS7.
+    2. **`unable to determine type of EMAC with baseaddress 0xE000B000` es ruido, no un error.** El
+       `switch` de `xemac_add` en el port de lwIP de Xilinx (`xadapter.c`) **no tiene `break` en
+       ningún case**, así que toda ruta cae a `default:` y lo imprime; `default:` solo imprime y no
+       toca `nif`. Aparece igual cuando el netif se añadió bien. Costó tiempo porque durante los
+       primeros arranques convivía con el fallo de verdad —`Phy setup failure init_emacps`, la
+       línea de ARRIBA— y parecía su consecuencia.
+
+    Un tercero, este de cosecha propia: `DrxStatusTask_Create()` corre **antes** que el transporte
+    (`main.c` lo arranca antes de `lwip_init` a propósito, para no depender del enlace), así que
+    llamaba a `DrxTransport_Send` con el mutex sin crear y reventaba el `configASSERT` de FreeRTOS
+    (`Assert failed in file queue.c, line 1507`). Resuelto con una guarda; la ordenación no se
+    cambia, porque que el diagnóstico no dependa de la red es deliberado.
+
+    De paso: `LWIP_DHCP` está a **1** en este BSP, no a 0 como se venía suponiendo. El arranque
+    espera a un DHCP que no existe en un enlace punto a punto, expira y cae al estático
+    (`Configuring default IP of 192.168.1.10`). Funciona, pero retrasa la escucha; vale la pena
+    ponerlo a 0 en `tcl/gen_bsp.tcl` cuando se toque.
+
+    **Lo que falta para cerrar ZM4:** barrer el catálogo de estímulos contra rayos reales —
+    bloqueado por [P-16](../alcance/pendientes.md#p-16), no por el transporte— y una corrida larga
+    que mida si `sink_drops` se mantiene en 0 con el DSP leyendo de verdad, que es la pregunta que
+    D-16 deja abierta sobre la contrapresión.
+
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
 Trabajo:

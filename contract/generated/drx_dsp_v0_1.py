@@ -1,6 +1,6 @@
 """GENERADO por tools/gen_contract.py a partir de contract/schema/drx_dsp_v0_1.toml. NO EDITAR A MANO.
 
-Contrato DRx↔DSP v0.7 — referencia
+Contrato DRx↔DSP v0.8 — referencia
 de los tests de contrato. Es la tercera implementación generada de la misma
 fuente: si esta y la de C no producen los mismos bytes, el codegen está mal.
 """
@@ -12,7 +12,8 @@ from dataclasses import dataclass
 
 MAGIC = 0x4C4D4452
 VERSION_MAJOR = 0
-VERSION_MINOR = 7
+VERSION_MINOR = 8
+TCP_PORT = 9470
 
 @dataclass
 class Header:

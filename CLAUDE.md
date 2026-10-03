@@ -265,6 +265,28 @@ leyendo DDR sin relación con el DMA. Cualquier BITE leído durante una sesión 
 está contaminado; las cifras de Z4.4 no lo están porque salen de `DrxRay_SelfTest`, anterior a la
 primera lectura por JTAG. Detalle en `fases.md#z4`, entradas del 2-oct.
 
+**Z4.6 — transporte TCP y cliente DSP de mentira: en curso, empezó 2-oct-2026 (noche). El camino
+completo ya corre en placa.** Por fin hay un socket: `fw/src/app/drx_transport.c` (nuevo) sustituye
+al servidor de eco de la plantilla de Vitis, el DRx **escucha** en el puerto 9470 y el DSP conecta
+([D-16](docs/alcance/decisiones.md#d-16)); contrato **v0.8**, que añade `tcp_port` al propio esquema
+para que las dos puntas no lo dupliquen a mano. `tools/mock_dsp.py` (nuevo) es la otra punta, y no
+reimplementa el contrato: todo lo que empaqueta sale de `contract/generated/drx_dsp_v0_1.py`.
+**Medido contra la ZedBoard:** 2239 rayos en 10 s (**223,8 rayos/s** contra 223,47 predichos),
+36,20 MB a 28,9 Mbps, **0 huecos de `seq`**, ping 0 % de pérdida a 0,147 ms. **Y el lazo de control
+cierra sobre el mismo socket, sin JTAG:** un `afc` enviado por la red mueve el pico del espectro de
+continua a **−0,24950 de fs_dec, −10,45 dBFS**, exactamente las cifras del modelo dorado, medido
+sobre el I/Q que llega por el cable (`--spectrum`); y un `afc` fuera de rango vuelve como
+`last_error=afc_out_of_range` con `bite=config_rejected` latcheado. Dos bloqueos reales en el
+camino, los dos del mismo tipo que el VREF de la DDR: (1) el preset de Digilent deja
+`PCW_ENET0_GRP_MDIO_IO` en `EMIO`, o sea saca el MDIO del PHY por la fábrica, donde no hay nada —
+sin MDIO no hay autonegociación, y el mensaje que engaña (`unable to determine type of EMAC`) ni
+siquiera era el error: es ruido de un `switch` sin `break` en el port de lwIP de Xilinx, que lo
+imprime también cuando todo ha ido bien; (2) la tarea de diagnóstico se crea antes que el
+transporte, así que llamaba a `DrxTransport_Send` con el mutex sin crear y reventaba el
+`configASSERT` de FreeRTOS. **Lo que falta para cerrar ZM4:** el barrido del catálogo de estímulos
+contra rayos reales (bloqueado por [P-16](docs/alcance/pendientes.md#p-16)) y una corrida larga que
+mida si `sink_drops` se mantiene en 0. Detalle en `fases.md#z4`, entrada del 2-oct (noche).
+
 Lo que sí está hecho y verificado, además de lo de arriba:
 
 - El sitio de documentación se construye y se despliega solo a

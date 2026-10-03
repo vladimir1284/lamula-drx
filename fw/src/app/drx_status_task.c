@@ -7,6 +7,7 @@
 #include "drx_regs_hw.h"
 #include "drx_status_frame.h"
 #include "drx_stimulus.h"
+#include "drx_transport.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -59,6 +60,7 @@ static void DrxStatusTask(void *pvParameters)
                (unsigned long)DrxReg_Version());
 
     uint32_t last_trig_count = DrxReg_TrigCount();
+    uint32_t enviados = 0u; /* tramas `status` que el transporte acepto */
     const TickType_t arranque = xTaskGetTickCount();
 
     for (;;) {
@@ -127,6 +129,16 @@ static void DrxStatusTask(void *pvParameters)
         uint8_t trama[128];
         size_t n = DrxStatus_Encode(trama, sizeof(trama), &instantanea);
 
+        /* Z4.6: la misma trama que se contaba por UART va ahora al DSP, si hay
+         * alguno conectado. Que no lo haya no es un error -- el `status` es
+         * periodico y el siguiente sale dentro de un segundo. */
+        if (n > 0u && DrxTransport_Send(trama, n)) {
+            enviados++;
+        }
+
+        DrxTransportStatus red;
+        DrxTransport_GetStatus(&red);
+
         xil_printf("drx_status: BITE=0x%lx uptime=%lus rayos=%lu "
                    "dma_overruns=%lu ddc_overflows=%lu ssa_underruns=%lu "
                    "last_error=%lu trama=%luB\r\n",
@@ -138,6 +150,14 @@ static void DrxStatusTask(void *pvParameters)
                    (unsigned long)instantanea.ssa_underruns,
                    (unsigned long)instantanea.last_error,
                    (unsigned long)n);
+        xil_printf("drx_status: red %s rayos_tx=%lu descartados=%lu "
+                   "status_tx=%lu tx=%luKB rx=%luB\r\n",
+                   red.connected ? "conectada" : "sin DSP",
+                   (unsigned long)red.rays_sent,
+                   (unsigned long)red.rays_dropped,
+                   (unsigned long)enviados,
+                   (unsigned long)(red.tx_bytes / 1024u),
+                   (unsigned long)red.rx_bytes);
 
         /* `last_error` se reporta una vez y se rearma; `rejects` no, porque la
          * bandera `config_rejected` tiene que quedarse en alto. */

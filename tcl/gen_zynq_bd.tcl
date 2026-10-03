@@ -63,9 +63,29 @@ apply_bd_automation -rule xilinx.com:bd_rule:processing_system7 \
 # XSA, BSP, FSBL, `drx_app.elf` y `BOOT.BIN` generado por este repositorio antes
 # de esta línea lleva un `ps7_init` que no entrena la DDR de verdad. Detalle del
 # diagnóstico y de las hipótesis descartadas en `bringup/README.md`.
+#
+# Segundo parámetro que el preset de Digilent deja mal, misma familia que el
+# anterior y encontrado igual: midiendo (Z4.6, 2-oct-2026).
+# `PCW_ENET0_GRP_MDIO_ENABLE` sí lo pone a 1, pero deja
+# `PCW_ENET0_GRP_MDIO_IO` en `EMIO` -- es decir, saca el MDIO del PHY por la
+# FÁBRICA, donde no hay nada conectado. En la ZedBoard el PHY (Marvell 88E1518)
+# tiene el MDIO cableado a MIO 52/53, igual que los datos RGMII van por
+# MIO 16..27, que el preset sí enruta bien.
+#
+# Síntoma: `Auto negotiation error` -> `Phy setup failure init_emacps` ->
+# `unable to determine type of EMAC with baseaddress 0xE000B000` en cada
+# arranque, con el cable puesto y el otro extremo con portadora. El último
+# mensaje engaña: parece que el EMAC no está en el XSA, y sí está. Lo que
+# falta es el camino de gestión para hablar con el PHY.
+#
+# Comprobado leyendo los MIO por JTAG antes de tocar nada: `MIO_PIN_52` y
+# `MIO_PIN_53` valían 0x200 -- los cuatro campos `L*_SEL` a cero, o sea pin sin
+# muxear a ningún periférico-- mientras `MIO_PIN_16` valía 0x2902, con
+# `L0_SEL = 1` (ENET0). Datos sí, gestión no.
 set fclk_mhz [expr {1000.0 / $period_ns}]
 set_property -dict [list \
   CONFIG.PCW_UIPARAM_DDR_USE_INTERNAL_VREF {1} \
+  CONFIG.PCW_ENET0_GRP_MDIO_IO {MIO 52 .. 53} \
   CONFIG.PCW_USE_M_AXI_GP0 {1} \
   CONFIG.PCW_USE_S_AXI_HP0 {1} \
   CONFIG.PCW_S_AXI_HP0_DATA_WIDTH {32} \
