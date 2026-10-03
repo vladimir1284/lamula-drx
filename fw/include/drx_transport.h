@@ -39,6 +39,7 @@ typedef struct {
      * contador no distinguia. */
     uint32_t encode_fails; /* DrxRayFrame_Encode devolvio 0 */
     uint32_t send_fails;   /* el socket no acepto la trama entera */
+    uint32_t queue_full;   /* no habia hueco en el pool: el transmisor no da abasto */
     uint32_t status_sent;
     /* 64 bits, no 32: a 28,9 Mbps un contador de 32 bits envuelve cada ~20
      * minutos, y se vio envolver en el primer soak de una hora -- el total

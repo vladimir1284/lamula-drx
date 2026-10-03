@@ -12,6 +12,7 @@
 #include "drx_timing_cfg.h"
 
 #include "FreeRTOS.h"
+#include "queue.h"
 #include "semphr.h"
 #include "task.h"
 #include "xil_printf.h"
@@ -24,12 +25,31 @@
 #define DRX_TRANSPORT_PRIORITY (tskIDLE_PRIORITY + 2)
 #define DRX_TRANSPORT_BACKLOG 1
 
-/* Buffer de salida de una trama `ray`, dimensionado al rayo mas grande que el
- * bitstream puede producir. No se puede evitar: la carga util de la DDR viene
- * en {I[31:16], Q[15:0]} y el contrato pide el par en orden I,Q, asi que
- * `DrxRayFrame_Encode` tiene que escribir en algun sitio. Lo usa SOLO la tarea
- * de rayos, que es la unica que llama al sumidero. */
-static uint8_t g_ray_frame[DRX_RAY_MAX_BINS * DRX_RAY_N_CH * 4u + 64u];
+/* Tramas `ray` en vuelo. Dimensionadas al rayo mas grande que el bitstream
+ * puede producir: la carga util de la DDR viene en {I[31:16], Q[15:0]} y el
+ * contrato pide el par en orden I,Q, asi que `DrxRayFrame_Encode` tiene que
+ * escribir en algun sitio.
+ *
+ * Son VARIAS, y una tarea aparte las envia, porque la primera version --una
+ * sola trama y el sumidero enviando el mismo-- bloqueaba la tarea de rayos
+ * dentro de `lwip_send`. Mientras esa tarea espera al socket nadie recicla
+ * descriptores del S2MM, el range-gate se queda sin sitio y desborda: un hipo
+ * de red de ~50 ms costaba ~11 rayos, no uno.
+ *
+ * Medido, con un control limpio (3-oct-2026). Con cliente conectado, 2 h:
+ * ~18 eventos de `STATUS (overrun) = 0x7` y 20 rafagas de `trig_gaps`. Sin
+ * cliente --el sumidero ni se instala, no hay socket en el camino-- 41 min y
+ * 556 757 rayos: CERO en todos los contadores. Misma placa, mismo firmware.
+ *
+ * Con el pool, el sumidero solo escribe y encola; si no hay hueco descarta UN
+ * rayo y sigue, que es el coste que D-16 acepta. */
+#define DRX_RAY_FRAME_MAX (DRX_RAY_MAX_BINS * DRX_RAY_N_CH * 4u + 64u)
+#define DRX_TX_SLOTS 4u
+
+static uint8_t g_pool[DRX_TX_SLOTS][DRX_RAY_FRAME_MAX];
+static size_t g_pool_len[DRX_TX_SLOTS];
+static QueueHandle_t g_libres; /* indices de hueco disponible */
+static QueueHandle_t g_listos; /* indices con trama lista para enviar */
 
 static uint8_t g_rx[2048];
 static uint8_t g_parse_buf[256];
@@ -121,32 +141,40 @@ static size_t control_send(const uint8_t *frame, size_t len, void *user)
 
 /* Sumidero de rayos. Corre en la tarea de rayos, no en la interrupcion.
  *
- * Devolver false cuenta como `sink_drops` en `drx_ray.c` y es lo correcto
- * cuando el envio falla: descartar el rayo nuevo, no bloquear la tarea de
- * rayos ni dejar crecer una cola sin limite. Es la unica opcion que no rompe
- * el tiempo real, y lo que cuesta --que una congestion de red se traduzca en
- * huecos de radial-- esta dicho en D-16. */
+ * NO toca la red: coge un hueco del pool, enmarca y encola. Ese es el punto --
+ * ver la nota del pool sobre lo que costaba enviar desde aqui.
+ *
+ * Devolver false cuenta como `sink_drops` en `drx_ray.c`: descartar el rayo
+ * nuevo, no bloquear la tarea de rayos ni dejar crecer una cola sin limite. Es
+ * la unica opcion que no rompe el tiempo real, y lo que cuesta --que una
+ * congestion de red se traduzca en huecos de radial-- esta dicho en D-16. */
 static bool ray_sink(const DrxRayHeader *header, const uint32_t *iq,
                      uint32_t n_words, void *user)
 {
     (void)user;
 
+    uint8_t slot;
+    if (g_libres == NULL || xQueueReceive(g_libres, &slot, 0) != pdTRUE) {
+        /* El transmisor no da abasto. Un rayo menos, y la tarea de rayos
+         * sigue reciclando descriptores, que es lo que importa. */
+        g_status.rays_dropped++;
+        g_status.queue_full++;
+        return false;
+    }
+
     DrxRayContext ctx;
     DrxRayCtx_Fill(&ctx, header);
 
-    size_t len = DrxRayFrame_Encode(g_ray_frame, sizeof(g_ray_frame), header,
+    size_t len = DrxRayFrame_Encode(g_pool[slot], DRX_RAY_FRAME_MAX, header,
                                     &ctx, iq, n_words);
     if (len == 0u) {
         g_status.rays_dropped++;
         g_status.encode_fails++;
         /* Las cifras del rayo que no se pudo enmarcar, en el momento. Contarlo
          * no bastaba: `DrxRayFrame_Encode` rechaza por varias razones y desde
-         * fuera se ven igual. Y `drx_ray.c` no ayuda a distinguirlas, porque
-         * solo marca `short_rays` cuando el rayo llega CORTO (`n_words <
-         * esperadas`); uno que llega LARGO no lo marca nadie y aun asi el
-         * encoder lo rechaza, que compara con `!=`. Dos de los tres descartes
-         * del soak de 90 min tenian `cortos=0`, asi que esa es la sospecha.
-         * Se imprime siempre: a razon de uno cada ~30 minutos no inunda nada. */
+         * fuera se ven igual. Y `drx_ray.c` solo marca `short_rays` cuando el
+         * rayo llega CORTO; uno que llega LARGO no lo marcaba nadie y aun asi
+         * el encoder lo rechaza, que compara con `!=` (ver P-18). */
         xil_printf("drx_transport: rayo sin enmarcar idx=%lu trig=%lu "
                    "bins=%lu n_ch=%lu n_words=%lu esperadas=%lu batch=%lu\r\n",
                    (unsigned long)header->ray_index,
@@ -156,15 +184,37 @@ static bool ray_sink(const DrxRayHeader *header, const uint32_t *iq,
                    (unsigned long)n_words,
                    (unsigned long)((uint32_t)header->bin_count * (uint32_t)header->n_ch),
                    (unsigned long)header->batch_high);
+        (void)xQueueSend(g_libres, &slot, 0);
         return false;
     }
-    if (!envia_bloqueando(g_ray_frame, len)) {
+
+    g_pool_len[slot] = len;
+    if (xQueueSend(g_listos, &slot, 0) != pdTRUE) {
         g_status.rays_dropped++;
-        g_status.send_fails++;
+        g_status.queue_full++;
+        (void)xQueueSend(g_libres, &slot, 0);
         return false;
     }
-    g_status.rays_sent++;
     return true;
+}
+
+/* Tarea de transmision: la UNICA que se bloquea en el socket. */
+static void DrxTxTask(void *pvParameters)
+{
+    (void)pvParameters;
+    for (;;) {
+        uint8_t slot;
+        if (xQueueReceive(g_listos, &slot, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+        if (envia_bloqueando(g_pool[slot], g_pool_len[slot])) {
+            g_status.rays_sent++;
+        } else {
+            g_status.rays_dropped++;
+            g_status.send_fails++;
+        }
+        (void)xQueueSend(g_libres, &slot, portMAX_DELAY);
+    }
 }
 
 static void atiende(int fd)
@@ -261,6 +311,13 @@ static void DrxTransportTask(void *pvParameters)
         xSemaphoreGive(g_tx);
 
         g_status.connected = false;
+        /* Las tramas que quedaran encoladas son de una conexion que ya no
+         * existe. Se devuelven al pool en vez de mandarse al siguiente DSP,
+         * que recibiria rayos de antes de conectarse. */
+        uint8_t slot;
+        while (xQueueReceive(g_listos, &slot, 0) == pdTRUE) {
+            (void)xQueueSend(g_libres, &slot, 0);
+        }
         lwip_close(fd);
         xil_printf("drx_transport: DSP desconectado "
                    "(rayos=%lu descartados=%lu tx=%luMB)\r\n",
@@ -280,10 +337,21 @@ void DrxTransport_GetStatus(DrxTransportStatus *out)
 void DrxTransportTask_Create(void)
 {
     g_tx = xSemaphoreCreateMutex();
-    if (g_tx == NULL) {
-        xil_printf("drx_transport: sin mutex, no se crea la tarea\r\n");
+    g_libres = xQueueCreate(DRX_TX_SLOTS, sizeof(uint8_t));
+    g_listos = xQueueCreate(DRX_TX_SLOTS, sizeof(uint8_t));
+    if (g_tx == NULL || g_libres == NULL || g_listos == NULL) {
+        xil_printf("drx_transport: sin mutex o colas, no se crean las tareas\r\n");
         return;
     }
+    for (uint8_t i = 0u; i < (uint8_t)DRX_TX_SLOTS; i++) {
+        (void)xQueueSend(g_libres, &i, 0);
+    }
+
+    /* El transmisor va por DEBAJO del servidor y, sobre todo, por debajo de la
+     * tarea de rayos: si la red se atasca, quien tiene que seguir corriendo es
+     * la que recicla descriptores del S2MM. */
+    xTaskCreate(DrxTxTask, "drx_tx", DRX_TRANSPORT_STACK_WORDS, NULL,
+                DRX_TRANSPORT_PRIORITY - 1, NULL);
     xTaskCreate(DrxTransportTask, "drx_transport", DRX_TRANSPORT_STACK_WORDS,
                 NULL, DRX_TRANSPORT_PRIORITY, NULL);
 }
