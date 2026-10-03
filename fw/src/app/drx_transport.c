@@ -95,7 +95,7 @@ static bool envia_bloqueando(const uint8_t *frame, size_t len)
     if (fd >= 0) {
         ok = envia_todo(fd, frame, len);
         if (ok) {
-            g_status.tx_bytes += (uint32_t)len;
+            g_status.tx_bytes += (uint64_t)len;
         } else {
             /* No se cierra aqui: el duenno del descriptor es la tarea
              * servidora, y cerrarlo bajo sus pies la dejaria haciendo `recv`
@@ -171,7 +171,7 @@ static void atiende(int fd)
         if (n <= 0) {
             break; /* 0 = el DSP cerro; <0 = error */
         }
-        g_status.rx_bytes += (uint32_t)n;
+        g_status.rx_bytes += (uint64_t)n;
         (void)DrxParser_Push(&g_parser, g_rx, (size_t)n, DrxControl_OnMessage, &g_ctl);
         if (g_fd < 0) {
             break; /* un emisor marco el descriptor como muerto */
@@ -244,10 +244,10 @@ static void DrxTransportTask(void *pvParameters)
         g_status.connected = false;
         lwip_close(fd);
         xil_printf("drx_transport: DSP desconectado "
-                   "(rayos=%lu descartados=%lu tx=%lu B)\r\n",
+                   "(rayos=%lu descartados=%lu tx=%luMB)\r\n",
                    (unsigned long)g_status.rays_sent,
                    (unsigned long)g_status.rays_dropped,
-                   (unsigned long)g_status.tx_bytes);
+                   (unsigned long)(g_status.tx_bytes >> 20));
     }
 }
 

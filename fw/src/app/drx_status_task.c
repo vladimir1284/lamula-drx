@@ -151,13 +151,35 @@ static void DrxStatusTask(void *pvParameters)
                    (unsigned long)instantanea.last_error,
                    (unsigned long)n);
         xil_printf("drx_status: red %s rayos_tx=%lu descartados=%lu "
-                   "status_tx=%lu tx=%luKB rx=%luB\r\n",
+                   "status_tx=%lu tx=%luMB rx=%luB\r\n",
                    red.connected ? "conectada" : "sin DSP",
                    (unsigned long)red.rays_sent,
                    (unsigned long)red.rays_dropped,
                    (unsigned long)enviados,
-                   (unsigned long)(red.tx_bytes / 1024u),
+                   (unsigned long)(red.tx_bytes >> 20),
                    (unsigned long)red.rx_bytes);
+
+        /* Los contadores finos del camino de vuelta, no solo el total. Sin
+         * esto, un `descartados` que sube no dice NADA de por que: un rayo
+         * corto, un `n_ch` que no cuadra y un descriptor fallido del DMA se
+         * ven todos igual desde fuera, y cada uno apunta a un sitio distinto.
+         * Se imprimen solo cuando alguno no es cero, que en marcha normal es
+         * nunca. */
+        if ((rayos.dma_errors | rayos.resync | rayos.bad_magic |
+             rayos.bad_n_ch | rayos.short_rays | rayos.trig_gaps |
+             rayos.ray_gaps | rayos.sink_drops) != 0u) {
+            xil_printf("drx_status: rayo dma_err=%lu resync=%lu magic=%lu "
+                       "n_ch=%lu cortos=%lu trig_gaps=%lu ray_gaps=%lu "
+                       "sink_drops=%lu\r\n",
+                       (unsigned long)rayos.dma_errors,
+                       (unsigned long)rayos.resync,
+                       (unsigned long)rayos.bad_magic,
+                       (unsigned long)rayos.bad_n_ch,
+                       (unsigned long)rayos.short_rays,
+                       (unsigned long)rayos.trig_gaps,
+                       (unsigned long)rayos.ray_gaps,
+                       (unsigned long)rayos.sink_drops);
+        }
 
         /* `last_error` se reporta una vez y se rearma; `rejects` no, porque la
          * bandera `config_rejected` tiene que quedarse en alto. */

@@ -33,8 +33,11 @@ typedef struct {
     uint32_t rays_sent;    /* tramas `ray` entregadas enteras */
     uint32_t rays_dropped; /* rayos que no se pudieron enviar (ver abajo) */
     uint32_t status_sent;
-    uint32_t rx_bytes;
-    uint32_t tx_bytes;
+    /* 64 bits, no 32: a 28,9 Mbps un contador de 32 bits envuelve cada ~20
+     * minutos, y se vio envolver en el primer soak de una hora -- el total
+     * impreso bajaba en vez de subir. */
+    uint64_t rx_bytes;
+    uint64_t tx_bytes;
     uint32_t send_errors;  /* `send` fallido: cierra la conexion */
     bool connected;
 } DrxTransportStatus;
