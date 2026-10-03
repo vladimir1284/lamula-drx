@@ -216,6 +216,35 @@ static bool reap_pass(void)
     return true;
 }
 
+/* P-16: el modo de fuente y la base de tiempo del motor TIENEN que moverse
+ * juntos, y hay DOS caminos de vuelta a BRAM-loop -- DrxStimulus_Stop() y el
+ * final de la ultima pasada en DrxStimulusTask(). Un helper porque ya
+ * divergieron una vez: el segundo limpiaba el bit de DDR y dejaba el de
+ * pacing puesto, que ata el motor al `ready` del DDC sin ninguna razon.
+ *
+ * Se bracketea con el secuenciador parado: pacear cambia lo que significa
+ * `prf_div`, y hacerlo a mitad de radial deja ese radial con dos bases de
+ * tiempo. */
+static void set_modo_ddr(bool ddr)
+{
+    uint32_t ctrl = DrxReg_Read(DRX_REG_CTRL_OFFSET);
+    if (ddr) {
+        ctrl |= DRX_REG_CTRL_VECTOR_SOURCE_DDR_MASK;
+    } else {
+        ctrl &= ~DRX_REG_CTRL_VECTOR_SOURCE_DDR_MASK;
+    }
+    DrxReg_Write(DRX_REG_CTRL_OFFSET, ctrl);
+
+    const bool timing_corria = DrxReg_TimingEnabled();
+    if (timing_corria) {
+        DrxReg_TimingDisable();
+    }
+    DrxReg_TimingSetPaced(ddr);
+    if (timing_corria) {
+        DrxReg_TimingEnable();
+    }
+}
+
 drx_dsp_error_t DrxStimulus_Select(uint8_t vector_id, uint16_t repeat)
 {
     if (!g_ready) {
@@ -241,27 +270,13 @@ drx_dsp_error_t DrxStimulus_Select(uint8_t vector_id, uint16_t repeat)
     /* El modo se cambia ANTES del primer beat y con la cadena ya parada por
      * DrxStimulus_Stop(): `vector_source` no vacia el conjunto a medio llenar
      * al conmutar (ver su cabecera y el doc de CTRL en config/registers.toml). */
-    uint32_t ctrl = DrxReg_Read(DRX_REG_CTRL_OFFSET);
-    DrxReg_Write(DRX_REG_CTRL_OFFSET, ctrl | DRX_REG_CTRL_VECTOR_SOURCE_DDR_MASK);
-
     /* P-16: en Throttled(DDR) el motor de timing TIENE que contar avances de
      * muestra. `vector_source` junta N_CH beats de 16 bits por conjunto, asi
      * que contando ciclos el rayo tarda ~N_CH veces el PRI en llenarse,
-     * `ray_start` lo trunca y no se completa ninguno.
-     *
-     * Los dos bits de registro son independientes a proposito (ver
-     * drx_sample_pacer.sv); que vayan juntos es una POLITICA, y su sitio es
-     * aqui, no el mapa de registros. Se bracketea con el secuenciador parado
-     * porque pacear cambia lo que significa `prf_div`, y hacerlo a mitad de
-     * radial deja ese radial con dos bases de tiempo. */
-    const bool timing_corria = DrxReg_TimingEnabled();
-    if (timing_corria) {
-        DrxReg_TimingDisable();
-    }
-    DrxReg_TimingSetPaced(true);
-    if (timing_corria) {
-        DrxReg_TimingEnable();
-    }
+     * `ray_start` lo trunca y no se completa ninguno. Los dos bits del
+     * registro son independientes a proposito (ver drx_sample_pacer.sv); que
+     * vayan juntos es una POLITICA, y su sitio es aqui. */
+    set_modo_ddr(true);
 
     if (!submit_pass()) {
         g_status.running = false;
@@ -291,21 +306,10 @@ void DrxStimulus_Stop(void)
     XAxiDma_BdRingStart(ring);
     XAxiDma_Resume(&g_dma);
 
-    uint32_t ctrl = DrxReg_Read(DRX_REG_CTRL_OFFSET);
-    DrxReg_Write(DRX_REG_CTRL_OFFSET, ctrl & ~DRX_REG_CTRL_VECTOR_SOURCE_DDR_MASK);
-
     /* De vuelta a BRAM-loop, de vuelta a contar ciclos: ahi la fuente entrega
      * una muestra por ciclo y pacear no cambia nada, pero dejarlo encendido
-     * ataria el motor al `ready` del DDC sin ninguna razon. Mismo bracketeo
-     * que en Select(). */
-    const bool timing_corria = DrxReg_TimingEnabled();
-    if (timing_corria) {
-        DrxReg_TimingDisable();
-    }
-    DrxReg_TimingSetPaced(false);
-    if (timing_corria) {
-        DrxReg_TimingEnable();
-    }
+     * ataria el motor al `ready` del DDC sin ninguna razon. */
+    set_modo_ddr(false);
 }
 
 void DrxStimulus_GetStatus(DrxStimulusStatus *out)
@@ -331,10 +335,9 @@ static void DrxStimulusTask(void *pvParameters)
                 /* Fin de la ultima pasada: se vuelve a BRAM-loop para no dejar
                  * la cadena sin fuente. En Throttled(DDR) sin DMA en curso
                  * `vector_source` no entrega nada, y aguas abajo eso se ve
-                 * igual que un DDC colgado. */
-                uint32_t ctrl = DrxReg_Read(DRX_REG_CTRL_OFFSET);
-                DrxReg_Write(DRX_REG_CTRL_OFFSET,
-                             ctrl & ~DRX_REG_CTRL_VECTOR_SOURCE_DDR_MASK);
+                 * igual que un DDC colgado. Por el helper y no a mano: este
+                 * camino tiene que soltar tambien el pacing (P-16). */
+                set_modo_ddr(false);
                 xil_printf("drx_stimulus: vector %s terminado, %lu pasadas\r\n",
                            g_status.name ? g_status.name : "?",
                            (unsigned long)g_status.passes);
