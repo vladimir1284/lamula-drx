@@ -42,6 +42,12 @@ rtl/drx_timing_engine.sv
 # pueda contarlos en vez de contar ciclos. Sin dependencias; lo instancia
 # drx_top junto a vector_source.
 rtl/drx_sample_pacer.sv
+# P-21 (3-oct-2026): sonda de depuracion de la cadena de muestras. Define el
+# paquete `drx_debug_pkg` con el troceado del bus, asi que va ANTES de drx_top
+# (que usa DbgWidth en su lista de puertos) y antes de drx_zynq_top, que es
+# quien lo engancha a un ILA en la build de depuracion.
+rtl/drx_debug_pkg.sv
+rtl/drx_debug_probe.sv
 rtl/drx_axil_regs.sv
 # drx_top.sv va al final a propósito: desde esta integración instancia
 # vector_source + drx_ddc_quad_top + drx_range_gate_quad_top, así que tiene que

@@ -48,3 +48,13 @@ lint_off -rule DECLFILENAME -file "*/xilinx_ip_verilator_stubs.sv"
 // integración (Z1) — antes ningún top alcanzaba `drx_ddc_top` en Verilator —
 // así que este hallazgo es nuevo hoy, no una regresión de esta sesión.
 lint_off -rule UNUSEDSIGNAL -file "*/drx_ddc_top.sv" -match "*branch_valid*"
+
+// drx_debug_pkg: mismo falso positivo que drx_ddc_ip_pkg.sv y drx_regs_pkg.sv
+// de arriba. Los campos del troceado SÍ se usan — `drx_debug_probe` los
+// escribe y `drx_zynq_top` los lee para trocear el bus en probes del ILA —
+// pero cada elaboración L0 tiene su propio top, y en la de cualquier otro
+// módulo (p. ej. `drx_axil_regs`) el paquete entra en la lista de fuentes sin
+// que nadie lo importe. Verilator atribuye el warning a esa instancia en vez
+// de reconocer el uso real. Lintar `--top-module drx_top`, que es el gate de
+// `make lint-hdl`, no lo dispara.
+lint_off -rule UNUSEDPARAM -file "*/drx_debug_pkg.sv"

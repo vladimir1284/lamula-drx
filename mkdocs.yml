@@ -69,6 +69,7 @@ nav:
       - Estructura del repositorio: implementacion/estructura-repo.md
       - Substrato Z0 (qué existe y cómo se corre): implementacion/substrato.md
       - Mapa de registros AXI-Lite (v1, Z1): implementacion/registros.md
+      - ILA de depuración (P-21): implementacion/ila.md
       - Infraestructura: implementacion/infraestructura.md
   - Documentación de IPs:
       - Visión General y Flujo de Datos: ip/index.md

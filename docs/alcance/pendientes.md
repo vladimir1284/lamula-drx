@@ -2325,8 +2325,35 @@ motor de timing PARADO y con `repeat` finito— y hasta el pacing de P-16 el sí
 tapado: el motor seguía contando ciclos aunque no llegara una sola muestra, así que lo que se veía
 era `GATE_TRUNCATED` y no una parada.
 
-**Condición de cierre:** saber qué para la cadena. El siguiente paso es un ILA sobre
-`s_axis_valid`/`s_axis_ready` de `vector_source` y el `s_ready` del DDC, que distingue «el DMA no
-entrega» de «el DDC no acepta» — las lecturas de `MM2S_DMASR` por JTAG de la primera sesión dieron
-patrones de bits implausibles (errores de SG en un canal que estaba entregando rayos) y no se
-usaron como evidencia.
+**Condición de cierre:** saber qué para la cadena.
+
+**El ILA ya está construido, 3-oct-2026.** `rtl/drx_debug_probe.sv` + `rtl/drx_debug_pkg.sv`
+(nuevos) sacan a un bus los handshakes de toda la cadena —de `s_vec_*` a `m_ray_*`, con
+`vs_valid`/`vs_ready`/`ddc_valid`/`gate_valid`/`gate_ready` por canal— y cuentan los ciclos desde
+el último avance de muestra. `tcl/build.tcl -debug 1` engancha un ILA a ese bus; la build normal
+no cambia (el XCI vive en `ip_debug/`, fuera del glob de `ip/`, y sin `DRX_DEBUG_ILA` la síntesis
+se lleva la sonda entera salvo el contador). Verificado en L0 contra RTL mutado: desplazar un
+campo del troceado un bit, o dejar que el contador cuente con `armed` en bajo, hacen fallar el
+banco. Runbook completo, con la tabla de lectura de la captura, en
+[docs/implementacion/ila.md](../implementacion/ila.md).
+
+La parte no obvia es el disparo. El umbral de parada son 2²² ciclos ≈ 67 ms (tiene que estar por
+encima de los huecos legítimos de 10 ms del sondeo de `DrxStimulusTask`), y la ventana del ILA son
+4096 muestras = 65 µs: disparar con `stalled` y guardar todo dejaría el buffer entero dentro del
+silencio. Con almacenamiento calificado por actividad (`C_EN_STRG_QUAL`), esas 4096 muestras son
+los últimos ciclos en que algo se movió.
+
+**Hipótesis de partida, anotada antes de medir.** `reap_pass()` llama a
+`XAxiDma_BdRingFromHw(ring, XAXIDMA_ALL_BDS, …)`, que puede devolver MENOS descriptores que los
+`DRX_STIMULUS_BD_COUNT` de la pasada, y aun así pone `g_in_flight = false` y declara la pasada
+entera hecha. Dentro del bucle de drenado de `DrxStimulus_Stop()` eso corta el drenado antes de
+tiempo: `XAxiDma_Pause()` deja el descriptor que faltaba en el hardware y `set_modo_ddr(false)`
+baja `ddr_mode`, con lo que `s_axis_ready` de `vector_source` se va a 0 y ese descriptor ya no
+puede completarse nunca. Es el mismo agujero que el arreglo de arriba cerró por un lado y esto
+reabre por otro, y explica el «a partir de la tercera». **Predicción falsable:** la captura tiene
+que mostrar `s_vec_valid = 1`, `s_vec_ready = 0` y `ddr_mode = 0` en el mismo ciclo. Si `ddr_mode`
+sigue en 1, la hipótesis es falsa. El firmware se deja sin tocar hasta tener la captura: arreglar
+la hipótesis antes de medirla cerraría P-21 por coincidencia.
+
+Las lecturas de `MM2S_DMASR` por JTAG de la primera sesión dieron patrones de bits implausibles
+(errores de SG en un canal que estaba entregando rayos) y no se usaron como evidencia.

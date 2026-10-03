@@ -327,6 +327,10 @@ def render_tcl(platforms: dict[str, Params], sel: Params, derived: dict) -> str:
         f"  variable NCO_OUT_BITS {inv['nco_out_bits']}",
         f"  variable NCO_PHASE_INC {sel.nco_phase_inc}",
         f"  variable SAMPLE_BITS {inv['sample_bits']}",
+        # Lo necesita tcl/gen_ip_debug.tcl para dimensionar los probes del ILA
+        # de P-21: son tres bits por canal y el ancho no puede quedar escrito a
+        # mano en un segundo sitio (D-02).
+        f"  variable N_CH_TOP {inv['n_ch_top']}",
         f"  variable IQ_BITS {inv['iq_bits']}",
         f"  variable CIC_STAGES {ch['cic_stages']}",
         f"  variable CIC_RATE {ch['cic_rate']}",

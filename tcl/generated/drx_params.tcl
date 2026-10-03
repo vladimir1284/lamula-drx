@@ -15,6 +15,7 @@ namespace eval ::drx {
   variable NCO_OUT_BITS 16
   variable NCO_PHASE_INC 1030792151
   variable SAMPLE_BITS 16
+  variable N_CH_TOP 3
   variable IQ_BITS 16
   variable CIC_STAGES 5
   variable CIC_RATE 52

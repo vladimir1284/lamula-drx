@@ -24,7 +24,11 @@ source [file join $repo_root tcl generated drx_params.tcl]
 # atado a valores inertes vía `drx_top_tieoff` -- el flujo de siempre, sin PS7.
 # `-top zynq`: `tcl/gen_zynq_bd.tcl` construye un PS7 de verdad (AXI GP0 -> el
 # mapa de registros); ver `docs/implementacion/registros.md`.
-array set opt {platform zedboard step bitstream outdir {} jobs 4 seed 1 top drx_top}
+# `-debug 1`: build de depuración -- engancha un ILA al bus de
+# `rtl/drx_debug_probe.sv` (P-21). Solo con `-top zynq`, y con directorio de
+# salida propio por defecto para que no pise el bitstream de producción. Ver
+# `tcl/gen_ip_debug.tcl` y `docs/implementacion/ila.md`.
+array set opt {platform zedboard step bitstream outdir {} jobs 4 seed 1 top drx_top debug 0}
 for {set i 0} {$i < [llength $argv]} {incr i} {
   set flag [string trimleft [lindex $argv $i] -]
   if {[info exists opt($flag)]} {
@@ -37,8 +41,17 @@ for {set i 0} {$i < [llength $argv]} {incr i} {
 if {[lsearch -exact $::drx::PLATFORMS $opt(platform)] < 0} {
   error "plataforma desconocida: $opt(platform); hay $::drx::PLATFORMS"
 }
+if {$opt(debug) ni {0 1}} {
+  error "-debug tiene que ser 0 o 1, no '$opt(debug)'"
+}
+if {$opt(debug) && $opt(top) ne "zynq"} {
+  error "-debug 1 solo tiene sentido con -top zynq: el ILA se engancha en\
+         rtl/drx_zynq_top.sv y necesita el dbg_hub sobre el JTAG del PS7"
+}
 if {$opt(outdir) eq {}} {
-  if {$opt(top) eq "zynq"} {
+  if {$opt(debug)} {
+    set opt(outdir) [file join $repo_root build gw ${opt(platform)}_zynq_dbg]
+  } elseif {$opt(top) eq "zynq"} {
     # Directorio propio: no pisar los artefactos de `-top drx_top` (mismo
     # `outdir` por defecto para las dos si no se namespacea aquí).
     set opt(outdir) [file join $repo_root build gw ${opt(platform)}_zynq]
@@ -67,6 +80,7 @@ puts "   plataforma : $opt(platform)"
 puts "   pieza      : $part"
 puts "   periodo    : $period_ns ns  (derivado de FS_HZ, D-02)"
 puts "   paso       : $opt(step)"
+puts "   depuración : [expr {$opt(debug) ? {ILA enganchado (P-21)} : {no}}]"
 puts "   salida     : $opt(outdir)"
 
 # --- fuentes ----------------------------------------------------------------
@@ -103,6 +117,16 @@ if {$opt(top) eq "zynq"} {
 # AVISO (2-oct-2026, Z4.5): ver la nota equivalente en tcl/sim_l1.tcl -- los dos
 # flujos escriben en `ip/<core>/` y no se pueden correr en paralelo.
 set xci_files [glob -nocomplain [file join $repo_root ip * *.xci]]
+# El ILA vive en `ip_debug/` y no en `ip/` justo para no entrar en este glob en
+# la build normal -- ver la cabecera de tcl/gen_ip_debug.tcl.
+if {$opt(debug)} {
+  set dbg_xci [glob -nocomplain [file join $repo_root ip_debug * *.xci]]
+  if {![llength $dbg_xci]} {
+    error "-debug 1 sin el XCI del ILA: corre antes\
+           `vivado -mode batch -source tcl/gen_ip_debug.tcl -tclargs -platform $opt(platform)`"
+  }
+  lappend xci_files {*}$dbg_xci
+}
 if {[llength $xci_files]} {
   read_ip $xci_files
   generate_target all [get_ips]
@@ -148,6 +172,9 @@ set synth_args [list -top $top -part $part]
 if {$opt(platform) eq "zu9"} {
   lappend synth_args -verilog_define DRX_PLATFORM_ZU9
 }
+if {$opt(debug)} {
+  lappend synth_args -verilog_define DRX_DEBUG_ILA
+}
 synth_design {*}$synth_args
 write_checkpoint -force [file join $opt(outdir) post_synth.dcp]
 report_utilization -file [file join $opt(outdir) post_synth_utilization.rpt]
@@ -160,6 +187,30 @@ if {$opt(step) eq "synth"} {
 
 # --- implementación ---------------------------------------------------------
 opt_design
+
+# El `dbg_hub` no se instancia en el RTL: lo inserta `opt_design` al encontrar
+# un ILA en el netlist, y hereda unas propiedades por defecto que no son las de
+# esta placa. Sin fijar la frecuencia real del reloj que lo alimenta, el núcleo
+# se sintetiza igual y luego el Hardware Manager no lo enumera o devuelve datos
+# corruptos -- un fallo que solo aparece en la placa, no en ningún informe.
+if {$opt(debug)} {
+  set hub [get_debug_cores -quiet dbg_hub]
+  if {![llength $hub]} {
+    error "-debug 1 pero opt_design no insertó dbg_hub: el ILA no llegó al netlist"
+  }
+  set_property C_CLK_INPUT_FREQ_HZ [::drx::get FS_HZ $opt(platform)] $hub
+  set_property C_ENABLE_CLK_DIVIDER false $hub
+  set_property C_USER_SCAN_CHAIN 1 $hub
+
+  # HALLAZGO (3-oct-2026): en flujo no-project, `place_design` se niega con
+  # "ERROR: [Vivado_Tcl 4-547] Found one or more debug core instances in the
+  # design that needs to be (re)generated" si no se llama a esto antes. El
+  # `dbg_hub` que acaba de insertar `opt_design` es una IP sin generar, y
+  # nadie la genera solo: en flujo de proyecto lo hace el run de
+  # implementacion, aqui hay que pedirlo.
+  implement_debug_core
+}
+
 place_design
 phys_opt_design
 route_design
@@ -195,6 +246,14 @@ set_property SEVERITY {Warning} [get_drc_checks UCIO-1]
 set bit_file [file join $opt(outdir) ${top}.bit]
 write_bitstream -force -bin_file $bit_file
 puts "bitstream escrito en $opt(outdir)"
+
+# El .ltx lleva los NOMBRES de los probes. Sin él el Hardware Manager abre el
+# ILA igual, pero con 11 vectores anónimos: inservible para leer handshakes.
+if {$opt(debug)} {
+  set ltx_file [file join $opt(outdir) ${top}.ltx]
+  write_debug_probes -force $ltx_file
+  puts "probes del ILA escritos en $ltx_file"
+}
 
 if {$opt(step) eq "bitstream"} {
   exit 0

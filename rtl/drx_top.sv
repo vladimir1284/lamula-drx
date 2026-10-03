@@ -162,7 +162,17 @@ module drx_top
     input  logic                          s_vec_valid,
     output logic                          s_vec_ready,
     input  logic signed [SAMPLE_BITS-1:0] s_vec_data,
-    input  logic                          s_vec_last
+    input  logic                          s_vec_last,
+
+    // P-21 (3-oct-2026): bus de depuracion con todos los handshakes de la
+    // cadena, de `s_vec_*` a `m_ray_*`, mas el contador de ciclos sin avance
+    // de muestra. NO es un BITE ni entra en el mapa de registros: es lo que
+    // un ILA engancha en la build de depuracion para contestar DONDE se para
+    // la cadena (ver `rtl/drx_debug_probe.sv` y `docs/implementacion/ila.md`).
+    // Sin consumidor -- `rtl/drx_top_tieoff.sv` y la build normal de
+    // `rtl/drx_zynq_top.sv` lo dejan en el bote de lint -- la sintesis se
+    // lleva la sonda entera salvo el contador.
+    output logic [drx_debug_pkg::DbgWidth-1:0] dbg_bus
 );
 
   logic                      gate_valid  [N_CH];
@@ -548,6 +558,54 @@ module drx_top
       .m_ready(m_ray_ready),
       .m_data (m_ray_data),
       .m_last (m_ray_last)
+  );
+
+  // --- Sonda de depuracion (P-21) -------------------------------------------
+  //
+  // Empaquetado de los tres handshakes que `drx_range_gate_quad_top`/
+  // `drx_ddc_quad_top` llevan como arrays sin empaquetar. Mismo motivo y
+  // mismo patron que los `always_comb` de arriba: la sonda, como
+  // `drx_axil_regs`, trabaja con vectores empaquetados.
+  logic [N_CH-1:0] ddc_valid_pk;
+  logic [N_CH-1:0] gate_valid_pk;
+  logic [N_CH-1:0] gate_ready_pk;
+  always_comb begin
+    for (int c = 0; c < N_CH; c++) begin
+      ddc_valid_pk[c]  = ddc_valid[c];
+      gate_valid_pk[c] = gate_valid[c];
+      gate_ready_pk[c] = gate_ready[c];
+    end
+  end
+
+  drx_debug_probe u_debug_probe (
+      .clk  (clk),
+      .rst_n(rst_n),
+
+      // La sonda decide sola cuándo contar -- no basta con `ddr_mode`, ver
+      // su cabecera.
+      .ddr_mode(vector_source_ddr),
+
+      .s_vec_valid(s_vec_valid),
+      .s_vec_ready(s_vec_ready),
+      .s_vec_last (s_vec_last),
+
+      .m_ray_valid(m_ray_valid),
+      .m_ray_ready(m_ray_ready),
+      .m_ray_last (m_ray_last),
+
+      .timing_enable(timing_enable),
+      .timing_paced (timing_paced),
+      .pulse_trig   (timing_pulse_trig),
+
+      .vs_valid      (vs_valid_pk),
+      .vs_ready      (vs_ready_pk),
+      .ddc_valid     (ddc_valid_pk),
+      .gate_valid    (gate_valid_pk),
+      .gate_ready    (gate_ready_pk),
+      .gate_overrun  (gate_overrun_packed),
+      .gate_truncated(gate_ray_truncated_packed),
+
+      .dbg_bus(dbg_bus)
   );
 
 endmodule : drx_top

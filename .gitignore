@@ -44,6 +44,23 @@ ip/*/*_stub.v
 ip/*/*_stub.vhdl
 ip/*/*_ooc.xdc
 
+# `ip_debug/` es el ILA de depuracion de P-21 (tcl/gen_ip_debug.tcl). Mismo
+# criterio que `ip/`: solo el XCI se versiona. Directorio aparte para que el
+# glob de `tcl/build.tcl` no lo arrastre a la build normal.
+ip_debug/*/hdl/
+ip_debug/*/sim/
+ip_debug/*/synth/
+ip_debug/*/doc/
+ip_debug/*/ila_v6_2/
+ip_debug/*/*.veo
+ip_debug/*/*.xml
+ip_debug/*/*.dcp
+ip_debug/*/*_ooc.xdc
+ip_debug/*/*_sim_netlist.v
+ip_debug/*/*_sim_netlist.vhdl
+ip_debug/*/*_stub.v
+ip_debug/*/*_stub.vhdl
+
 # Datasheets de fabricante descargados como referencia de trabajo -- no se
 # versionan (copyright del fabricante); lo que sí se versiona va en
 # docs/referencia/

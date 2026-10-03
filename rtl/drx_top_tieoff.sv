@@ -78,6 +78,14 @@ module drx_top_tieoff
   logic unused_vec_tie;
   assign unused_vec_tie = &{1'b0, s_vec_ready_tie};
 
+  // P-21: el bus de la sonda de depuracion solo tiene consumidor en la build
+  // de depuracion con PS7 (`rtl/drx_zynq_top.sv` con DRX_DEBUG_ILA). Aqui va
+  // al mismo bote de lint que el resto -- y con el bote, no sin conectar,
+  // porque `-Wall` trata un puerto de salida vacio como PINCONNECTEMPTY.
+  logic [drx_debug_pkg::DbgWidth-1:0] dbg_bus_tie;
+  logic unused_dbg_tie;
+  assign unused_dbg_tie = &{1'b0, dbg_bus_tie};
+
   drx_top #(
       .HEARTBEAT_DIV(HEARTBEAT_DIV),
       .N_CH(N_CH)
@@ -113,7 +121,9 @@ module drx_top_tieoff
       .s_vec_valid(1'b0),
       .s_vec_ready(s_vec_ready_tie),
       .s_vec_data ('0),
-      .s_vec_last (1'b0)
+      .s_vec_last (1'b0),
+
+      .dbg_bus(dbg_bus_tie)
   );
 
 endmodule
