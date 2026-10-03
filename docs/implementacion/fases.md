@@ -1864,10 +1864,11 @@ Trabajo:
     (`Assert failed in file queue.c, line 1507`). Resuelto con una guarda; la ordenación no se
     cambia, porque que el diagnóstico no dependa de la red es deliberado.
 
-    De paso: `LWIP_DHCP` está a **1** en este BSP, no a 0 como se venía suponiendo. El arranque
-    espera a un DHCP que no existe en un enlace punto a punto, expira y cae al estático
-    (`Configuring default IP of 192.168.1.10`). Funciona, pero retrasa la escucha; vale la pena
-    ponerlo a 0 en `tcl/gen_bsp.tcl` cuando se toque.
+    De paso: `LWIP_DHCP` estaba a **1** en este BSP, heredado de la plantilla y nunca revisado, no
+    a 0 como se venía suponiendo. El arranque esperaba un DHCP que en un enlace punto a punto no
+    existe, expiraba y caía al estático (`Configuring default IP of 192.168.1.10`), retrasando otro
+    tanto la escucha del puerto del contrato. **Puesto a 0 el mismo día**: la dirección no cambia y
+    el arranque va directo a `Board IP` y a `drx_transport: escuchando`.
 
     **Lo que falta para cerrar ZM4:** barrer el catálogo de estímulos contra rayos reales —
     bloqueado por [P-16](../alcance/pendientes.md#p-16), no por el transporte— y una corrida larga
