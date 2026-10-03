@@ -23,8 +23,9 @@
 //
 //   2. Contar ciclos desde el último avance de muestra y levantar `stalled`
 //      cuando pasan de 2**STALL_LOG2. Esto es lo que hace útil la captura: el
-//      atasco se detecta decenas de milisegundos DESPUÉS de empezar, y a
-//      62,5 MHz la ventana de un ILA de 4096 muestras son 65 µs. Sin un
+//      atasco se detecta milisegundos DESPUÉS de empezar (16,78 ms con el
+//      umbral de hoy), y a 62,5 MHz la ventana de un ILA de 4096 muestras son
+//      65 µs. Sin un
 //      disparo propio habría que acertar el instante a ciegas; con él, el ILA
 //      dispara con `stalled` y, calificando el almacenamiento por actividad,
 //      el buffer guarda los últimos ciclos en que algo se movió — que es
@@ -71,8 +72,16 @@ module drx_debug_probe
 #(
     // 2**STALL_LOG2 ciclos sin avance con `armed` en alto levantan `stalled`.
     // Parámetro y no constante para que el L0 pueda ejercitar el umbral en
-    // unos pocos ciclos en vez de en 4,2 millones.
-    parameter int STALL_LOG2 = 22
+    // unos pocos ciclos en vez de en un millón.
+    //
+    // El umbral tiene que quedar por encima del hueco legítimo más largo entre
+    // dos avances de muestra, y ese hueco lo fija el sondeo del anillo del MM2S
+    // en `DrxStimulusTask`. Con los 10 ms de sondeo originales hacía falta
+    // 2**22 (67,1 ms a 62,5 MHz) para no disparar en cada recarga de
+    // descriptores; eso tapaba cualquier atasco intermitente más corto que eso.
+    // Con el sondeo a 1 ms (tick de FreeRTOS a 1 kHz, `tcl/gen_bsp.tcl`) el
+    // hueco legítimo baja a ~1-2 ms y 2**20 = 16,78 ms deja 10x de margen.
+    parameter int STALL_LOG2 = 20
 ) (
     input logic clk,
     input logic rst_n,

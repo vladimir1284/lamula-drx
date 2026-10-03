@@ -33,7 +33,7 @@
 
 #define DRX_STIMULUS_TASK_STACK_WORDS 1024
 #define DRX_STIMULUS_TASK_PRIORITY (tskIDLE_PRIORITY + 1)
-#define DRX_STIMULUS_POLL_MS 10
+#define DRX_STIMULUS_POLL_MS 1
 
 /* Cuanto espera DrxStimulus_Stop() a que la pasada en vuelo complete antes de
  * pausar el DMA. Ver el comentario largo en DrxStimulus_Stop(): pausar con una

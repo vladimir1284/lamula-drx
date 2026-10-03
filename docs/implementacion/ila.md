@@ -54,10 +54,22 @@ perfectamente legible y equivocada: diría que se para `ddc_valid` donde se para
 ## El disparo, que es la parte no obvia
 
 El atasco se **detecta** mucho después de empezar. El umbral de
-`drx_debug_probe` son 2²² ciclos ≈ 67 ms a 62,5 MHz, y tiene que ser de ese
-orden: `DrxStimulusTask` sondea cada 10 ms, así que entre dos pasadas hay
-huecos legítimos de milisegundos y un umbral corto dispararía con la cadena
-sana.
+`drx_debug_probe` son 2²⁰ ciclos ≈ 16,78 ms a 62,5 MHz, y no puede bajar sin
+límite: `DrxStimulusTask` sondea el anillo del MM2S cada
+`DRX_STIMULUS_POLL_MS`, así que entre dos pasadas hay huecos legítimos de ese
+orden y un umbral corto dispararía con la cadena sana.
+
+El umbral y el sondeo se bajaron juntos el 3-oct-2026, y no se pueden mover por
+separado. El primer umbral fueron 2²² ciclos (67,1 ms) porque el sondeo eran
+10 ms; eso dejaba invisible cualquier atasco intermitente más corto que 67 ms,
+y P-21 podía perfectamente ser un hueco repetido de 15-20 ms en vez de una
+parada definitiva. Bajar el sondeo a 1 ms pedía además subir el tick de
+FreeRTOS: `freertos10_xilinx` arranca en `tick_rate 100`, o sea un tick de
+10 ms, con lo que `pdMS_TO_TICKS(1)` se redondea a 0 y `vTaskDelay` degenera en
+un `taskYIELD`. Con `bsp config tick_rate 1000` (`tcl/gen_bsp.tcl`) el sondeo
+es de verdad 1 ms, el hueco legítimo baja a ~1-2 ms y 2²⁰ deja 10× de margen.
+Ningún otro retardo del firmware cambia de duración: todos convierten con
+`pdMS_TO_TICKS` o dividen por `configTICK_RATE_HZ`.
 
 La ventana del ILA, en cambio, son 4096 muestras = **65 µs**. Disparando con
 `stalled` y guardando todas las muestras, el buffer entero caería dentro del
@@ -78,7 +90,7 @@ contador atado solo a `ddr_mode`, la sonda se desarmaría **justo al entrar en
 el estado que hay que capturar** y el ILA no dispararía nunca. El L0 lo cubre
 con un caso propio, comprobado contra esa misma mutación.
 
-Un `s_vec_valid` alto durante 67 ms seguidos ya es, por sí solo, un fallo:
+Un `s_vec_valid` alto durante 16,78 ms seguidos ya es, por sí solo, un fallo:
 nadie ofrece un beat tanto tiempo si la cadena funciona.
 
 ### El almacenamiento calificado
@@ -240,3 +252,102 @@ pasó, hace falta un reset del PS — apagar y encender la placa.
 
 No está excluido que la causa sea otra; lo que sí está medido es que el
 síntoma sobrevive a todo lo que se puede hacer sin tocar la placa.
+
+## Segunda sesión, 3-oct-2026 (tarde): la medida con la placa reiniciada
+
+Con la placa apagada y encendida, el instrumento se usó de verdad. Tres
+resultados, en orden de confianza.
+
+### 1. El instrumento dispara, y está calibrado
+
+Antes de leer nada en la ausencia de un disparo hay que probar que la sonda
+**puede** disparar. El control positivo es un atasco provocado a mano:
+`MM2S_DMACR` bit 0 (`RS`) a 0 **dejando `CTRL` bit 1 (`vector_source_ddr`) en
+alto**, así que `armed` sigue alto y `moved` cae a 0. Es reversible, es una
+escritura a un registro y no reprograma la PL.
+
+El ILA disparó en el instante exacto de la escritura, y la muestra del disparo
+trae `idle_cnt = 1048576` ciclos — 2²⁰ clavado, el umbral de hoy. El contador,
+el flanco de `stalled`, la calificación de almacenamiento y el decodificador de
+`tools/ila_p21_leer.py` quedan verificados contra silicio, no contra
+simulación.
+
+### 2. Con sondeo de 10 ms el MM2S deja huecos de más de 16,78 ms
+
+Montado como A/B, no como anécdota. Las dos patas corren el **mismo** bitstream
+de depuración, el mismo XSA y el mismo barrido
+(`tools/sweep_catalogo.py --settle 1`, ocho selecciones encadenadas por vuelta):
+
+| Firmware | Selecciones encadenadas | Disparos del ILA |
+|---|---|---|
+| sondeo 1 ms, tick 1 kHz | 80 (10 vueltas) | **ninguno** |
+| sondeo 10 ms, tick 100 Hz | 24 (3 vueltas) | **2**, a los 32 s y a los 16 s |
+
+Las dos patas no se pueden separar más: `pdMS_TO_TICKS(1)` vale 0 con el tick a
+100 Hz, así que «sondeo de 1 ms» y «tick de 1 kHz» son una sola configuración,
+no dos variables.
+
+Las dos capturas del lado de 10 ms dicen lo mismo, y refutan la predicción que
+se había escrito antes de medir:
+
+```
+ctrl : ddr_mode=1 timing_enable=1 timing_paced=1 moved=0 stalled=1
+s_vec: valid=0 ready=1
+vs_valid=0b000  vs_ready=0b111  overrun=0b000  truncated=0b000
+idle_cnt = 1048576 ciclos (16,8 ms)
+```
+
+`s_vec_valid = 0` con `s_vec_ready = 1` y `vs_ready = 0b111`: **la PL está
+esperando y el MM2S no entrega**. No hay un beat atascado que
+`vector_source` rechace — que era la hipótesis — sino hambre. El consumidor
+está listo; el productor no aparece. `overrun` y `truncated` en cero: nada se
+rompió, nada se perdió.
+
+### 3. Lo que esto NO cierra
+
+**P-21 tal como está escrito no reprodujo hoy en ninguna de las dos patas.**
+El hallazgo original es un atasco *permanente* que deja el MM2S sin
+recuperarse; lo medido hoy es un hueco *transitorio* de más de 16,78 ms del
+que la cadena sale sola — las 24 selecciones del lado de 10 ms terminaron
+todas con `config_ack error=ok` y un rayo de vuelta, con `dma_overruns=0` y
+`trig_gaps=0`.
+
+Así que lo honesto es: el sondeo de 10 ms **sí** produce huecos de
+alimentación medibles, y bajarlo a 1 ms los elimina; que eso sea además la
+causa del atasco permanente de P-21 es plausible y no está demostrado. Falta
+reproducir el atasco permanente con el instrumento armado.
+
+## Recargar solo el ELF por JTAG: tres trampas, las tres medidas
+
+Las dos patas del A/B se cargaron sin reprogramar la PL (el bitstream no
+cambia entre ellas), y ese camino resultó tener problemas propios que cuesta
+atribuir si no se conocen.
+
+**1. El AXI DMA sigue escribiendo en DDR con el A9 detenido.** Es un maestro
+independiente: `stop` para el núcleo, no el DMA. Lo que escribe cae encima de
+la imagen que `dow` acaba de cargar. El síntoma fue
+`drx_dma: el XSA no declara el AXI DMA`, o sea `XAxiDma_LookupConfig`
+devolviendo NULL — y se descartó que fuera un problema del BSP volcando la
+`XAxiDma_ConfigTable` de los dos ELF con `objdump`: **byte a byte idénticas y
+correctas** (`DeviceId = 0`, `BaseAddr = 0x40400000`). El fichero estaba bien;
+lo corrupto era la copia en DDR. Hay que poner `RS = 0` en los **dos**
+`DMACR` antes de `stop`.
+
+**2. Con los canales parados, el firmware nuevo no arranca.** No resetea el
+core —no puede: un solo `axi_dma` sirve MM2S y S2MM, así que `XAxiDma_Reset`
+se lleva por delante el otro canal—, así que `XAxiDma_BdRingStart` falla y el
+arranque dice `no se pudo encolar la primera pasada` / `Select devolvio 9`.
+Entre `dow` y `con`, con el A9 todavía detenido, hay que hacer el reset blando
+a mano: `MM2S_DMACR` bit 2.
+
+**3. Aun así no equivale a un arranque en frío.** Con las dos correcciones el
+firmware arranca y los rayos fluyen (`overrun=0x0 truncated=0x0
+dma_errors=0`), pero el lector de rayos cuenta **300 rayos/s contra ~220
+disparos/s** y `trig_gaps` sube uno por rayo con `d=0`. Un arranque en frío da
+228 y 228, y `trig_gaps = 0`.
+
+De ahí la regla: **una medida tras una recarga en caliente no es comparable
+con una de arranque en frío.** Las cifras del lado de 1 ms de la tabla de
+arriba son de arranque en frío por eso. El lado de 10 ms es de recarga en
+caliente, pero con los indicadores de un arranque limpio (`trig_gaps = 0`,
+`dma_overruns = 0`) antes de empezar a medir.

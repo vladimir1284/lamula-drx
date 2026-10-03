@@ -2337,9 +2337,10 @@ campo del troceado un bit, o dejar que el contador cuente con `armed` en bajo, h
 banco. Runbook completo, con la tabla de lectura de la captura, en
 [docs/implementacion/ila.md](../implementacion/ila.md).
 
-La parte no obvia es el disparo. El umbral de parada son 2²² ciclos ≈ 67 ms (tiene que estar por
-encima de los huecos legítimos de 10 ms del sondeo de `DrxStimulusTask`), y la ventana del ILA son
-4096 muestras = 65 µs: disparar con `stalled` y guardar todo dejaría el buffer entero dentro del
+La parte no obvia es el disparo. El umbral de parada son 2²⁰ ciclos ≈ 16,78 ms (tiene que estar por
+encima de los huecos legítimos del sondeo de `DrxStimulusTask`, que desde el 3-oct-2026 es de 1 ms;
+con los 10 ms originales hacía falta 2²² ≈ 67 ms y eso tapaba cualquier atasco más corto), y la
+ventana del ILA son 4096 muestras = 65 µs: disparar con `stalled` y guardar todo dejaría el buffer entero dentro del
 silencio. Con almacenamiento calificado por actividad (`C_EN_STRG_QUAL`), esas 4096 muestras son
 los últimos ciclos en que algo se movió.
 
@@ -2358,7 +2359,7 @@ la hipótesis antes de medirla cerraría P-21 por coincidencia.
 Las lecturas de `MM2S_DMASR` por JTAG de la primera sesión dieron patrones de bits implausibles
 (errores de SG en un canal que estaba entregando rayos) y no se usaron como evidencia.
 
-**La captura de P-21 sigue pendiente, por un bloqueo de hardware.** Al cargar el bitstream de
+**Bloqueo de hardware de la primera sesión, ya resuelto con un apagado y encendido.** Al cargar el bitstream de
 depuración apareció otro fallo delante: el AXI DMA no mueve nada en NINGUNO de los dos canales,
 con los dos corriendo (`RS = 1`), con descriptores pendientes y **sin un solo bit de error**. El
 ILA lo dejó claro en una sola foto de 4096 ciclos idénticos — `m_ray_valid = 1` con
@@ -2373,4 +2374,37 @@ una transacción colgada en HP0, del lado PS, donde no llegan ni la reconfigurac
 
 Lo que sí deja demostrado esa captura: el instrumento funciona, y la contrapresión de la cadena
 se comporta como está diseñada (`gate_valid = 0b111` contra `gate_ready = 0b000`, `overrun`
-subiendo). Cuando la placa vuelva, el armado correcto es `-trigger flanco`.
+subiendo).
+
+**La hipótesis está REFUTADA, y lo que se midió es otra cosa (3-oct-2026, tarde).** Con la placa
+reiniciada el instrumento se usó de verdad. Primero un control positivo —parar el MM2S a mano
+(`MM2S_DMACR` bit 0 a 0) dejando `ddr_mode` en alto— que disparó en el instante de la escritura
+con `idle_cnt = 1048576`, o sea 2²⁰ clavado: el contador, el flanco y el decodificador quedan
+verificados contra silicio. Después, el A/B del sondeo, mismo bitstream y mismo barrido
+(`--settle 1`) en las dos patas:
+
+| Firmware | Selecciones encadenadas | Disparos |
+|---|---|---|
+| sondeo 1 ms, tick 1 kHz | 80 | **ninguno** |
+| sondeo 10 ms, tick 100 Hz | 24 | **2**, a los 32 s y a los 16 s |
+
+Las dos capturas del lado de 10 ms dan `ddr_mode = 1`, `s_vec_valid = 0`, `s_vec_ready = 1`,
+`vs_ready = 0b111`, `overrun = 0b000`. La predicción exigía `s_vec_valid = 1` con
+`ddr_mode = 0`: **falsa**. No hay un beat atascado que `vector_source` rechace; hay hambre — el
+consumidor listo y el productor ausente durante más de 16,78 ms. El arreglo de `reap_pass()` que
+se había dejado sin tocar a propósito ya no tiene por qué ser la causa.
+
+**Lo que NO cierra esto, y por eso P-21 sigue abierto.** El atasco *permanente* del hallazgo
+original no reprodujo hoy en ninguna de las dos patas: las 24 selecciones del lado de 10 ms
+terminaron todas con `config_ack error=ok` y un rayo de vuelta, `dma_overruns=0`,
+`trig_gaps=0`. Lo medido es un hueco *transitorio* del que la cadena sale sola. Que el sondeo de
+10 ms produzca huecos de alimentación está demostrado; que sea además la causa del atasco
+permanente es plausible y no está demostrado.
+
+**Condición de cierre, actualizada:** reproducir el atasco **permanente** con el ILA armado. Si
+no vuelve a aparecer en una corrida larga con el sondeo de 1 ms, cerrar por consecuencia y
+decirlo así, como se hizo con [P-18](#p-18).
+
+Detalle, las tres trampas de recargar solo el ELF por JTAG y la regla de que una recarga en
+caliente no es comparable con un arranque en frío, en
+[docs/implementacion/ila.md](../implementacion/ila.md).

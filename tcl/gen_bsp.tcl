@@ -58,6 +58,16 @@ bsp setlib -name xilffs
 domain create -name freertos_domain -os freertos10_xilinx -proc ps7_cortexa9_0
 domain active freertos_domain
 bsp setlib -name lwip211
+# Tick de 1 kHz, no los 100 Hz por defecto de freertos10_xilinx (3-oct-2026).
+# `DrxStimulusTask` sondea el anillo del MM2S cada `DRX_STIMULUS_POLL_MS`, y a
+# 100 Hz el tick ya vale 10 ms: `pdMS_TO_TICKS(1)` se redondea a 0 y el retardo
+# se vuelve un `taskYIELD`. El umbral de `stalled` de la sonda del ILA tiene que
+# quedar por encima del hueco legitimo mas largo entre dos avances de muestra, y
+# ese hueco lo fija el sondeo. Con 10 ms de sondeo el umbral no podia bajar de
+# 2^22 ciclos (67 ms) sin arriesgar falsos positivos; con 1 ms baja a 2^20
+# (16,8 ms) con 10x de margen. Todo el firmware convierte con `pdMS_TO_TICKS` o
+# divide por `configTICK_RATE_HZ`, asi que ningun retardo cambia de duracion.
+bsp config tick_rate 1000
 bsp config api_mode SOCKET_API
 # DHCP APAGADO desde Z4.6 (2-oct-2026). Lo heredamos en true de la plantilla de
 # Vitis y funcionaba, pero el enlace del DRx es punto a punto contra el DSP: no
