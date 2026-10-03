@@ -20,10 +20,12 @@
 # ($XILINX_VITIS/data/embeddedsw/lib/sw_apps/freertos_lwip_echo_server/data/
 # freertos_lwip_echo_server.mss): api_mode=SOCKET_API (echo.c usa
 # lwip_socket/accept/read/write, no la RAW API por defecto de lwip211),
-# lwip_dhcp=true con caída a IP estática 192.168.1.10/24 si no hay servidor
-# DHCP (ver main.c, main_thread()) -- topología de red real todavía no
-# verificada (P-13), este es el default de Xilinx, no una decisión de
-# dominio tomada aquí.
+# lwip_dhcp=false con IP estática 192.168.1.10/24 (ver main.c, main_thread()).
+# Lo heredamos en true de la plantilla y se bajó en Z4.6, con el enlace ya
+# montado: el DRx habla punto a punto con el DSP (D-16), no hay servidor DHCP
+# y la espera no compraba nada. La dirección sigue siendo el default de
+# Xilinx, no una decisión de dominio tomada aquí -- la topología real sigue
+# sin verificar (P-13).
 #
 # `fw/src/app/` (nuevo, versionado, no generado) trae el firmware real:
 # `main.c` (adaptado de la plantilla: arranca drx_status_task antes que
@@ -57,8 +59,15 @@ domain create -name freertos_domain -os freertos10_xilinx -proc ps7_cortexa9_0
 domain active freertos_domain
 bsp setlib -name lwip211
 bsp config api_mode SOCKET_API
-bsp config lwip_dhcp true
-bsp config dhcp_does_arp_check true
+# DHCP APAGADO desde Z4.6 (2-oct-2026). Lo heredamos en true de la plantilla de
+# Vitis y funcionaba, pero el enlace del DRx es punto a punto contra el DSP: no
+# hay ni va a haber servidor DHCP, asi que cada arranque esperaba el timeout
+# completo antes de caer a la IP estatica ("Configuring default IP of
+# 192.168.1.10" en el log) y el puerto del contrato tardaba lo mismo en
+# escuchar. La direccion que se usa es la misma de siempre; lo unico que
+# desaparece es la espera.
+bsp config lwip_dhcp false
+bsp config dhcp_does_arp_check false
 bsp config ipv6_enable false
 bsp config pbuf_pool_size 2048
 
