@@ -2043,10 +2043,32 @@ junto a saltos grandes de `trig_count` (d = 4, 8, 14, 22, nunca d = 2) y nunca e
 apoya esa lectura. Es inferencia a partir de la correlación, no una captura del instante: no se ha
 mirado con ILA.
 
-**Frecuencia:** ~1 cada 400 000 rayos, unos 30 minutos a 223 rayos/s. Con ~47 rayos por radial hay
-del orden de 9 transiciones de lote por segundo, así que falla aproximadamente 1 de cada 17 000
-transiciones. Es una ventana estrecha, no un error sistemático — por eso Z4.4, que midió 1000 ms, no
-podía verlo.
+**El soak de 2 h (1 608 220 rayos) lo caracterizó mejor, y en dos puntos cambia la lectura.**
+Cuatro eventos:
+
+```
+idx=356735   bins=1002 batch=1  n_words=11067  esperadas=3006
+idx=904728   bins=1002 batch=1  n_words=11067  esperadas=3006
+idx=1140286  bins=3689 batch=0  n_words=3006   esperadas=11067   <- al revés
+idx=1434559  bins=1002 batch=1  n_words=11067  esperadas=3006
+```
+
+1. **Pasa en los dos sentidos** (`largos=3, cortos=1`), no solo «el gate va por detrás». Eso
+   descarta las explicaciones de retardo fijo en una dirección.
+2. **La carga útil es siempre un rayo COMPLETO del otro lote** —11067 o 3006 exactos, nunca un
+   número parcial—. Eso descarta truncamiento del DMA o un TLAST a destiempo: el gate entregó un
+   rayo entero y bien formado; lo único equivocado es la cabecera que lo acompaña.
+
+**Frecuencia:** 4 en 1,6 millones de rayos, ~1 cada 30 minutos a 223 rayos/s.
+
+**Y un fenómeno mayor alrededor, que probablemente sea el de verdad.** `trig_gaps` llegó a 20 en
+esas 2 h, y la deriva entre `trig_count` y `ray_index` creció en **212 disparos a lo largo de
+1 077 824 rayos**: unos 212 pulsos de PRF que no produjeron ningún rayo, en 20 ráfagas de ~11
+pulsos cada una (~50 ms). `ray_gaps` se mantuvo en **0** todo el tiempo, así que el empaquetador no
+perdió el hilo: sencillamente no hubo rayo que empaquetar para esos disparos. El rayo con la
+cabecera cambiada aparece en el borde de algunas de esas ráfagas, lo que sugiere que el desajuste
+de metadato es un **efecto secundario** de la ráfaga, no la causa. Qué detiene la producción de
+rayos durante ~50 ms, 20 veces en 2 horas, no está medido.
 
 **Lo que NO es:** corrupción de datos que llegue al DSP. `DrxRayFrame_Encode` compara `n_words`
 contra `bin_count × n_ch` con `!=` y se niega a enmarcar el rayo, precisamente para que un rayo de
