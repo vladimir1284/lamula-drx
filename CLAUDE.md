@@ -292,9 +292,29 @@ sin MDIO no hay autonegociación, y el mensaje que engaña (`unable to determine
 siquiera era el error: es ruido de un `switch` sin `break` en el port de lwIP de Xilinx, que lo
 imprime también cuando todo ha ido bien; (2) la tarea de diagnóstico se crea antes que el
 transporte, así que llamaba a `DrxTransport_Send` con el mutex sin crear y reventaba el
-`configASSERT` de FreeRTOS. **Lo que falta para cerrar ZM4:** el barrido del catálogo de estímulos
-contra rayos reales (bloqueado por [P-16](docs/alcance/pendientes.md#p-16)) y una corrida larga que
-mida si `sink_drops` se mantiene en 0. Detalle en `fases.md#z4`, entrada del 2-oct (noche).
+`configASSERT` de FreeRTOS. **La corrida larga que faltaba ya está medida, 3-oct-2026, y
+cierra dos cosas.** El sumidero de rayos llamaba a `lwip_send` DENTRO de la tarea de rayos:
+mientras el socket bloqueaba nadie reciclaba el anillo S2MM y el range-gate desbordaba — no era un
+problema de red, era bloquearse en ella. Con el pool de 4 tramas y la tarea `drx_tx` dedicada, en
+**3 085 111 rayos y 3 h 50 min**: `dma_overruns=0 trig_gaps=0 ray_gaps=0`, contra ~18 overruns y 20
+ráfagas de `trig_gaps` en 2 h antes del arreglo. **Y [P-18](docs/alcance/pendientes.md#p-18)
+desapareció con ellos** (`cortos=0 largos=0 enc_fail=0`; cabía esperar ~7,7 eventos, p ~ 4,5e-4):
+el desajuste de metadato en el borde de lote era efecto secundario de la parada, no un fallo
+independiente. Cerrado por consecuencia, no por ILA. Lo que sí se mueve ahora es `cola` (pool sin
+hueco), y es la contrapresión haciendo su trabajo: el rayo que no cabe cuesta un rayo, no una
+ráfaga de once. Queda como [P-19](docs/alcance/pendientes.md#p-19), abierto: 124 ppm durante una
+tormenta de WiFi del host contra **25 ppm** en una corrida de control con el host sano — la
+tormenta explica el exceso, no el suelo, y el suelo no está medido. **Lo que falta para cerrar ZM4:** solo el barrido
+del catálogo de estímulos contra rayos reales, bloqueado por
+[P-16](docs/alcance/pendientes.md#p-16). Detalle en `fases.md#z4`, entradas del 2-oct (noche) y
+del 3-oct.
+
+**Infraestructura de medida, 3-oct-2026.** `tools/net_drx_link.sh` deja el enlace cableado al DRx
+con perfil persistente (192.168.1.1/24 estática, `never-default`): el perfil por defecto de
+NetworkManager pedía DHCP en un enlace punto a punto y purgaba la dirección cada 45 s. Y
+`tools/soak.sh` guarda UART y log del cliente en `build/soak/<fecha>/`, no en `/tmp` — un reinicio
+de la máquina se llevó el soak 5 entero, y solo se recuperó porque la placa siguió encendida y los
+contadores vivían en su RAM.
 
 Lo que sí está hecho y verificado, además de lo de arriba:
 
@@ -311,7 +331,7 @@ Lo que sí está hecho y verificado, además de lo de arriba:
 1. `docs/alcance/contexto.md` — qué es y qué no es, y la relación con los proyectos DSP y RCP.
 2. `docs/alcance/decisiones.md` — las doce decisiones congeladas (D-01…D-12). Ninguna se revierte
    sin discutirlo.
-3. `docs/alcance/pendientes.md` — hallazgos abiertos (P-01…P-18), supuestos de entorno a verificar y
+3. `docs/alcance/pendientes.md` — hallazgos abiertos (P-01…P-19), supuestos de entorno a verificar y
    riesgos de la estrategia ZedBoard.
 4. `docs/implementacion/fases.md` — el plan de trabajo.
 5. `AGENTS.md` — las reglas que no se negocian, antes de escribir la primera línea de código.

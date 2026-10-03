@@ -1912,6 +1912,77 @@ Trabajo:
     **Lo que falta para cerrar ZM4:** barrer el catálogo de estímulos contra rayos reales —
     bloqueado por [P-16](../alcance/pendientes.md#p-16), no por el transporte.
 
+!!! success "3-oct-2026: el arreglo del transporte aguanta, y P-18 se va con los overruns"
+    El soak que tenía que decidirlo estuvo a punto de perderse: la máquina de desarrollo se
+    reinició a las 07:32 y `/tmp` se llevó por delante el log del cliente y la captura de UART
+    enteros. **La placa no se apagó**, así que los contadores acumulados seguían en su RAM y se
+    leyeron reconectando. Suerte, no diseño — ver más abajo lo que se hizo para que no vuelva a
+    depender de eso.
+
+    Con 3 h 50 min de marcha y **3 085 111 rayos**, contra el firmware de `954579c` (pool de 4
+    tramas + tarea `drx_tx` dedicada):
+
+    ```
+    BITE=0x0 uptime=13804s rayos=3085111 dma_overruns=0 ddc_overflows=0 ssa_underruns=0 last_error=0
+    rayo dma_err=0 resync=1 magic=0 n_ch=0 cortos=0 largos=0 trig_gaps=0(d=0) ray_gaps=0
+         sink_drops=151 enc_fail=0 snd_fail=1 cola=151
+    red  rayos_tx=1215129 descartados=152 status_tx=5290 tx=18759MB
+    ```
+
+    **La predicción se cumplió.** Antes del arreglo, 2 h con cliente daban ~18 overruns y 20
+    ráfagas de `trig_gaps` (~212 disparos sin rayo). Ahora `dma_overruns=0` y `trig_gaps=0`. El
+    sumidero llamaba a `lwip_send` dentro de la tarea de rayos: mientras el socket bloqueaba nadie
+    reciclaba el anillo S2MM y el range-gate desbordaba. No era un problema de red, era bloquearse
+    en ella.
+
+    **Y [P-18](../alcance/pendientes.md#p-18) desapareció con ellos, que es el resultado que de
+    verdad discrimina.** `cortos=0 largos=0 enc_fail=0`. A la tasa medida antes (4 eventos en
+    1 608 220 rayos) cabía esperar ~7,7 en esta población; salieron 0, p ~ 4,5e-4 bajo Poisson. El
+    conteo cubre los 3,08 M de rayos enteros y no solo los enviados, porque `short_rays`/`long_rays`
+    se cuentan en `drx_ray.c` sobre cada rayo que sale del DMA, haya cliente o no. El desajuste de
+    metadato en el borde de lote era un **efecto secundario de la parada**, no un fallo
+    independiente. Cerrado por consecuencia, no por ILA: la ventana puede seguir en el RTL, lo que
+    ya no existe es la condición que la hacía visible.
+
+    **Lo que sí se movió es un contador nuevo, y es la contrapresión haciendo su trabajo.**
+    `cola=151` (el pool sin hueco) y `snd_fail=1`, sobre 1 215 129 rayos enviados. Eso es el
+    diseño funcionando, no fallando: el rayo que no cabe se pierde en el pool y se cuenta, en vez
+    de parar el anillo y llevarse ~11 por ráfaga. Los 5440 s de cliente cuadran con los 5400 s del
+    soak, así que el cliente corrió entero.
+
+    **De dónde salen esos 151: la mitad de la respuesta, y la corrida de control que refuta la
+    otra mitad.** La WiFi de la máquina de desarrollo entró en una tormenta de desasociaciones a
+    las **05:00:13**, en mitad del soak (04:11 → 05:41) — 816 eventos
+    `reason=4 locally_generated=1` con señal de −49 dBm y `rtw_8821ce: failed to send h2c command`.
+    La lectura era que un host ocupado no vacía el socket, la ventana TCP se cierra y la tarea de
+    TX bloquea. Puesta a prueba con 15 min de control y la WiFi sana (1 desconexión en todo el
+    arranque, 0 `h2c`, carga 0,36):
+
+    | | rayos enviados | descartes en el pool | tasa |
+    |---|---|---|---|
+    | soak con tormenta de WiFi | 1 215 129 | 151 | 124 ppm |
+    | control con host sano | 201 082 | 5 | **25 ppm** |
+
+    La tormenta explica el exceso, **no el suelo**. Y los 5 descartes del control dieron **un solo**
+    hueco de `seq`: fueron consecutivos, ~22 ms en los que nadie vació el pool. Eso es
+    [P-19](../alcance/pendientes.md#p-19), hallazgo nuevo y abierto. Lo que sí se sostiene es que
+    la tubería de rayos no se detiene: `dma_overruns=0` y `trig_gaps=0` también en el control.
+
+    **Dos cosas de infraestructura, para que esto deje de depender de la suerte:**
+
+    1. `tools/net_drx_link.sh` — el enlace cableado al DRx no tenía configuración persistente. El
+       perfil que NetworkManager crea solo para un interfaz nuevo pide DHCP, y en un enlace punto
+       a punto ([D-16](../alcance/decisiones.md#d-16)) no hay servidor: bucle eterno de 45 s
+       (`ip-config -> failed (reason 'ip-config-unavailable')`) que **purga la dirección en cada
+       fallo**. Una `ip addr add` a mano no sobrevive ni a eso ni a un reinicio. Ahora hay un
+       perfil `drx-zedboard` con 192.168.1.1/24 estática, `never-default`, sin DNS e IPv6 apagado.
+    2. `tools/soak.sh` — captura UART y log del cliente en `build/soak/<fecha>/`, fuera de `/tmp`,
+       con la UART abierta antes del cliente y cerrada después, para que la última línea de
+       contadores quede grabada con el cliente ya desconectado. Comprueba además que nadie más
+       tenga el tty abierto: dos lectores entrelazan los bytes y la captura sale ilegible, que ya
+       se confundió una vez con un problema de baudios.
+
+
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
 Trabajo:

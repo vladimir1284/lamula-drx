@@ -2021,8 +2021,9 @@ de latencia de interrupción, o se declara el presupuesto y se verifica en el so
 
 ### P-18 · En el borde de lote, un rayo puede llevar la cabecera de uno y la carga útil del otro { #p-18 }
 
-**Estado:** abierto, encontrado 3-oct-2026 (soak de Z4.6) · **Dueño:** Z4.6 o Z5 · **Bloquea:**
-nada hoy — el rayo se descarta y el flujo sigue en sincronía. Sí la cifra de rayos entregados.
+**Estado:** CERRADO por consecuencia 3-oct-2026, encontrado el mismo día (soak de Z4.6) ·
+**Dueño:** Z4.6 · **Bloquea:** nada. Desapareció al sacar `lwip_send` de la tarea de rayos; la
+evidencia y la condición de reapertura, al final de la entrada.
 
 Medido en placa, con las cifras del rayo que lo provocó:
 
@@ -2082,3 +2083,70 @@ se marque y se entregue con su longitud real en vez de descartarse. Lo primero e
 segundo solo si lo primero resulta caro. Antes de elegir hace falta mirar el borde con un ILA, que
 es lo único que convierte la correlación de arriba en una captura.
 
+**3-oct-2026: desaparece al sacar la red de la tarea de rayos. Era el efecto secundario, y la
+ráfaga era la causa.** La sospecha del párrafo anterior —que el desajuste de metadato cuelga de la
+ráfaga de ~50 ms y no al revés— quedó medida al corregir lo que paraba la producción: el sumidero
+de rayos llamaba a `lwip_send` dentro de la tarea de rayos, así que mientras el socket bloqueaba
+nadie reciclaba el anillo S2MM y el range-gate desbordaba. Con el pool de tramas y la tarea de TX
+dedicada (`954579c`), en **3 085 111 rayos y 3 h 50 min**:
+
+```
+dma_overruns=0 trig_gaps=0(d=0) ray_gaps=0 cortos=0 largos=0 enc_fail=0
+```
+
+A la tasa medida antes (4 en 1 608 220) cabía esperar **~7,7 eventos** en esa población, y salieron
+**0**. Bajo Poisson eso es p ~ 4,5e-4, así que no es una corrida afortunada. Y el conteo cubre los
+3,08 M de rayos enteros, no solo los que se enviaron: `short_rays`/`long_rays` se cuentan en
+`drx_ray.c` sobre cada rayo que sale del DMA, haya cliente o no.
+
+**Estado: cerrado por consecuencia**, no por haber mirado el borde con un ILA. La ventana que la
+hipótesis describía puede seguir existiendo en el RTL; lo que ya no existe es la condición que la
+hacía visible. Se reabre si `largos` o `cortos` vuelven a moverse con el transporte sano — y esa es
+toda la vigilancia que necesita.
+
+
+### P-19 · El pool de transmisión pierde ~25 rayos por millón con el host sano { #p-19 }
+
+**Estado:** abierto, encontrado 3-oct-2026 · **Dueño:** Z4.6 o Z5 · **Bloquea:** nada hoy — la
+tubería de rayos no se detiene y el DSP ve el hueco de `seq`. Sí la cifra de rayos entregados.
+
+Es el residuo que queda tras sacar `lwip_send` de la tarea de rayos ([P-18](#p-18), `954579c`). El
+sumidero toma un hueco del pool de 4 tramas sin bloquear; si no hay, cuenta `queue_full` y descarta.
+Eso es deliberado: vale más perder un rayo que parar el anillo S2MM. Lo que no está medido es por
+qué el pool se queda sin hueco con todo sano.
+
+**La medida, y lo que refuta.** Durante el soak de 3 h 50 min la máquina de desarrollo sufrió una
+tormenta de desasociaciones de WiFi (816 eventos desde las 05:00:13), y la lectura de partida fue
+que un host ocupado no vacía el socket, la ventana TCP se cierra y la tarea de TX bloquea.
+Corrida de control de 15 min con la WiFi sana —1 desconexión en todo el arranque, 0
+`failed to send h2c command`, carga 0,36—:
+
+| | rayos enviados | descartes en el pool | tasa |
+|---|---|---|---|
+| soak con tormenta de WiFi | 1 215 129 | 151 | 124 ppm |
+| control con host sano | 201 082 | 5 | **25 ppm** |
+
+La tormenta explica el **exceso**, no el **suelo**. La hipótesis del host ocupado queda en pie
+para el factor 5, y refutada como explicación completa.
+
+**Forma del evento:** los 5 descartes produjeron **un solo** hueco de `seq` en el cliente, o sea
+fueron consecutivos. Con 4 huecos de pool y 223,4 rayos/s, perder 5 seguidos son ~22 ms en los que
+nadie vació el pool. No es una pérdida dispersa, es una parada corta y aislada: una en 15 minutos.
+
+**Candidatos, por verosimilitud, ninguno medido:**
+
+1. **Parada en el host.** `tools/mock_dsp.py` es Python y reensambla ~44 kB por rayo; una pausa de
+   recolección de basura de decenas de ms deja de vaciar el socket el tiempo justo. Es el
+   candidato barato y el primero que hay que descartar, porque si es esto no hay nada que
+   arreglar en la placa.
+2. **Agotamiento momentáneo de pbufs en lwIP.** El pool de la pila se queda sin buffers y `send`
+   bloquea hasta que los ACK liberan.
+3. **La tarea de diagnóstico tomando el mutex de TX** para su `status` de 40 B en el peor momento.
+   Encaja mal con la frecuencia observada (1 evento en 15 min contra 1 `status` por segundo), pero
+   no está descartado.
+
+**Condición de cierre:** distinguir entre (1) y el resto. Un cliente que solo haga `recv` a un
+buffer fijo, sin reensamblar ni asignar memoria, durante el mismo tiempo: si los descartes
+desaparecen, era el host y P-19 se cierra como artefacto de medida. Si se mantienen, hay que mirar
+los contadores de lwIP. Hasta entonces, **no se debe citar 223,4 rayos/s como tasa entregada sin
+decir que 25 de cada millón se pierden en el pool.**
