@@ -8,8 +8,8 @@ entero del bus. Esto lo descompone en los nombres de `drx_debug_pkg` y saca
 las dos cosas que contestan P-21:
 
 1. **La muestra del disparo**, que es el estado congelado de la cadena cuando
-   ya lleva 67 ms sin mover una muestra. Quién tiene `valid` alto y `ready`
-   bajo en ese ciclo es la respuesta.
+   ya lleva 16,78 ms sin mover una muestra (2**20 ciclos a 62,5 MHz). Quién
+   tiene `valid` alto y `ready` bajo en ese ciclo es la respuesta.
 2. **El final del tramo con actividad**, para ver cómo se llegó ahí.
 
 No decide nada por su cuenta sobre la causa: imprime el estado y contrasta la
