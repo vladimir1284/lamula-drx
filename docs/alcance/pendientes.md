@@ -2293,8 +2293,10 @@ ya aplica `apply_at_seq` entre rayos en `drx_ray.c` es donde va.
 
 ### P-21 · El MM2S se atasca tras unas pocas selecciones de estímulo { #p-21 }
 
-**Estado:** abierto, encontrado 3-oct-2026 (primer barrido del catálogo) · **Dueño:** Z4.6 ·
-**Bloquea:** el barrido del catálogo, junto con [P-16](#p-16). Independiente de él.
+**Estado:** **aparcado** 4-oct-2026, no cerrado · encontrado 3-oct-2026 (primer barrido del
+catálogo) · **Dueño:** Z4.6 · **Bloquea:** nada hoy. El barrido del catálogo está bloqueado por
+[P-16](#p-16) de todas formas, y el camino MM2S del estímulo puede dejar de existir — ver el
+cierre de esta entrada.
 
 Encadenando `test_stimulus_select`, el canal MMSS del AXI DMA deja de aceptar pasadas:
 
@@ -2401,9 +2403,77 @@ terminaron todas con `config_ack error=ok` y un rayo de vuelta, `dma_overruns=0`
 10 ms produzca huecos de alimentación está demostrado; que sea además la causa del atasco
 permanente es plausible y no está demostrado.
 
-**Condición de cierre, actualizada:** reproducir el atasco **permanente** con el ILA armado. Si
-no vuelve a aparecer en una corrida larga con el sondeo de 1 ms, cerrar por consecuencia y
-decirlo así, como se hizo con [P-18](#p-18).
+**Condición de cierre, segunda versión (3-oct-2026):** reproducir el atasco **permanente** con el
+ILA armado. Si no vuelve a aparecer en una corrida larga con el sondeo de 1 ms, cerrar por
+consecuencia y decirlo así, como se hizo con [P-18](#p-18).
+
+**El atasco permanente SÍ reprodujo, tres veces, y lo que destapa es que hay dos modos de fallo
+distintos (3 y 4 de octubre de 2026).** Tres corridas desatendidas con el mismo bitstream, el
+mismo firmware de 1 ms y el mismo orquestador `tools/noche_p21.sh`, cada una sobre una placa
+recién encendida con `SW8` — el atasco es permanente por diseño del firmware, así que una corrida
+equivale exactamente a un atasco:
+
+| | corrida 1 | corrida 2 | corrida 3 |
+|---|---|---|---|
+| tiempo hasta el atasco | 7 min 42 s | 56 min 18 s | 62 min 14 s |
+| selecciones encadenadas | 323 | 2837 | 3141 |
+| pasadas del catálogo | 41 | 354 | 392 |
+| líneas precursoras | 7 | 0 | 0 |
+| disparos naturales del ILA | 4 | 0 | 0 |
+
+Las corridas 2 y 3 coinciden entre sí dentro del 10 % y sus capturas son idénticas columna por
+columna. La corrida 1 es ocho veces más corta y su estado final es el opuesto. **No son muestras
+de la misma distribución**, y promediarlas daría una cola larga que el dato no respalda.
+
+- **Modo A, corrida 1 — la cadena se queda llena y bloqueada.** `m_ray_valid = 1` con
+  `m_ray_ready = 0` (el S2MM no acepta), `gate_valid = 0b111` contra `gate_ready = 0b000`,
+  `idle_cnt` saturado en `0xffffff`. Los cuatro disparos naturales llevan calificación de
+  almacenamiento sobre `moved`, y en los 4095 avances de muestra que guardan, `ddr_mode` vale 0
+  **todas las veces**. De ahí la inferencia, fuerte: en esa corrida la cadena no avanzó ni una
+  sola muestra con `ddr_mode = 1` — el camino DDR no entregó nada nunca, en vez de entregar unas
+  cuantas y atascarse después.
+- **Modo B, corridas 2 y 3 — la cadena se queda vacía y drenada.** El inverso exacto:
+  `m_ray_valid = 0` con `m_ray_ready = 1` (el S2MM sí acepta y no hay nada que darle),
+  `gate_valid = 0b000`, `s_vec_valid = 0` con `s_vec_ready = 1`. No hay contrapresión desde el
+  consumidor; no llega dato desde el MM2S.
+
+**El instrumento no sirve tal como está, y esto es lo primero que hay que arreglar si se retoma.**
+`stalled` no disparó ni una vez en el modo B: 118 minutos acumulados de cadena parada entre las
+corridas 2 y 3, y cero flancos. Las únicas capturas de ese modo son las que forzó el vigía con
+`run_hw_ila -trigger_now`. Sin él no habría quedado nada.
+
+**Incógnita viva: algo resetea `idle_cnt` cada pocas décimas de milisegundo durante el atasco del
+modo B.** En las fotos forzadas el contador vale 11223 y 20864 ciclos, tomadas entre 45 y 49
+segundos *después* del mensaje de atasco; sin reseteos llevaría del orden de 3·10⁹ ciclos y
+estaría saturado, como en el modo A. `drx_debug_probe.sv` solo resetea con `!armed` o `moved`, y
+dentro de las ventanas capturadas `ddr_mode` vale 1 y `moved` vale 0. Quedan dos explicaciones, y
+el instrumento actual no las distingue: o el MM2S entrega una muestra suelta de vez en cuando —o
+sea el atasco es un goteo y no una parálisis, lo que explicaría además por qué `stalled` nunca
+llega a 2²⁰— o `ddr_mode` cae durante algún ciclo. La primera explica las dos observaciones a la
+vez, pero con dos puntos de dato es hipótesis, no hallazgo.
+
+**La inversión de causalidad NO se escribe como hallazgo.** Que el S2MM deje de aceptar antes de
+que el MM2S se quede sin alimentar descansa sobre la corrida 1 sola, y las corridas 2 y 3 la
+contradicen. El modo A no volvió a aparecer en dos horas de intento.
+
+Las capturas de las tres corridas están versionadas en
+[docs/implementacion/evidencia/p-21/](../implementacion/evidencia/p-21/resumen.md), con la lectura
+completa. El arnés (`tools/noche_p21.sh`, `tools/cargar_dbg.sh`, `tools/triaje_p21.sh`,
+`tools/ila_p21.tcl`, `tools/ila_p21_leer.py`) se queda en el repositorio, listo para volver a
+correr.
+
+**Por qué se aparca en vez de cerrarse, 4-oct-2026.** El estímulo va a pasar a cargarse en BRAM en
+tiempo de ejecución y a alimentar el DDC desde ahí, con lo que el MM2S deja de estar en el camino
+de datos y no se le encuentra hoy otro uso. Un bug que nadie puede provocar no merece más noches
+de medida. Pero no está arreglado ni entendido: no se sabe qué para la cadena en ninguno de los
+dos modos. **Si el MM2S vuelve al diseño por cualquier motivo, P-21 vuelve con él**, y entonces
+esta entrada y las capturas son el punto de partida, no el final.
+
+**Lo que haría falta para retomarlo**, en este orden: cambiar la condición de disparo del ILA
+—`stalled` con umbral 2²⁰ no la ve—, discriminar entre el goteo del MM2S y la caída de `ddr_mode`
+instrumentando las dos, y solo entonces volver a correr. El arreglo pendiente de `reap_pass()`
+(la reaparición parcial de descriptores) sigue sin aplicarse a propósito: la refutación de la
+hipótesis de partida lo debilita como causa, pero no lo descarta.
 
 Detalle, las tres trampas de recargar solo el ELF por JTAG y la regla de que una recarga en
 caliente no es comparable con un arranque en frío, en

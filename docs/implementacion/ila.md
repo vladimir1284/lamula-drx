@@ -351,3 +351,68 @@ con una de arranque en frío.** Las cifras del lado de 1 ms de la tabla de
 arriba son de arranque en frío por eso. El lado de 10 ms es de recarga en
 caliente, pero con los indicadores de un arranque limpio (`trig_gaps = 0`,
 `dma_overruns = 0`) antes de empezar a medir.
+
+## Tres corridas desatendidas, 3 y 4 de octubre de 2026: el atasco permanente reproduce, y el instrumento no lo ve
+
+El atasco permanente reprodujo tres veces, cada una sobre una placa recién
+encendida con `SW8`. Los números, los dos modos de fallo que salieron y las
+capturas están en
+[docs/implementacion/evidencia/p-21/](evidencia/p-21/resumen.md) y en
+[P-21](../alcance/pendientes.md#p-21). Lo que sigue es solo lo que afecta al
+instrumento, que es lo que esta página documenta.
+
+### `stalled` con umbral 2²⁰ no dispara en el modo de fallo más frecuente
+
+Dos de las tres corridas terminaron con la cadena vacía y drenada
+(`s_vec_valid = 0` con `s_vec_ready = 1`, `m_ray_valid = 0` con
+`m_ray_ready = 1`, `gate_valid = 0b000`). En ese estado **el flanco de
+`stalled` no subió ni una vez**, en 118 minutos acumulados de cadena parada.
+Las únicas capturas de ese modo son las que forzó el vigía con
+`run_hw_ila -trigger_now`. Sin esa red de seguridad la noche no habría dejado
+nada.
+
+El motivo está medido aunque no explicado: `idle_cnt` se resetea cada pocas
+décimas de milisegundo durante ese atasco, así que nunca se acerca a los 2²⁰
+ciclos del umbral. En las fotos forzadas el contador vale 11223 y 20864
+ciclos, tomadas entre 45 y 49 segundos *después* del mensaje de atasco; sin
+reseteos llevaría del orden de 3·10⁹ ciclos y estaría saturado en `0xffffff`
+—que es exactamente lo que se ve en la corrida que terminó en el otro modo—.
+Las dos únicas condiciones de reseteo de `drx_debug_probe.sv` son `!armed` y
+`moved`, y dentro de las ventanas capturadas `ddr_mode` vale 1 y `moved` vale
+0 en las 4096 muestras. O sea que el reseteo cae fuera de la ventana y el
+instrumento, tal como está, no distingue entre un goteo del MM2S y una caída
+momentánea de `ddr_mode`.
+
+**Consecuencia para quien retome esto:** la condición de disparo hay que
+cambiarla antes de volver a correr una noche. Subir el umbral no sirve —si
+algo resetea el contador, no llega nunca—; hay que disparar sobre otra cosa, y
+hay que instrumentar las dos explicaciones del reseteo para poder separarlas.
+
+### Leer las capturas con calificación de almacenamiento
+
+`tools/ila_p21_leer.py` imprime dos muestras. En una captura forzada eso basta,
+porque todas las columnas menos `idle_cnt` son constantes. En una captura con
+calificación de almacenamiento **no basta**, y confiar en esas dos líneas
+cuesta el hallazgo: en los cuatro disparos naturales de la primera corrida, las
+4095 muestras guardadas tienen `ddr_mode = 0` —la cadena no avanzó ni una
+muestra con el modo DDR en alto— y eso solo se ve mirando la distribución de
+las 4096 filas.
+
+### El volcado de los registros del AXI DMA por JTAG sobre la cadena congelada es basura
+
+No es una lectura con ruido: son valores imposibles. Los punteros de
+descriptor de scatter-gather tienen que estar alineados a 64 bytes, o sea con
+los 6 bits bajos a cero, y tres de los cuatro leídos no lo cumplen:
+
+```
+MM2S_CURDESC  = 0x02345920    no alineado
+MM2S_TAILDESC = 0x02346048    no alineado
+S2MM_TAILDESC = 0x02321216    no alineado
+S2MM_CURDESC  = 0x02321600    alineado
+```
+
+Es el mismo veredicto que ya se había anotado para el
+`MM2S_DMASR = 0x00086281` de la primera sesión. Con la cadena parada, **el ILA
+es el único instrumento fiable sobre esta placa**: cualquier `mrd` sobre los
+registros del DMA en ese estado hay que descartarlo como evidencia, no
+interpretarlo.
