@@ -67,24 +67,12 @@ module drx_top_tieoff
   logic        unused_ray_tie;
   assign unused_ray_tie = &{1'b0, m_ray_valid_tie, m_ray_last_tie, m_ray_data_tie};
 
-  // Z4.3: sin PS7 tampoco hay AXI DMA MM2S que alimente el modo
-  // Throttled(DDR), asi que la entrada se ata inerte -- `s_vec_valid` en bajo
-  // y nada mas. No es una limitacion de este flujo: CTRL bit 1 vale 0 tras
-  // reset y aqui NADIE puede escribirlo (el AXI-Lite esta atado a valores
-  // inertes, ver arriba), asi que `vector_source` se queda en BRAM-loop para
-  // siempre y este puerto no se mira nunca. `s_vec_ready` va al bote de lint
-  // por el mismo motivo que las salidas de rayo.
-  logic s_vec_ready_tie;
-  logic unused_vec_tie;
-  assign unused_vec_tie = &{1'b0, s_vec_ready_tie};
-
-  // P-21: el bus de la sonda de depuracion solo tiene consumidor en la build
-  // de depuracion con PS7 (`rtl/drx_zynq_top.sv` con DRX_DEBUG_ILA). Aqui va
-  // al mismo bote de lint que el resto -- y con el bote, no sin conectar,
-  // porque `-Wall` trata un puerto de salida vacio como PINCONNECTEMPTY.
-  logic [drx_debug_pkg::DbgWidth-1:0] dbg_bus_tie;
-  logic unused_dbg_tie;
-  assign unused_dbg_tie = &{1'b0, dbg_bus_tie};
+  // Sin PS7 nadie escribe el AXI-Lite (esta atado a valores inertes, ver
+  // arriba), asi que `vector_load` vale 0 tras reset y para siempre:
+  // `vector_source` reproduce el bucle que `$readmemh` dejo en el bitstream y
+  // la ventana de carga del mapa v11 queda inerte. Es exactamente lo que este
+  // flujo necesita -- un datapath completo que se pueda sintetizar y medir
+  // sin un procesador delante.
 
   drx_top #(
       .HEARTBEAT_DIV(HEARTBEAT_DIV),
@@ -116,14 +104,7 @@ module drx_top_tieoff
       .m_ray_valid(m_ray_valid_tie),
       .m_ray_ready(1'b1),
       .m_ray_data (m_ray_data_tie),
-      .m_ray_last (m_ray_last_tie),
-
-      .s_vec_valid(1'b0),
-      .s_vec_ready(s_vec_ready_tie),
-      .s_vec_data ('0),
-      .s_vec_last (1'b0),
-
-      .dbg_bus(dbg_bus_tie)
+      .m_ray_last (m_ray_last_tie)
   );
 
 endmodule

@@ -11,7 +11,7 @@
 package drx_params_pkg;
 
   localparam int SCHEMA_VERSION = 1;
-  localparam string PARAMS_SHA256 = "1fba80a42d0be1a4cd8bf42c15280452cb7453f7ac01742921908221ba11b955";
+  localparam string PARAMS_SHA256 = "67de14538bbaf7843aceb2d102a246266d167b9b5807cfa004169fe23df6a5ad";
 
   // -------------------------------------------------------------------------
   // Plataforma seleccionada. Se sobreescribe en la línea de comandos de síntesis
@@ -54,6 +54,13 @@ package drx_params_pkg;
   localparam int N_CH_TOP = 3;
   localparam int N_TX_BURST_CH = 1;
   localparam int N_TRIGGERS = 4;
+
+  // Reproductor de estímulo: capacidad física del banco de BRAM contra la
+  // longitud que se reproduce en bucle. VECTOR_LOOP_LEN es el valor de reset
+  // de VEC_LEN (mapa v11) y tiene que ser múltiplo de IF_NORM_DEN;
+  // tools/gen_params.py comprueba las dos cosas.
+  localparam int VECTOR_BRAM_DEPTH = 8192;
+  localparam int VECTOR_LOOP_LEN = 4000;
 
   localparam int SAMPLE_BITS = 16;
   localparam int IQ_BITS = 16;

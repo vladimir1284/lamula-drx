@@ -150,29 +150,7 @@ module drx_top
     output logic                 m_ray_valid,
     input  logic                 m_ray_ready,
     output logic [2*IQ_BITS-1:0] m_ray_data,
-    output logic                 m_ray_last,
-
-    // Z4.3: AXI4-Stream de ENTRADA del modo Throttled(DDR) de `vector_source`
-    // -- 16 bits, una muestra por beat, canales en orden ascendente (ver la
-    // cabecera de `vector_source.sv`). Quien instancie este top lo trae de un
-    // AXI DMA MM2S real (`rtl/drx_zynq_top.sv`) o lo ata inerte
-    // (`rtl/drx_top_tieoff.sv`). Con CTRL bit 1 en 0 -- el valor de reset --
-    // este puerto no se mira, asi que el flujo sin PS7 sigue funcionando
-    // exactamente igual que antes de Z4.3.
-    input  logic                          s_vec_valid,
-    output logic                          s_vec_ready,
-    input  logic signed [SAMPLE_BITS-1:0] s_vec_data,
-    input  logic                          s_vec_last,
-
-    // P-21 (3-oct-2026): bus de depuracion con todos los handshakes de la
-    // cadena, de `s_vec_*` a `m_ray_*`, mas el contador de ciclos sin avance
-    // de muestra. NO es un BITE ni entra en el mapa de registros: es lo que
-    // un ILA engancha en la build de depuracion para contestar DONDE se para
-    // la cadena (ver `rtl/drx_debug_probe.sv` y `docs/implementacion/ila.md`).
-    // Sin consumidor -- `rtl/drx_top_tieoff.sv` y la build normal de
-    // `rtl/drx_zynq_top.sv` lo dejan en el bote de lint -- la sintesis se
-    // lleva la sonda entera salvo el contador.
-    output logic [drx_debug_pkg::DbgWidth-1:0] dbg_bus
+    output logic                 m_ray_last
 );
 
   logic                      gate_valid  [N_CH];
@@ -196,7 +174,17 @@ module drx_top
 
   // Z4.4: TRIG_COUNT sacado a fabric para la cabecera en banda del rayo.
   logic [31:0] timing_trig_count;
-  logic vector_source_ddr;
+
+  // v11: ventana de carga del vector de estimulo, de `drx_axil_regs` a
+  // `vector_source`. `VecAddrBits` sale de VECTOR_BRAM_DEPTH en los dos
+  // extremos, asi que no hay un ancho escrito a mano en ningun sitio.
+  localparam int VecAddrBits = $clog2(VECTOR_BRAM_DEPTH);
+  logic                   vector_load;
+  logic                   vec_we;
+  logic [VecAddrBits-1:0] vec_addr;
+  logic [            2:0] vec_bank;
+  logic [           15:0] vec_data;
+  logic [VecAddrBits-1:0] vec_len;
 
   // Actuación AFC (Z4.5): NCO_PINC del mapa v9 hacia el canal S_AXIS_CONFIG de
   // los N_CH NCO del DDC. Una sola palabra para los N_CH: todos ven el mismo IF.
@@ -293,7 +281,14 @@ module drx_top
       .s_axi_rready (s_axi_rready),
 
       .mode_coarse(mode_coarse),
-      .vector_source_ddr(vector_source_ddr),
+
+      .vector_load(vector_load),
+      .vec_we     (vec_we),
+      .vec_addr   (vec_addr),
+      .vec_bank   (vec_bank),
+      .vec_data   (vec_data),
+      .vec_len    (vec_len),
+
       .nco_pinc(nco_pinc),
       .nco_pinc_we(nco_pinc_we),
 
@@ -396,17 +391,18 @@ module drx_top
 
   vector_source #(
       .N_CH(N_CH),
+      .DEPTH(VECTOR_BRAM_DEPTH),
       .INIT_FILE(VectorSourceInitFile)
   ) u_vector_source (
       .clk  (clk),
       .rst_n(rst_n),
 
-      .ddr_mode(vector_source_ddr),
-
-      .s_axis_valid(s_vec_valid),
-      .s_axis_ready(s_vec_ready),
-      .s_axis_data (s_vec_data),
-      .s_axis_last (s_vec_last),
+      .vec_load(vector_load),
+      .vec_we  (vec_we),
+      .vec_addr(vec_addr),
+      .vec_bank(vec_bank),
+      .vec_data(signed'(vec_data)),
+      .vec_len (vec_len),
 
       .ready(vs_ready),
       .valid(vs_valid),
@@ -560,53 +556,13 @@ module drx_top
       .m_last (m_ray_last)
   );
 
-  // --- Sonda de depuracion (P-21) -------------------------------------------
-  //
-  // Empaquetado de los tres handshakes que `drx_range_gate_quad_top`/
-  // `drx_ddc_quad_top` llevan como arrays sin empaquetar. Mismo motivo y
-  // mismo patron que los `always_comb` de arriba: la sonda, como
-  // `drx_axil_regs`, trabaja con vectores empaquetados.
-  logic [N_CH-1:0] ddc_valid_pk;
-  logic [N_CH-1:0] gate_valid_pk;
-  logic [N_CH-1:0] gate_ready_pk;
-  always_comb begin
-    for (int c = 0; c < N_CH; c++) begin
-      ddc_valid_pk[c]  = ddc_valid[c];
-      gate_valid_pk[c] = gate_valid[c];
-      gate_ready_pk[c] = gate_ready[c];
-    end
-  end
-
-  drx_debug_probe u_debug_probe (
-      .clk  (clk),
-      .rst_n(rst_n),
-
-      // La sonda decide sola cuándo contar -- no basta con `ddr_mode`, ver
-      // su cabecera.
-      .ddr_mode(vector_source_ddr),
-
-      .s_vec_valid(s_vec_valid),
-      .s_vec_ready(s_vec_ready),
-      .s_vec_last (s_vec_last),
-
-      .m_ray_valid(m_ray_valid),
-      .m_ray_ready(m_ray_ready),
-      .m_ray_last (m_ray_last),
-
-      .timing_enable(timing_enable),
-      .timing_paced (timing_paced),
-      .pulse_trig   (timing_pulse_trig),
-
-      .vs_valid      (vs_valid_pk),
-      .vs_ready      (vs_ready_pk),
-      .ddc_valid     (ddc_valid_pk),
-      .gate_valid    (gate_valid_pk),
-      .gate_ready    (gate_ready_pk),
-      .gate_overrun  (gate_overrun_packed),
-      .gate_truncated(gate_ray_truncated_packed),
-
-      .dbg_bus(dbg_bus)
-  );
+  // La sonda de depuracion de P-21 (`rtl/drx_debug_probe.sv`) estaba
+  // instanciada aqui hasta el 4-oct-2026. Se retiro con el modo
+  // Throttled(DDR): media el camino `s_vec_*` -> `m_ray_*` para localizar el
+  // atasco del MM2S, y ese camino ya no existe. El modulo se queda en el
+  // arbol sin instanciar, y la evidencia de las tres corridas esta en
+  // `docs/implementacion/evidencia/p-21/`. P-21 sigue aparcado, no cerrado:
+  // si el MM2S vuelve, la sonda vuelve con el.
 
 endmodule : drx_top
 

@@ -1,13 +1,10 @@
-// `vector_source` — reproductor de vectores en modo BRAM-loop (D-01, SSA).
+// `vector_source` — reproductor de vectores desde BRAM, cargable en tiempo de
+// ejecución (D-01, SSA).
 //
-// Primer entregable de Z1 sin escribir hasta hoy (ver la investigación que lo
-// encontró): `jesd204b_source` (ZU9) y `vector_source` (esta placa y la ZU9)
-// son las dos implementaciones intercambiables del interfaz SSA
+// `jesd204b_source` (ZU9) y `vector_source` (esta placa y la ZU9) son las dos
+// implementaciones intercambiables del interfaz SSA
 // (`docs/plataforma/fuente-de-muestras.md`); nada aguas abajo distingue cuál
-// está activa. De los tres modos documentados (RT, BRAM-loop, Throttled) este
-// módulo implementa SOLO BRAM-loop: una forma de onda corta y repetitiva
-// precargada en BRAM, sin DDR ni DMA de por medio — el camino más simple para
-// tener ALGO real que alimente la cadena DDC en un P&R real.
+// está activa.
 //
 // Puertos ya en arrays por canal, sin pasar por el TDATA entrelazado de
 // `drx_ssa_pkg.sv` (`SSA_N_CH` = Rx + Tx burst): igual que documenta la
@@ -18,69 +15,53 @@
 // principio.
 //
 // Memoria: un array SystemVerilog por canal (NO un único array 2D indexado
-// por señal variable) con puerto de lectura REGISTRADO — el mismo patrón, por
-// la misma razón, que ya fijó `drx_range_gate.sv`: es el que Vivado infiere
-// como BRAM sin ambigüedad, y con lectura combinacional xsim se cuelga contra
-// IP real (hallazgo ya documentado en esa cabecera). Aquí no hay ping-pong
-// porque no hace falta — es de solo lectura, precargado una vez en `initial`.
+// por señal variable), con un proceso de lectura y un proceso de escritura
+// separados y sin ninguna sentencia compartida entre ellos — el mismo patrón,
+// por la misma razón, que ya fijó `drx_range_gate.sv`: es el único que Vivado
+// infiere como BRAM sin ambigüedad. Con el if/else compartido, y hasta con
+// `(* ram_style = "block" *)`, Vivado real contestó «Infeasible... trying to
+// implement using LUTRAM». Ninguno de los dos procesos lleva reset asíncrono
+// en su sensibilidad: ninguna BRAM real de Xilinx tiene borrado asíncrono de
+// contenido, y el síntoma es «RAM is sensitive to asynchronous reset signal».
 //
-// Precarga con `$readmemh` desde un fichero por canal
+// --- Las dos longitudes ----------------------------------------------------
+//
+// `DEPTH` es la capacidad FÍSICA de cada banco; `vec_len` es la longitud que
+// se REPRODUCE en bucle, y llega por registro en tiempo de ejecución. El
+// puntero de lectura envuelve en `vec_len-1`, no en `DEPTH-1`. Con
+// `VECTOR_BRAM_DEPTH = 8192` y `VECTOR_LOOP_LEN = 4000` (config/params.toml),
+// la BRAM son 4 RAMB36 por canal y el bucle precargado ocupa la mitad.
+//
+// La distinción existe porque la longitud tiene que ser múltiplo de
+// `IF_NORM_DEN` para que el tono cierre un número entero de periodos y no haya
+// salto de fase al envolver, y una potencia de dos no lo es.
+//
+// --- Precarga y carga en caliente ------------------------------------------
+//
+// `$readmemh` precarga el bucle de síntesis desde un fichero por canal
 // (`tools/gen_vector_source_init.py`, reutiliza `model/drx_model/vectors.tone`
-// — no se reinventa la matemática del tono). Es el mismo mecanismo de
-// `sim/tb_sv/drx_l1_file_source.sv` para simulación, pero aquí es síntesis de
-// verdad: el contenido queda fijo en el bitstream, no hay AXI-Lite todavía
-// para seleccionarlo en tiempo de ejecución (fase siguiente de Z1).
+// — no se reinventa la matemática del tono). Ese fichero trae `DEPTH` líneas:
+// las primeras `VECTOR_LOOP_LEN` son el tono y el resto ceros, para que no
+// quede ni una palabra indefinida en el array.
 //
-// `last` pulsa cada `DEPTH` muestras — es un marcador ARTIFICIAL de "fin de
+// Encima de eso, el PS puede sobreescribir el contenido en tiempo de ejecución
+// por la ventana `VEC_ADDR`/`VEC_DATA` del mapa de registros v11, que es lo
+// que convierte un barrido del catálogo de ocho vectores en ocho mensajes en
+// vez de ocho corridas de Vivado. Antes de v11 eso lo hacía el modo
+// Throttled(DDR) (DDR -> AXI DMA MM2S -> AXI4-Stream), que se retiró porque
+// entregaba una muestra cada N_CH ciclos y el DDS Compiler, que no tiene
+// `aclken`, seguía avanzando un paso de fase por ciclo: el DDC mezclaba a
+// ~N_CH veces el IF (P-16).
+//
+// La carga va protegida por `vec_load`: con él en alto el lector se congela y
+// las escrituras llegan a la memoria; con él en bajo el lector corre y las
+// escrituras se ignoran. Así nunca se mezcla medio vector viejo con medio
+// nuevo, y al soltarlo la reproducción empieza siempre en la muestra 0.
+//
+// `last` pulsa cada `vec_len` muestras — es un marcador ARTIFICIAL de "fin de
 // ventana" para poder ejercitar el framing de `drx_range_gate`, NO el PRF
-// real: el motor de timing (Z2) no existe todavía. No leer este pulso como
-// una cadencia de rayo real.
+// real. No leer este pulso como una cadencia de rayo real.
 //
-// --- Modo Throttled(DDR), Z4.3 (1-oct-2026) --------------------------------
-//
-// Segundo de los tres modos de `docs/plataforma/fuente-de-muestras.md`:
-// «DDR con backpressure AXIS, 4 canales, por debajo de tiempo real, para
-// corrección funcional bit a bit». Las muestras ya no salen de la BRAM
-// precargada en síntesis sino de un AXI4-Stream que alimenta un AXI DMA MM2S
-// desde la DDR del PS, así que el vector se elige en TIEMPO DE EJECUCIÓN
-// (mensaje `test_stimulus_select` del contrato, v0.5) en vez de quedar fijo en
-// el bitstream. Eso es lo que convierte un barrido del catálogo de 8 vectores
-// de `tools/gen_l1_vectors.py` en algo que cuesta un DMA en vez de ocho
-// corridas de Vivado.
-//
-// El modo NO reemplaza a BRAM-loop, convive con él y se elige por registro
-// (`CTRL` bit 1, mapa v8). Quitarlo habría perdido el único modo que sostiene
-// la tasa real, que es para lo que existe según esa misma tabla.
-//
-// Formato del stream: 16 bits por beat, UNA muestra por beat, canales en orden
-// ascendente y repitiendo — canal 0, 1, ..., N_CH-1, canal 0, ... Es el
-// formato más simple que existe y no hay motivo para otro: este modo es
-// explícitamente más lento que tiempo real, así que estrechar el bus a una
-// muestra por beat no cuesta nada que importe, y a cambio el buffer de DDR que
-// prepara el firmware es exactamente un array de int16 entrelazado por canal,
-// sin reglas de alineación ni relleno.
-//
-// Los N_CH canales avanzan en BLOQUE: se juntan N_CH beats en un conjunto y los
-// N_CH salidas se presentan válidas a la vez, y el conjunto no se retira hasta
-// que TODOS los consumidores lo han tomado. Es más estricto de lo que pide
-// AXI4-Stream —un canal lento frena a los demás— y es a propósito: este modo
-// existe para corrección bit a bit, donde que los canales vayan en el mismo
-// instante de muestra es parte de lo que se compara. Dejar que un canal se
-// adelantara convertiría un desfase en un resultado distinto sin ningún error
-// visible. Aguas abajo no cambia nada: `drx_ddc_quad_top` es un `generate` de
-// cadenas idénticas que ya van en bloque.
-//
-// `s_axis_last` marca el fin del vector. Se propaga a `last` de los N_CH
-// canales del conjunto que lo contiene, no solo al canal del beat donde llegó:
-// `last` es un marcador de ventana por canal, y marcarlo en uno solo dejaría a
-// `drx_range_gate` cerrando un rayo en un canal y no en los otros dos.
-//
-// CONDICIÓN QUE EL FIRMWARE TIENE QUE CUMPLIR: la transferencia MM2S lleva un
-// número de muestras múltiplo de N_CH. Un conjunto a medio llenar nunca se
-// presenta, así que un resto distinto de 0 deja la cadena parada en silencio
-// —sin error, sin bandera— hasta la transferencia siguiente. Este módulo no lo
-// valida: no puede distinguir "faltan beats" de "todavía no han llegado", que
-// es la misma situación un ciclo antes.
 
 `ifndef VECTOR_SOURCE_SV
 `define VECTOR_SOURCE_SV
@@ -91,33 +72,45 @@ module vector_source
     parameter int N_CH = 3,
     parameter int DEPTH = 4000,
     // Un fichero para los N_CH canales (mismo bucle en los tres — contenido
-    // distinto por canal es un cambio de un array de parámetros, no de
-    // estructura, el día que haga falta distinguir canales cruzados, mismo
-    // patrón que ya usa `tb_l1_ddc_tri.sv` en simulación). Sin default: cuál
-    // fichero toca es una decisión del top-level por plataforma (D-02, ver
-    // `drx_top.sv`), no de este módulo — una `vector_source` que adivinara
-    // "zedboard" por defecto sería la misma trampa de plataforma hardcodeada
-    // que el gate de `tools/check_hardcoded_clock.py` ya prohíbe para el
-    // reloj. Instanciar sin fijar `INIT_FILE` falla `$readmemh` de forma
-    // ruidosa en vez de leer en silencio el fichero de la placa equivocada.
-    parameter string INIT_FILE = ""
+    // distinto por canal ya no necesita cambiar nada de estructura: se carga
+    // banco a banco por `vec_bank`). Sin default: cuál fichero toca es una
+    // decisión del top-level por plataforma (D-02, ver `drx_top.sv`), no de
+    // este módulo — una `vector_source` que adivinara "zedboard" por defecto
+    // sería la misma trampa de plataforma hardcodeada que el gate de
+    // `tools/check_hardcoded_clock.py` ya prohíbe para el reloj. Instanciar
+    // sin fijar `INIT_FILE` falla `$readmemh` de forma ruidosa en vez de leer
+    // en silencio el fichero de la placa equivocada.
+    parameter string INIT_FILE = "",
+
+    // En la lista de parámetros, no en el cuerpo: los puertos de la ventana de
+    // carga son de este ancho y un `localparam` del cuerpo no se puede usar en
+    // la declaración de puertos.
+    localparam int AddrBits = $clog2(DEPTH)
 ) (
     input logic clk,
     input logic rst_n,
 
-    // 1 = modo Throttled(DDR), las muestras vienen de `s_axis_*`.
-    // 0 = BRAM-loop, el modo de siempre. Solo es seguro cambiarlo con la
-    // cadena parada: este módulo no vacía el conjunto a medio llenar ni el
-    // registro de salida de BRAM al conmutar, igual que `drx_prf_batch_seq`
-    // no revalida su configuración a mitad de radial.
-    input logic ddr_mode,
+    // --- Ventana de carga (mapa de registros v11) ---------------------------
+    //
+    // `vec_load` alto congela el lector y habilita la escritura; al bajar,
+    // deja el puntero de lectura en la muestra 0.
+    input logic vec_load,
 
-    // AXI4-Stream esclavo, 16 bits, una muestra por beat, canales en orden
-    // ascendente y repitiendo. Inerte mientras `ddr_mode` esté en 0.
-    input  logic                          s_axis_valid,
-    output logic                          s_axis_ready,
-    input  logic signed [SAMPLE_BITS-1:0] s_axis_data,
-    input  logic                          s_axis_last,
+    // `vec_we` es un pulso de un ciclo por muestra, con `vec_addr`,
+    // `vec_bank` y `vec_data` válidos en ESE mismo ciclo. Quien lo genera
+    // (`drx_axil_regs`) registra los cuatro juntos: un strobe combinacional
+    // sobre el commit de AXI entrega el dato de la escritura ANTERIOR, que es
+    // el bug de `nco_pinc_we` medido en placa el 2-oct-2026.
+    input logic                          vec_we,
+    input logic [          AddrBits-1:0] vec_addr,
+    // Banco de destino: 0..N_CH-1 uno solo, `BankAll` (7) difusión a todos.
+    // Un valor entre N_CH y 6 no escribe en ninguno.
+    input logic [                   2:0] vec_bank,
+    input logic signed [SAMPLE_BITS-1:0] vec_data,
+
+    // Longitud del bucle en muestras. 0 se trata como 1; parar no es esto,
+    // es `vec_load`.
+    input logic [AddrBits-1:0] vec_len,
 
     input  logic                          ready[N_CH],
     output logic                          valid[N_CH],
@@ -125,64 +118,17 @@ module vector_source
     output logic                          last [N_CH]
 );
 
-  localparam int AddrBits = $clog2(DEPTH);
-  localparam int ChBits   = (N_CH > 1) ? $clog2(N_CH) : 1;
+  localparam logic [2:0] BankAll = 3'd7;
 
-  // --- Modo Throttled(DDR) --------------------------------------------------
+  // Último índice del bucle. Se calcula una vez y lo comparten los N_CH
+  // lectores: es el mismo número para todos, y replicarlo por canal solo
+  // añadiría N_CH restadores idénticos al camino crítico.
   //
-  // Dos estados y nada más: llenando el conjunto de N_CH muestras, o
-  // presentándolo. No hay doble buffer a propósito — con backpressure AXIS y
-  // un modo que ya es más lento que tiempo real, un segundo conjunto solo
-  // añadiría un camino de datos más que verificar sin comprar nada medible.
-  logic [ChBits-1:0]            ddr_fill_idx;
-  logic                         ddr_presenting;
-  logic                         ddr_last_set;
-  logic signed [SAMPLE_BITS-1:0] ddr_set[N_CH];
-
-  // El conjunto se retira cuando TODOS los consumidores lo han tomado (ver la
-  // cabecera sobre por qué en bloque y no por canal).
-  logic ddr_all_taken;
-  always_comb begin
-    ddr_all_taken = 1'b1;
-    for (int c = 0; c < N_CH; c = c + 1) begin
-      if (!ready[c]) ddr_all_taken = 1'b0;
-    end
-  end
-
-  assign s_axis_ready = ddr_mode && !ddr_presenting;
-
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      ddr_fill_idx   <= '0;
-      ddr_presenting <= 1'b0;
-      ddr_last_set   <= 1'b0;
-    end else if (!ddr_mode) begin
-      // Modo BRAM: se mantiene rearmado, para que una conmutación con la
-      // cadena parada empiece siempre en el canal 0 de un conjunto nuevo.
-      ddr_fill_idx   <= '0;
-      ddr_presenting <= 1'b0;
-      ddr_last_set   <= 1'b0;
-    end else if (!ddr_presenting) begin
-      if (s_axis_valid) begin
-        if (s_axis_last) ddr_last_set <= 1'b1;
-        if (ddr_fill_idx == ChBits'(N_CH - 1)) begin
-          ddr_fill_idx   <= '0;
-          ddr_presenting <= 1'b1;
-        end else begin
-          ddr_fill_idx <= ddr_fill_idx + 1'b1;
-        end
-      end
-    end else if (ddr_all_taken) begin
-      ddr_presenting <= 1'b0;
-      ddr_last_set   <= 1'b0;
-    end
-  end
-
-  always_ff @(posedge clk) begin
-    if (ddr_mode && !ddr_presenting && s_axis_valid) begin
-      ddr_set[ddr_fill_idx] <= s_axis_data;
-    end
-  end
+  // `vec_len == 0` se mapea a 1 en vez de dejar `0-1` envolver a todo unos:
+  // una longitud de cero no significa nada útil y el envolvente a `DEPTH-1`
+  // leería la mitad no precargada del banco.
+  logic [AddrBits-1:0] last_idx;
+  assign last_idx = (vec_len == '0) ? '0 : AddrBits'(vec_len - AddrBits'(1));
 
   genvar gc;
   generate
@@ -197,47 +143,78 @@ module vector_source
       logic [SAMPLE_BITS-1:0] out_data_r;
       logic                out_last_r;
 
-      logic can_advance;
-      assign can_advance = !ddr_mode && (!out_valid_r || ready[gc]);
+      // Este banco acepta la escritura si va dirigida a él o a todos.
+      logic bank_hit;
+      assign bank_hit = (vec_bank == BankAll) || (vec_bank == 3'(gc));
 
-      // Puerto de lectura registrado a propósito (ver cabecera): `out_data_r`
-      // se carga desde `mem[rd_ptr]` solo cuando el dato anterior ya se
-      // consumió o todavía no hay ninguno, nunca pisa uno no leído.
+      logic can_advance;
+      assign can_advance = !vec_load && (!out_valid_r || ready[gc]);
+
+      // Proceso de control. Lleva reset asíncrono; `mem` NO vive aquí.
       //
-      // Dos procesos, no uno: `mem` no puede vivir en un proceso con reset
-      // asíncrono en su sensibilidad (confirmado contra Vivado real,
-      // 19-sep-2026, sobre `drx_range_gate.sv` — mismo síntoma, misma causa:
-      // "RAM is sensitive to asynchronous reset signal", con o sin que el
-      // reset toque la memoria). Ninguna BRAM real de Xilinx tiene borrado
-      // asíncrono de contenido. `out_data_r` se mueve al proceso sin reset
-      // junto con la lectura — su valor tras reset nunca se observa de
-      // todas formas, porque `out_valid_r` (que sí se resetea) se lo impide
-      // a cualquier consumidor.
+      // Con `vec_load` en alto el lector se congela Y se rearma: así una
+      // carga nueva empieza siempre en la muestra 0 y con la salida
+      // invalidada, sin arrastrar el dato del vector anterior ni dejar el
+      // puntero en un sitio arbitrario.
       always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
           rd_ptr      <= '0;
           out_valid_r <= 1'b0;
           out_last_r  <= 1'b0;
+        end else if (vec_load) begin
+          rd_ptr      <= '0;
+          out_valid_r <= 1'b0;
+          out_last_r  <= 1'b0;
         end else if (can_advance) begin
-          out_last_r  <= (rd_ptr == AddrBits'(DEPTH - 1));
+          // `>=` y no `==`: si `vec_len` se acorta con el puntero ya mas
+          // alla del nuevo final, una igualdad estricta obligaria a dar la
+          // vuelta entera al banco antes de resincronizar -- y esa vuelta
+          // recorre la parte no cargada de la memoria. Con `>=` el bucle
+          // nuevo entra en el ciclo siguiente, al precio de una muestra
+          // fuera de rango. El flujo normal no lo ve nunca (VEC_LEN se
+          // escribe con `vec_load` en alto, que ya deja el puntero en 0);
+          // esto es para el que lo escriba en caliente.
+          out_last_r  <= (rd_ptr >= last_idx);
           out_valid_r <= 1'b1;
-          rd_ptr      <= (rd_ptr == AddrBits'(DEPTH - 1)) ? '0 : rd_ptr + 1'b1;
+          rd_ptr      <= (rd_ptr >= last_idx) ? '0 : rd_ptr + 1'b1;
         end
       end
 
+      // Puerto de lectura registrado a propósito (ver cabecera): `out_data_r`
+      // se carga desde `mem[rd_ptr]` solo cuando el dato anterior ya se
+      // consumió o todavía no hay ninguno, nunca pisa uno no leído.
+      //
+      // Proceso aparte del de control, sin reset en la sensibilidad: `mem` no
+      // puede vivir en un proceso con reset asíncrono (confirmado contra
+      // Vivado real, 19-sep-2026, sobre `drx_range_gate.sv` — «RAM is
+      // sensitive to asynchronous reset signal», con o sin que el reset toque
+      // la memoria). `out_data_r` viaja con la lectura; su valor tras reset no
+      // se observa nunca, porque `out_valid_r` (que sí se resetea) se lo
+      // impide a cualquier consumidor.
       always_ff @(posedge clk) begin
         if (can_advance) begin
           out_data_r <= mem[rd_ptr];
         end
       end
 
-      // El contador de BRAM se congela en modo DDR: así no consume el vector
-      // precargado por detrás ni deja el puntero en un sitio arbitrario al
-      // volver.
-      assign valid[gc] = ddr_mode ? ddr_presenting : out_valid_r;
-      assign data[gc]  = ddr_mode ? ddr_set[gc] : signed'(out_data_r);
-      assign last[gc]  = ddr_mode ? (ddr_presenting && ddr_last_set)
-                                  : (out_valid_r && out_last_r);
+      // Puerto de escritura. Proceso propio, sin nada compartido con la
+      // lectura: es la condición que hace que Vivado lo reconozca como un
+      // simple-dual-port de libro en vez de tirarlo a LUTRAM.
+      //
+      // `vec_load` también cualifica aquí, y no solo en quien genera
+      // `vec_we`: con el lector corriendo, una escritura dejaría medio vector
+      // viejo y medio nuevo sonando a la vez, sin ningún síntoma salvo un
+      // espectro raro. Con `vec_load` en alto no hay lecturas, así que los dos
+      // puertos nunca coinciden.
+      always_ff @(posedge clk) begin
+        if (vec_we && vec_load && bank_hit) begin
+          mem[vec_addr] <= vec_data;
+        end
+      end
+
+      assign valid[gc] = out_valid_r;
+      assign data[gc]  = signed'(out_data_r);
+      assign last[gc]  = out_valid_r && out_last_r;
 
     end
   endgenerate

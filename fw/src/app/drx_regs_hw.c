@@ -199,6 +199,65 @@ bool DrxReg_VerifyTimingConfig(const DrxTimingConfig *cfg)
     return ok;
 }
 
+/* --- Ventana de carga del vector de estimulo (mapa v11) ------------------ */
+
+void DrxReg_VecSetLoad(bool loading)
+{
+    uint32_t ctrl = DrxReg_Read(DRX_REG_CTRL_OFFSET);
+    if (loading) {
+        ctrl |= DRX_REG_CTRL_VECTOR_LOAD_MASK;
+    } else {
+        ctrl &= ~DRX_REG_CTRL_VECTOR_LOAD_MASK;
+    }
+    /* Lectura-modificacion-escritura: CTRL comparte palabra con
+     * `mode_coarse`, y pisarlo aqui cambiaria la decimacion al cargar un
+     * vector. Mismo criterio que los helpers de TIMING_CTRL. */
+    DrxReg_Write(DRX_REG_CTRL_OFFSET, ctrl);
+}
+
+bool DrxReg_VecLoading(void)
+{
+    return (DrxReg_Read(DRX_REG_CTRL_OFFSET) & DRX_REG_CTRL_VECTOR_LOAD_MASK) != 0u;
+}
+
+void DrxReg_VecSetAddr(uint32_t bank, uint32_t addr)
+{
+    uint32_t word = (addr & DRX_REG_VEC_ADDR_PTR_MASK)
+                    | ((bank << DRX_REG_VEC_ADDR_BANK_SHIFT) & DRX_REG_VEC_ADDR_BANK_MASK);
+    DrxReg_Write(DRX_REG_VEC_ADDR_OFFSET, word);
+}
+
+void DrxReg_VecWrite(int16_t sample)
+{
+    /* El cast a uint16_t antes de ensanchar es lo que mantiene el complemento
+     * a dos: ensanchar un int16_t negativo a uint32_t directamente rellena de
+     * unos hasta el bit 31, y aunque el hardware ignora los bits 31:16, una
+     * lectura de VEC_DATA devolveria algo que no se parece a lo escrito. */
+    DrxReg_Write(DRX_REG_VEC_DATA_OFFSET,
+                 (uint32_t)(uint16_t)sample & DRX_REG_VEC_DATA_SAMPLE_MASK);
+}
+
+bool DrxReg_VecSetLen(uint32_t len)
+{
+    /* El tope es DEPTH-1, no DEPTH: el puntero tiene $clog2(DEPTH) bits y con
+     * DEPTH potencia de dos exacta el propio DEPTH no cabe en ellos. Si se
+     * dejara pasar, el hardware lo truncaria a 0 y el bucle pasaria a ser de
+     * una sola muestra -- un tono convertido en continua, sin ningun error. */
+    if (len == 0u || len > (uint32_t)DRX_VECTOR_BRAM_DEPTH - 1u) {
+        xil_printf("drx_regs: VEC_LEN %lu fuera de rango (1..%lu)\r\n",
+                   (unsigned long)len,
+                   (unsigned long)DRX_VECTOR_BRAM_DEPTH - 1u);
+        return false;
+    }
+    DrxReg_Write(DRX_REG_VEC_LEN_OFFSET, len & DRX_REG_VEC_LEN_MASK);
+    return true;
+}
+
+uint32_t DrxReg_VecGetLen(void)
+{
+    return DrxReg_Read(DRX_REG_VEC_LEN_OFFSET) & DRX_REG_VEC_LEN_MASK;
+}
+
 bool DrxReg_SelfTest(void)
 {
     uint32_t version = DrxReg_Version();

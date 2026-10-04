@@ -185,13 +185,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--platform", default="zedboard")
     parser.add_argument("--solo", default=None,
                         help="lista separada por comas de vectores a barrer")
-    # Los dos valores por defecto están puestos para el caso LENTO, que es el
-    # que importa. En BRAM-loop llegan 223 rayos/s y cualquier número sirve; en
-    # Throttled(DDR) paceado un rayo del lote bajo tarda ~1,9 s, y no por el
-    # pacing: un rayo de 3689 bins necesita 3689*R1 = 767 312 muestras, o sea
-    # 192 pasadas del bucle de 4000, y entre pasada y pasada hay el hueco de
-    # DRX_STIMULUS_POLL_MS (10 ms) que tarda la tarea en reencolar el DMA. Con
-    # `--settle 2` se descartaría UN rayo y el margen sería demasiado justo.
+    # Desde el mapa v11 el estímulo sale de BRAM a una muestra por ciclo y
+    # llegan 223 rayos/s, así que casi cualquier número sirve y el único papel
+    # de `--settle` es descartar los rayos que ya estaban en vuelo cuando se
+    # cargó el vector nuevo. El valor por defecto se deja holgado porque la
+    # alternativa correcta —esperar a `first_after_config`— sigue sin estar:
+    # el firmware deja esa bandera en false (P-20).
+    #
+    # El 5,0 venía del caso Throttled(DDR), donde un rayo del lote bajo tardaba
+    # ~1,9 s: 3689 bins x R1 = 767 312 muestras, 192 pasadas del bucle de 4000,
+    # con el hueco de la tarea que reencolaba el DMA entre pasada y pasada.
+    # Ese modo ya no existe.
     parser.add_argument("--settle", type=float, default=5.0,
                         help="segundos de rayos descartados tras el config_ack")
     parser.add_argument("--timeout", type=float, default=25.0,

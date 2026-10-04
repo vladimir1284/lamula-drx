@@ -117,9 +117,10 @@ static void DrxStatusTask(void *pvParameters)
         instantanea.uptime_s =
             (uint32_t)((xTaskGetTickCount() - arranque) / configTICK_RATE_HZ);
         instantanea.dma_overruns += rayos.dma_errors;
-        /* Una pasada de estimulo que el DMA marca como fallida es la fuente de
-         * muestras quedandose sin datos a tiempo: eso es `ssa_underrun`, no un
-         * error del camino de vuelta. */
+        /* Una carga de estimulo que no se completa deja la fuente de muestras
+         * sin el vector que el par remoto pidio: eso es `ssa_underrun`, no un
+         * error del camino de vuelta. Hasta v10 contaba pasadas del DMA
+         * marcadas como fallidas; desde v11 cuenta cargas que no cuajaron. */
         instantanea.ssa_underruns += estimulo.errors;
         /* `link_down` lo sabe lwIP y el transporte es Z4.6; `mmcm_unlocked` no
          * llega al mapa de registros (haria falta un bit nuevo en STATUS) y

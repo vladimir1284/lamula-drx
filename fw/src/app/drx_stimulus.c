@@ -1,253 +1,139 @@
 /* Implementacion de fw/include/drx_stimulus.h.
  *
- * Usa el driver `xaxidma` del BSP, no un driver propio sobre los registros del
- * DMA: el criterio Xilinx-IP-first de AGENTS.md vale igual para el software de
- * la IP que para la IP. El DMA esta configurado en scatter-gather
- * (`c_include_sg {1}` en tcl/gen_zynq_bd.tcl, decision de Z4.0 para los
- * buffers circulares de rayo), asi que `XAxiDma_SimpleTransfer` no existe aqui
- * y hay que pasar por un anillo de descriptores aunque la transferencia sea
- * una sola region contigua.
+ * Carga el vector de estimulo en los bancos de BRAM de `rtl/vector_source.sv`
+ * por la ventana AXI-Lite del mapa de registros v11 (CTRL bit 2 +
+ * VEC_ADDR/VEC_DATA/VEC_LEN). Ni DMA, ni descriptores, ni buffer en DDR, ni
+ * tarea que rearme nada: la BRAM reproduce en bucle por hardware hasta que
+ * alguien cargue otra cosa.
  *
- * Por sondeo y no por interrupcion, a proposito. La interrupcion de fin de
- * descriptor del canal MM2S existe en el bitstream (bit 1 de IRQ_F2P, ver
- * tcl/gen_zynq_bd.tcl) y la va a necesitar Z4.4 para el canal S2MM, donde el
- * firmware tiene que reaccionar a cada rayo. Aqui no compra nada: la tarea que
- * rearma el DMA entre pasadas es la unica que espera, no tiene plazo que
- * cumplir, y montar el GIC para ella seria codigo que Z4.4 va a reescribir.
+ * --- Por que ya no hay DMA ------------------------------------------------
+ *
+ * Entre Z4.3 (1-oct-2026) y el 4-oct-2026 esto era otra cosa: el vector vivia
+ * en un buffer entrelazado en DDR y llegaba a la PL por el canal MM2S de un
+ * AXI DMA en scatter-gather, con una tarea de FreeRTOS que rearmaba la
+ * transferencia entre pasadas. Funcionaba -- el DMA completaba pasadas
+ * enteras y eso probaba que los bytes llegaban a la PL -- pero el DATO salia
+ * mal: `vector_source` junta N_CH beats de 16 bits por conjunto, o sea una
+ * muestra cada N_CH ciclos, y el DDS Compiler no tiene `aclken`, asi que
+ * avanza un paso de fase por ciclo de reloj mire o no `valid`. El DDC mezclaba
+ * a ~N_CH veces el IF y la salida caia al suelo de ruido: -87,3 dBFS medidos
+ * contra -9,02 del modelo dorado (P-16, 3-oct-2026).
+ *
+ * Desde BRAM la fuente entrega una muestra por ciclo y las dos bases de tiempo
+ * vuelven a coincidir. Eso tambien hace innecesario el pacing del motor de
+ * timing (TIMING_CTRL bit 1): paceado y sin pacear son el mismo circuito
+ * cuando no hay huecos, y 0 es la configuracion ya medida buena en placa.
+ *
+ * Esto NO arregla la causa raiz. El DDS sigue sin `aclken` y volvera a romper
+ * el dia que haya una fuente con huecos de verdad (ADC real, ZU9). Ver P-16.
+ *
+ * --- Lo que se perdio por el camino ---------------------------------------
+ *
+ * Con el canal MM2S fuera del block design, nada en el diseno ejercita ya el
+ * camino DMA PS->PL. Era la unica cobertura que habia de ese sentido. Decision
+ * explicita, no un descuido.
+ *
+ * Tambien desaparece el mecanismo entero donde vivia P-21 (el MM2S se atascaba
+ * de forma permanente tras unas pocas selecciones encadenadas). P-21 queda
+ * aparcado, no cerrado: el bug no esta ni arreglado ni entendido, solo
+ * inalcanzable. Evidencia en docs/implementacion/evidencia/p-21/.
  */
 #include "drx_stimulus.h"
 
-#include "drx_dma.h"
 #include "drx_regs.h"
 #include "drx_regs_hw.h"
 #include "drx_stimulus_catalog.h"
 
-#include "FreeRTOS.h"
-#include "task.h"
-#include "xaxidma.h"
-#include "xil_cache.h"
 #include "xil_printf.h"
-#include "xparameters.h"
 
 #include <string.h>
 
-#define DRX_STIMULUS_TASK_STACK_WORDS 1024
-#define DRX_STIMULUS_TASK_PRIORITY (tskIDLE_PRIORITY + 1)
-#define DRX_STIMULUS_POLL_MS 1
+/* El catalogo se genera con la misma longitud que el bucle precargado en el
+ * bitstream (`vector_loop_len` de config/params.toml, via
+ * tools/gen_stimulus_catalog.py). Si divergieran, un vector cargado sonaria
+ * con una longitud distinta a la que VEC_LEN dice, y el espectro saldria con
+ * faldas alrededor del tono sin ningun error de por medio. */
+#if DRX_STIMULUS_DEPTH != DRX_VECTOR_LOOP_LEN
+#error "el catalogo y vector_loop_len tienen que medir lo mismo"
+#endif
+#if DRX_STIMULUS_DEPTH > (DRX_VECTOR_BRAM_DEPTH - 1)
+#error "un vector del catalogo no cabe en el banco de BRAM"
+#endif
 
-/* Cuanto espera DrxStimulus_Stop() a que la pasada en vuelo complete antes de
- * pausar el DMA. Ver el comentario largo en DrxStimulus_Stop(): pausar con una
- * pasada a medias fuga sus descriptores y el anillo solo aguanta cuatro. */
-#define DRX_STIMULUS_DRAIN_MS 50u
-
-/* Muestras del buffer entrelazado: una pasada completa del vector por los
- * N_CH canales. `vector_source` consume el stream canal 0, 1, ..., N_CH-1 y
- * repite, y exige que el total sea multiplo de N_CH -- un conjunto a medio
- * llenar nunca se presenta y la cadena se queda parada en silencio (ver la
- * cabecera de rtl/vector_source.sv). Aqui lo es por construccion. */
-#define DRX_STIMULUS_SAMPLES (DRX_STIMULUS_DEPTH * DRX_STIMULUS_N_CH)
-#define DRX_STIMULUS_BYTES (DRX_STIMULUS_SAMPLES * sizeof(int16_t))
-
-/* Bytes por descriptor. El tope lo fija el ancho del campo de longitud del
- * DMA (`c_sg_length_width`, 14 bits en esta configuracion -> 16383 B); se
- * redondea hacia abajo a multiplo de N_CH*2 para que ningun descriptor corte
- * un conjunto de canales por la mitad. Que el corte caiga en una frontera de
- * conjunto no es cosmetico: `vector_source` no ve descriptores, solo beats, y
- * un corte a mitad de conjunto desplazaria el reparto por canal de todo lo que
- * viene detras. */
-#define DRX_STIMULUS_SET_BYTES (DRX_STIMULUS_N_CH * sizeof(int16_t))
-#define DRX_STIMULUS_MAX_BD_BYTES \
-    ((((1u << XPAR_AXIDMA_0_c_sg_length_width) - 1u) / DRX_STIMULUS_SET_BYTES) \
-     * DRX_STIMULUS_SET_BYTES)
-
-#define DRX_STIMULUS_BD_COUNT \
-    ((DRX_STIMULUS_BYTES + DRX_STIMULUS_MAX_BD_BYTES - 1u) / DRX_STIMULUS_MAX_BD_BYTES)
-
-/* Holgura sobre los descriptores que hacen falta: el anillo se reusa pasada
- * tras pasada y tener sitio de sobra evita que una pasada tenga que esperar a
- * que el hardware libere la anterior. */
-#define DRX_STIMULUS_BD_RING (DRX_STIMULUS_BD_COUNT * 4u)
-
-/* La instancia del DMA es compartida con el camino de rayos (drx_dma.c):
- * `XAxiDma_CfgInitialize` resetea el periferico entero, asi que una instancia
- * por canal haria que el segundo en arrancar tirase el anillo del primero. */
-static XAxiDma *g_dma;
 static bool g_ready;
-
-/* El buffer vive en DDR y lo lee el DMA, no la CPU: cada vez que se rellena
- * hay que volcar la cache antes de entregarlo (Xil_DCacheFlushRange mas
- * abajo). Alineado a linea de cache para que el volcado no arrastre datos
- * vecinos. */
-static int16_t g_buf[DRX_STIMULUS_SAMPLES] __attribute__((aligned(64)));
-
-static char g_bd_space[XAXIDMA_BD_MINIMUM_ALIGNMENT * DRX_STIMULUS_BD_RING]
-    __attribute__((aligned(XAXIDMA_BD_MINIMUM_ALIGNMENT)));
-
 static DrxStimulusStatus g_status;
-static bool g_in_flight;
 
-static void fill_buffer(const DrxStimulusVector *vector)
+/* Escribe el vector en los N_CH bancos a la vez y lo deja sonando.
+ *
+ * Difusion (banco 7) y no tres pasadas: los bancos son independientes en RTL
+ * -- un estimulo distinto por canal, que es lo que Config A (Tx + H + V) va a
+ * pedir algun dia, es llamar a esto tres veces con banco 0, 1 y 2 -- pero hoy
+ * los tres llevan la misma forma de onda y escribirla una vez cuesta un tercio.
+ *
+ * DRX_STIMULUS_DEPTH escrituras AXI-Lite de 32 bits. Con el bus de registros
+ * del PS7 eso es del orden de milisegundos, y ocurre una vez por seleccion de
+ * vector: no hay nada que optimizar aqui. Una ventana de memoria direccionable
+ * habria necesitado un axi_bram_ctrl, un maestro mas en el interconnect y un
+ * segmento nuevo en el mapa de direcciones, para ahorrar unos milisegundos que
+ * nadie estaba esperando. */
+static bool cargar_vector(const DrxStimulusVector *vector)
 {
-    /* Replica el mismo vector en los N_CH canales, igual que el modo BRAM-loop
-     * replica el mismo INIT_FILE en los N_CH bancos. Contenido distinto por
-     * canal es un cambio de este bucle, no de estructura. */
-    for (uint32_t i = 0; i < DRX_STIMULUS_DEPTH; i++) {
-        int16_t sample = vector->samples[i];
+    DrxReg_VecSetLoad(true);
+    DrxReg_VecSetAddr(DRX_REG_VEC_ADDR_BANK_ALL, 0u);
 
-        for (uint32_t c = 0; c < DRX_STIMULUS_N_CH; c++) {
-            g_buf[i * DRX_STIMULUS_N_CH + c] = sample;
-        }
+    for (size_t i = 0u; i < vector->count; i++) {
+        DrxReg_VecWrite(vector->samples[i]);
     }
-    Xil_DCacheFlushRange((INTPTR)g_buf, DRX_STIMULUS_BYTES);
+
+    if (!DrxReg_VecSetLen((uint32_t)vector->count)) {
+        /* El lector se queda congelado a proposito: con una longitud que no
+         * se pudo fijar, soltarlo reproduciria el vector nuevo con la
+         * longitud del anterior. Silencio es un sintoma mejor que un
+         * espectro plausible y equivocado. */
+        return false;
+    }
+
+    /* Al bajar, `vector_source` deja el puntero de lectura en la muestra 0:
+     * la reproduccion empieza siempre en un punto conocido, y por tanto el
+     * rayo que se compare contra el modelo dorado arranca igual en cada
+     * seleccion. */
+    DrxReg_VecSetLoad(false);
+    return true;
 }
 
 bool DrxStimulus_Init(void)
 {
     memset(&g_status, 0, sizeof(g_status));
     g_ready = false;
-    g_in_flight = false;
 
-    if (!DrxDma_Init()) {
-        return false;
-    }
-    g_dma = DrxDma_Get();
-
-    XAxiDma_Config *config = XAxiDma_LookupConfig(XPAR_AXIDMA_0_DEVICE_ID);
-    if (config == NULL || config->HasMm2S == 0) {
-        /* El sintoma sin este aviso seria que todo "funciona" y no sale ni un
-         * beat: el bitstream cargado es anterior a Z4.3. */
-        xil_printf("drx_stimulus: el bitstream no trae el canal MM2S\r\n");
+    /* Confirmar el mapa antes de escribir la ventana: si el bitstream es de
+     * v10 o anterior, VEC_ADDR/VEC_DATA/VEC_LEN son direcciones reservadas,
+     * las escrituras no tienen efecto y la carga fallaria en silencio. */
+    if (!DrxReg_SelfTest()) {
+        xil_printf("drx_stimulus: mapa de registros desincronizado, "
+                   "la ventana de carga no existe en este bitstream\r\n");
         return false;
     }
 
-    XAxiDma_BdRing *ring = XAxiDma_GetTxRing(g_dma);
-    XAxiDma_BdRingIntDisable(ring, XAXIDMA_IRQ_ALL_MASK);
-
-    int count = XAxiDma_BdRingCreate(ring, (UINTPTR)&g_bd_space[0],
-                                     (UINTPTR)&g_bd_space[0],
-                                     XAXIDMA_BD_MINIMUM_ALIGNMENT,
-                                     DRX_STIMULUS_BD_RING);
-    if (count != XST_SUCCESS) {
-        xil_printf("drx_stimulus: XAxiDma_BdRingCreate fallo (%d)\r\n", count);
-        return false;
-    }
-
-    XAxiDma_Bd template_bd;
-    XAxiDma_BdClear(&template_bd);
-    if (XAxiDma_BdRingClone(ring, &template_bd) != XST_SUCCESS) {
-        xil_printf("drx_stimulus: XAxiDma_BdRingClone fallo\r\n");
-        return false;
-    }
-    if (XAxiDma_BdRingStart(ring) != XST_SUCCESS) {
-        xil_printf("drx_stimulus: XAxiDma_BdRingStart fallo\r\n");
-        return false;
-    }
-
-    g_ready = true;
-    xil_printf("drx_stimulus: AXI DMA MM2S listo, %lu vectores de %lu muestras\r\n",
-               (unsigned long)DRX_STIMULUS_COUNT, (unsigned long)DRX_STIMULUS_DEPTH);
-    return true;
-}
-
-/* Encola una pasada completa del buffer, troceada en tantos descriptores como
- * haga falta. SOF en el primero y EOF en el ultimo: EOF es lo que el DMA
- * convierte en `tlast`, y `tlast` es lo que `vector_source` propaga como
- * `last` a los N_CH canales. Sin EOF el vector se reproduciria sin ningun fin
- * de ventana. */
-static bool submit_pass(void)
-{
-    XAxiDma_BdRing *ring = XAxiDma_GetTxRing(g_dma);
-    XAxiDma_Bd *bd_set = NULL;
-
-    if (XAxiDma_BdRingAlloc(ring, DRX_STIMULUS_BD_COUNT, &bd_set) != XST_SUCCESS) {
-        return false;
-    }
-
-    XAxiDma_Bd *bd = bd_set;
-    UINTPTR addr = (UINTPTR)g_buf;
-    uint32_t left = DRX_STIMULUS_BYTES;
-
-    for (uint32_t i = 0; i < DRX_STIMULUS_BD_COUNT; i++) {
-        uint32_t chunk = (left > DRX_STIMULUS_MAX_BD_BYTES) ? DRX_STIMULUS_MAX_BD_BYTES
-                                                            : left;
-
-        if (XAxiDma_BdSetBufAddr(bd, addr) != XST_SUCCESS ||
-            XAxiDma_BdSetLength(bd, chunk, ring->MaxTransferLen) != XST_SUCCESS) {
-            XAxiDma_BdRingUnAlloc(ring, DRX_STIMULUS_BD_COUNT, bd_set);
-            return false;
-        }
-
-        uint32_t flags = 0;
-        if (i == 0u) flags |= XAXIDMA_BD_CTRL_TXSOF_MASK;
-        if (i == DRX_STIMULUS_BD_COUNT - 1u) flags |= XAXIDMA_BD_CTRL_TXEOF_MASK;
-        XAxiDma_BdSetCtrl(bd, flags);
-        XAxiDma_BdSetId(bd, (UINTPTR)g_buf);
-
-        addr += chunk;
-        left -= chunk;
-        bd = (XAxiDma_Bd *)XAxiDma_BdRingNext(ring, bd);
-    }
-
-    if (XAxiDma_BdRingToHw(ring, DRX_STIMULUS_BD_COUNT, bd_set) != XST_SUCCESS) {
-        XAxiDma_BdRingUnAlloc(ring, DRX_STIMULUS_BD_COUNT, bd_set);
-        return false;
-    }
-    g_in_flight = true;
-    return true;
-}
-
-/* Recoge lo que el hardware haya terminado. Devuelve true si la pasada entera
- * se completo en esta llamada. */
-static bool reap_pass(void)
-{
-    XAxiDma_BdRing *ring = XAxiDma_GetTxRing(g_dma);
-    XAxiDma_Bd *bd_set = NULL;
-
-    int done = XAxiDma_BdRingFromHw(ring, XAXIDMA_ALL_BDS, &bd_set);
-    if (done <= 0) {
-        return false;
-    }
-
-    XAxiDma_Bd *bd = bd_set;
-    for (int i = 0; i < done; i++) {
-        if ((XAxiDma_BdGetSts(bd) & XAXIDMA_BD_STS_ALL_ERR_MASK) != 0u) {
-            g_status.errors++;
-        }
-        bd = (XAxiDma_Bd *)XAxiDma_BdRingNext(ring, bd);
-    }
-    XAxiDma_BdRingFree(ring, done, bd_set);
-
-    g_in_flight = false;
-    return true;
-}
-
-/* P-16: el modo de fuente y la base de tiempo del motor TIENEN que moverse
- * juntos, y hay DOS caminos de vuelta a BRAM-loop -- DrxStimulus_Stop() y el
- * final de la ultima pasada en DrxStimulusTask(). Un helper porque ya
- * divergieron una vez: el segundo limpiaba el bit de DDR y dejaba el de
- * pacing puesto, que ata el motor al `ready` del DDC sin ninguna razon.
- *
- * Se bracketea con el secuenciador parado: pacear cambia lo que significa
- * `prf_div`, y hacerlo a mitad de radial deja ese radial con dos bases de
- * tiempo. */
-static void set_modo_ddr(bool ddr)
-{
-    uint32_t ctrl = DrxReg_Read(DRX_REG_CTRL_OFFSET);
-    if (ddr) {
-        ctrl |= DRX_REG_CTRL_VECTOR_SOURCE_DDR_MASK;
-    } else {
-        ctrl &= ~DRX_REG_CTRL_VECTOR_SOURCE_DDR_MASK;
-    }
-    DrxReg_Write(DRX_REG_CTRL_OFFSET, ctrl);
-
+    /* La fuente entrega una muestra por ciclo, asi que ciclos y avances de
+     * muestra son lo mismo y el pacing no compra nada. Se fija a 0 una vez,
+     * aqui, en vez de en cada Select: es una propiedad de la FUENTE, y la
+     * fuente ya no cambia en tiempo de ejecucion.
+     *
+     * Con el secuenciador parado, porque pacear cambia lo que significa
+     * `prf_div` y hacerlo a mitad de radial deja ese radial con dos bases de
+     * tiempo. */
     const bool timing_corria = DrxReg_TimingEnabled();
     if (timing_corria) {
         DrxReg_TimingDisable();
     }
-    DrxReg_TimingSetPaced(ddr);
+    DrxReg_TimingSetPaced(false);
     if (timing_corria) {
         DrxReg_TimingEnable();
     }
+
+    g_ready = true;
+    return true;
 }
 
 drx_dsp_error_t DrxStimulus_Select(uint8_t vector_id, uint16_t repeat)
@@ -259,39 +145,37 @@ drx_dsp_error_t DrxStimulus_Select(uint8_t vector_id, uint16_t repeat)
         return DRX_DSP_ERROR_VECTOR_UNKNOWN;
     }
 
+    /* `repeat` distinto de 0 ya no tiene mecanismo: la BRAM reproduce en
+     * bucle por hardware y no hay nada que cuente pasadas. Contestar
+     * `unimplemented` -- que el contrato v0.8 ya define -- es mejor que
+     * aceptarlo y reproducir indefinidamente: el par remoto que pidio dos
+     * pasadas se enteraria de que no se cumplio solo mirando el espectro.
+     *
+     * El barrido del catalogo (tools/sweep_catalogo.py) usa repeat=0, que es
+     * el unico caso que hubo nunca en placa. */
+    if (repeat != 0u) {
+        return DRX_DSP_ERROR_UNIMPLEMENTED;
+    }
+
     const DrxStimulusVector *vector = &kDrxStimulusCatalog[vector_id];
 
-    DrxStimulus_Stop();
-    fill_buffer(vector);
-
-    g_status.name = vector->name;
-    g_status.vector_id = vector_id;
-    g_status.looping = (repeat == 0u);
-    g_status.remaining = repeat;
-    g_status.passes = 0u;
-    g_status.errors = 0u;
-    g_status.running = true;
-
-    /* El modo se cambia ANTES del primer beat y con la cadena ya parada por
-     * DrxStimulus_Stop(): `vector_source` no vacia el conjunto a medio llenar
-     * al conmutar (ver su cabecera y el doc de CTRL en config/registers.toml). */
-    /* P-16: en Throttled(DDR) el motor de timing TIENE que contar avances de
-     * muestra. `vector_source` junta N_CH beats de 16 bits por conjunto, asi
-     * que contando ciclos el rayo tarda ~N_CH veces el PRI en llenarse,
-     * `ray_start` lo trunca y no se completa ninguno. Los dos bits del
-     * registro son independientes a proposito (ver drx_sample_pacer.sv); que
-     * vayan juntos es una POLITICA, y su sitio es aqui. */
-    set_modo_ddr(true);
-
-    if (!submit_pass()) {
+    if (!cargar_vector(vector)) {
         g_status.running = false;
-        xil_printf("drx_stimulus: no se pudo encolar la primera pasada\r\n");
+        g_status.errors++;
+        xil_printf("drx_stimulus: no se pudo cargar %s\r\n", vector->name);
         return DRX_DSP_ERROR_NOT_CONFIGURED;
     }
 
-    xil_printf("drx_stimulus: vector %lu (%s), repeat=%lu\r\n",
+    g_status.name = vector->name;
+    g_status.vector_id = vector_id;
+    g_status.looping = true;
+    g_status.remaining = 0u;
+    g_status.loads++;
+    g_status.running = true;
+
+    xil_printf("drx_stimulus: vector %lu (%s), %lu muestras en bucle\r\n",
                (unsigned long)vector_id, vector->name,
-               (unsigned long)repeat);
+               (unsigned long)vector->count);
     return DRX_DSP_ERROR_OK;
 }
 
@@ -301,106 +185,41 @@ void DrxStimulus_Stop(void)
         return;
     }
 
+    /* No hay nada que parar en el sentido de antes: no existe transferencia en
+     * vuelo ni descriptores que drenar. Lo unico que hace falta es dejar de
+     * declarar que hay un vector seleccionado.
+     *
+     * La BRAM se queda con el ultimo vector cargado SONANDO, y eso es un
+     * cambio de semantica frente al Stop() de v8..v10, que devolvia la fuente
+     * a BRAM-loop con el tono que `$readmemh` dejo en el bitstream. Recuperar
+     * ese tono no es posible por software: el `$readmemh` solo corre al cargar
+     * el bitstream. Si hiciera falta volver a el, el camino es cargar de nuevo
+     * el vector `tono_if` del catalogo, que es el mismo tono. */
     g_status.running = false;
     g_status.looping = false;
     g_status.remaining = 0u;
-
-    /* DRENAR ANTES DE PAUSAR, y este orden es el arreglo entero.
-     *
-     * `XAxiDma_Pause` detiene la busqueda de descriptores a mitad de pasada,
-     * asi que la pasada en vuelo NUNCA completa; y `reap_pass()` solo
-     * devuelve al anillo los descriptores que el hardware marco como
-     * completados (`XAxiDma_BdRingFromHw`). Pausando primero, los BD de esa
-     * pasada se quedan en poder del hardware para siempre. El anillo tiene
-     * sitio para DRX_STIMULUS_BD_RING / DRX_STIMULUS_BD_COUNT = 4 pasadas, o
-     * sea que a la cuarta seleccion `XAxiDma_BdRingAlloc` falla y ya no se
-     * puede encolar nada mas.
-     *
-     * Medido en placa el 3-oct-2026: nueve `test_stimulus_select` seguidos y
-     * el decimo da "no se pudo encolar la primera pasada" para siempre. No se
-     * habia visto antes porque nadie habia encadenado selecciones, y porque
-     * hasta P-16 el sintoma quedaba tapado -- el motor de timing seguia
-     * contando ciclos aunque no llegara una sola muestra, asi que lo que se
-     * veia era `GATE_TRUNCATED`, no una parada.
-     *
-     * No se puede arreglar con `XAxiDma_Reset`: MM2S y S2MM son el MISMO
-     * `axi_dma` del block design, y resetearlo se llevaria por delante el
-     * anillo de rayos.
-     *
-     * Una pasada son 4000 conjuntos y el DDC los consume en ~0,3 ms, asi que
-     * este drenado termina enseguida en cuanto la cadena avanza. Si no
-     * termina es que la cadena esta parada de verdad, y eso se denuncia en
-     * vez de fugarse en silencio. */
-    for (unsigned i = 0u; g_in_flight && i < DRX_STIMULUS_DRAIN_MS; i++) {
-        if (reap_pass()) {
-            break;
-        }
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-
-    XAxiDma_BdRing *ring = XAxiDma_GetTxRing(g_dma);
-    XAxiDma_Pause(&g_dma);
-    (void)reap_pass();
-    XAxiDma_BdRingStart(ring);
-    XAxiDma_Resume(&g_dma);
-
-    if (g_in_flight) {
-        g_status.errors++;
-        xil_printf("drx_stimulus: pasada sin completar tras %u ms; sus "
-                   "descriptores quedan en el hardware\r\n",
-                   (unsigned)DRX_STIMULUS_DRAIN_MS);
-    }
-
-    /* De vuelta a BRAM-loop, de vuelta a contar ciclos: ahi la fuente entrega
-     * una muestra por ciclo y pacear no cambia nada, pero dejarlo encendido
-     * ataria el motor al `ready` del DDC sin ninguna razon. */
-    set_modo_ddr(false);
 }
 
 void DrxStimulus_GetStatus(DrxStimulusStatus *out)
 {
-    *out = g_status;
+    if (out != NULL) {
+        *out = g_status;
+    }
 }
 
-static void DrxStimulusTask(void *pvParameters)
+void DrxStimulusTask_Create(void)
 {
-    (void)pvParameters;
-
-    for (;;) {
-        if (g_status.running && g_in_flight && reap_pass()) {
-            g_status.passes++;
-
-            bool again = g_status.looping;
-            if (!again && g_status.remaining > 1u) {
-                g_status.remaining--;
-                again = true;
-            } else if (!again) {
-                g_status.remaining = 0u;
-                g_status.running = false;
-                /* Fin de la ultima pasada: se vuelve a BRAM-loop para no dejar
-                 * la cadena sin fuente. En Throttled(DDR) sin DMA en curso
-                 * `vector_source` no entrega nada, y aguas abajo eso se ve
-                 * igual que un DDC colgado. Por el helper y no a mano: este
-                 * camino tiene que soltar tambien el pacing (P-16). */
-                set_modo_ddr(false);
-                xil_printf("drx_stimulus: vector %s terminado, %lu pasadas\r\n",
-                           g_status.name ? g_status.name : "?",
-                           (unsigned long)g_status.passes);
-            }
-
-            if (again && !submit_pass()) {
-                g_status.errors++;
-                g_status.running = false;
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(DRX_STIMULUS_POLL_MS));
-    }
+    /* Sin tarea. La que habia rearmaba el DMA entre pasadas cada
+     * DRX_STIMULUS_POLL_MS; con la BRAM en bucle por hardware no hay nada que
+     * rearmar. Se conserva el simbolo para no tocar el arranque de main.c por
+     * una funcion vacia, y porque el dia que haga falta una tarea aqui (una
+     * secuencia de vectores encadenada, por ejemplo) este es su sitio. */
 }
 
 bool DrxStimulus_SelfTest(uint8_t vector_id)
 {
     if (!g_ready) {
-        xil_printf("drx_stimulus: sin DMA, no hay nada que comprobar\r\n");
+        xil_printf("drx_stimulus: sin ventana de carga, no hay nada que comprobar\r\n");
         return false;
     }
 
@@ -409,43 +228,47 @@ bool DrxStimulus_SelfTest(uint8_t vector_id)
     DrxReg_ClearOverflow(DrxReg_ReadOverflow());
     uint32_t overflow_antes = DrxReg_ReadOverflow();
 
-    drx_dsp_error_t error = DrxStimulus_Select(vector_id, 2u);
+    drx_dsp_error_t error = DrxStimulus_Select(vector_id, 0u);
     if (error != DRX_DSP_ERROR_OK) {
         xil_printf("drx_stimulus: Select devolvio %lu\r\n", (unsigned long)error);
         return false;
     }
 
-    /* Dos pasadas de 12000 muestras a la tasa que marque la cadena. El plazo es
-     * generoso a proposito: en Throttled(DDR) el ritmo lo pone el consumidor,
-     * no el DMA, y lo que se comprueba es que AVANCE, no que sea rapido. */
-    DrxStimulusStatus status;
-    for (unsigned ms = 0; ms < 2000u; ms += 50u) {
-        vTaskDelay(pdMS_TO_TICKS(50));
-        DrxStimulus_GetStatus(&status);
-        if (status.passes > 0u) break;
-    }
-
-    DrxStimulus_GetStatus(&status);
+    /* La comprobacion que SI se puede hacer sin camino de vuelta: releer
+     * VEC_LEN y CTRL por AXI-Lite. Dice que la ventana existe, que el slave
+     * acepto la escritura y que el lector quedo suelto.
+     *
+     * Lo que NO dice es si el CONTENIDO de la BRAM es el correcto: no hay
+     * camino de lectura desde la memoria hacia AXI-Lite (anadirlo costaria un
+     * puerto mas por banco). La prueba de verdad es el espectro del rayo
+     * contra el modelo dorado, y eso es DrxRay_SelfTest + tools/dump_ray.py.
+     *
+     * Es una comprobacion mas debil que la de v8..v10, y conviene decirlo: alli
+     * una pasada COMPLETA del DMA probaba que los bytes habian llegado dentro
+     * de la PL, porque el unico que levantaba `tready` era `vector_source`. */
+    const DrxStimulusVector *vector = &kDrxStimulusCatalog[vector_id];
+    uint32_t len = DrxReg_VecGetLen();
+    bool cargando = DrxReg_VecLoading();
     uint32_t overflow_despues = DrxReg_ReadOverflow();
 
-    xil_printf("drx_stimulus: vector %s -- pasadas=%lu errores=%lu "
-               "OVERFLOW %lx -> %lx\r\n",
-               status.name ? status.name : "?", (unsigned long)status.passes,
-               (unsigned long)status.errors, (unsigned long)overflow_antes,
+    xil_printf("drx_stimulus: vector %s -- VEC_LEN=%lu (esperado %lu) "
+               "vector_load=%lu OVERFLOW %lx -> %lx\r\n",
+               vector->name, (unsigned long)len, (unsigned long)vector->count,
+               (unsigned long)cargando, (unsigned long)overflow_antes,
                (unsigned long)overflow_despues);
 
-    if (status.passes == 0u) {
-        xil_printf("drx_stimulus: el DMA no completo ni una pasada -- "
-                   "vector_source no esta consumiendo el stream\r\n");
+    if (len != (uint32_t)vector->count) {
+        xil_printf("drx_stimulus: VEC_LEN no volvio con lo escrito -- "
+                   "ventana de carga rota\r\n");
+        return false;
+    }
+    if (cargando) {
+        xil_printf("drx_stimulus: vector_load se quedo en alto -- "
+                   "la fuente esta congelada\r\n");
         return false;
     }
 
-    xil_printf("drx_stimulus: DDR -> MM2S -> vector_source confirmado en placa\r\n");
+    xil_printf("drx_stimulus: ventana de carga confirmada en placa "
+               "(el DATO lo confirma el espectro del rayo, no esto)\r\n");
     return true;
-}
-
-void DrxStimulusTask_Create(void)
-{
-    xTaskCreate(DrxStimulusTask, "drx_stimulus", DRX_STIMULUS_TASK_STACK_WORDS, NULL,
-                DRX_STIMULUS_TASK_PRIORITY, NULL);
 }

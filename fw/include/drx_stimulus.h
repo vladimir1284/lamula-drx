@@ -1,16 +1,18 @@
-/* Carga de vectores de estimulo en la PL por AXI DMA MM2S (Z4.3).
+/* Carga de vectores de estimulo en la BRAM de la PL por AXI-Lite (mapa v11).
  *
  * Cierra el camino que empieza en el mensaje `test_stimulus_select` del
- * contrato (v0.5) y termina en el modo Throttled(DDR) de `rtl/vector_source.sv`
- * (`CTRL` bit 1 del mapa de registros v8):
+ * contrato y termina en los bancos de BRAM de `rtl/vector_source.sv`:
  *
  *   DSP --test_stimulus_select--> drx_contract_io --> DrxStimulus_Select()
- *     --> buffer entrelazado en DDR --> AXI DMA MM2S --> m_axis_vec
- *     --> vector_source --> DDC --> range gate
+ *     --> VEC_ADDR/VEC_DATA/VEC_LEN --> BRAM de vector_source
+ *     --> DDC --> range gate
  *
- * Antes de esto el vector quedaba fijado en tiempo de SINTESIS (`$readmemh`
- * sobre la BRAM), asi que barrer el catalogo de ocho casos costaba ocho
- * corridas de Vivado. Ahora cuesta ocho mensajes.
+ * Antes de Z4.3 el vector quedaba fijado en tiempo de SINTESIS (`$readmemh`
+ * sobre la misma BRAM), asi que barrer el catalogo de ocho casos costaba ocho
+ * corridas de Vivado. Z4.3 lo hizo elegible en caliente metiendolo por un AXI
+ * DMA MM2S desde la DDR; el 4-oct-2026 ese camino se retiro por P-16 (ver la
+ * cabecera de drx_stimulus.c) y lo sustituyo esta ventana de registros. El
+ * catalogo sigue costando ocho mensajes, y ahora ademas sale a tasa plena.
  *
  * El catalogo lo genera `tools/gen_stimulus_catalog.py` a partir de los MISMOS
  * ocho casos de `tools/gen_l1_vectors.py` que nombra la enumeracion
@@ -34,23 +36,37 @@
  * `drx_ray.c` lo comprueba contra el bitstream cargado en runtime. */
 #define DRX_STIMULUS_N_CH ((uint32_t)DRX_N_CH_TOP)
 
-/* Arranca el driver del DMA y construye el anillo de descriptores. Una vez, al
- * arrancar el firmware. Devuelve false y lo explica por UART si el DMA no esta
- * donde el XSA dice, si el canal MM2S no esta compilado en el bitstream, o si
- * el anillo no cabe. */
+/* Comprueba que el bitstream trae la ventana de carga y fija la base de
+ * tiempo del motor. Una vez, al arrancar el firmware. Devuelve false y lo
+ * explica por UART si VERSION no coincide con el mapa que este firmware
+ * conoce -- en un bitstream de v10 o anterior las tres direcciones de la
+ * ventana estan reservadas y las escrituras no tendrian ningun efecto. */
 bool DrxStimulus_Init(void);
 
-/* Carga el vector `vector_id` y lo reproduce `repeat` veces; 0 = en bucle
- * indefinido, el mismo comportamiento que tenia el modo BRAM-loop. Pone
- * `CTRL` bit 1 a 1 (modo Throttled(DDR)) antes del primer beat.
+/* Carga el vector `vector_id` en la BRAM y lo deja sonando en bucle.
+ *
+ * `repeat` TIENE que ser 0 (bucle indefinido). La BRAM reproduce en bucle por
+ * hardware y no hay nada que cuente pasadas, asi que un `repeat` distinto se
+ * contesta `unimplemented` en vez de aceptarse y reproducir indefinidamente
+ * -- el par remoto que pidio dos pasadas se enteraria de que no se cumplio
+ * solo mirando el espectro. Hasta v10 el conteo lo llevaba una tarea que
+ * rearmaba el DMA entre pasadas; ese DMA ya no existe.
  *
  * Devuelve el codigo del contrato con el que contestar: `ok`,
- * `vector_unknown` si `vector_id` no esta en el catalogo, o `not_configured`
- * si DrxStimulus_Init() no ha corrido o fallo. */
+ * `vector_unknown` si `vector_id` no esta en el catalogo, `unimplemented` si
+ * `repeat` no es 0, o `not_configured` si DrxStimulus_Init() no ha corrido o
+ * fallo. */
 drx_dsp_error_t DrxStimulus_Select(uint8_t vector_id, uint16_t repeat);
 
-/* Para la reproduccion y devuelve `vector_source` a BRAM-loop (`CTRL` bit 1 a
- * 0). Seguro de llamar aunque no hubiera nada en curso. */
+/* Marca que ya no hay vector seleccionado. Seguro de llamar aunque no hubiera
+ * nada en curso.
+ *
+ * NO para la fuente, y es un cambio de semantica frente a v8..v10: aquel Stop
+ * devolvia `vector_source` a BRAM-loop con el tono que `$readmemh` dejo en el
+ * bitstream. Ahora la BRAM se queda con el ultimo vector cargado sonando,
+ * porque el `$readmemh` solo corre al cargar el bitstream y no hay forma de
+ * recuperarlo por software. Para volver al tono nominal, cargar el vector
+ * `tono_if` (id 0), que es el mismo. */
 void DrxStimulus_Stop(void);
 
 /* Estado para la tarea de diagnostico. `name` es NULL si nunca se selecciono
@@ -58,34 +74,37 @@ void DrxStimulus_Stop(void);
 typedef struct {
     const char *name;
     uint8_t vector_id;
-    uint16_t remaining;   /* pasadas que faltan; 0 con `looping` = indefinido */
-    bool looping;
+    uint16_t remaining;   /* siempre 0: la BRAM reproduce en bucle indefinido */
+    bool looping;         /* siempre true mientras haya un vector cargado */
     bool running;
-    uint32_t passes;      /* pasadas completadas desde el ultimo Select */
-    uint32_t errors;      /* transferencias que el DMA marco como fallidas */
+    uint32_t loads;       /* vectores cargados con exito desde el arranque */
+    uint32_t errors;      /* cargas que no se pudieron completar */
 } DrxStimulusStatus;
 
 void DrxStimulus_GetStatus(DrxStimulusStatus *out);
 
-/* Crea la tarea de FreeRTOS que rearma el DMA entre pasadas. Hay que crearla
- * para que `repeat` distinto de 1 signifique algo. */
+/* No-op desde v11. Era la tarea que rearmaba el DMA entre pasadas; con la
+ * BRAM en bucle por hardware no hay nada que rearmar. Se conserva el simbolo
+ * para no tocar el arranque de main.c por una funcion vacia. */
 void DrxStimulusTask_Create(void);
 
-/* Comprobacion de bring-up del camino DDR -> MM2S -> vector_source, para
- * correr una vez al arrancar y antes de que haya un DSP al otro lado.
+/* Comprobacion de bring-up de la ventana de carga, para correr una vez al
+ * arrancar y antes de que haya un DSP al otro lado.
  *
- * El criterio es que una pasada del DMA se COMPLETE, y eso no es un detalle de
- * contabilidad: el stream tiene backpressure y el unico que levanta
- * `m_axis_vec_tready` es `vector_source` en modo Throttled(DDR) consumiendo
- * beats. Si el modo no estuviera puesto, si el ancho del stream no cuadrara o
- * si el conjunto de N_CH no se llenara, el DMA se quedaria a medias y la
- * pasada no contaria. Una pasada completa es por tanto prueba de que los
- * bytes llegaron de la DDR hasta dentro de la PL, sin necesidad de leer
- * ningun rayo -- que es Z4.4.
+ * Carga el vector y RELEE VEC_LEN y CTRL por AXI-Lite. Eso dice que las tres
+ * direcciones existen en este bitstream, que el slave acepto las escrituras y
+ * que el lector quedo suelto.
  *
- * De paso informa de OVERFLOW antes y despues, que es lo que mas se parece a
- * mirar el DATO sin tener todavia camino de vuelta: el catalogo trae un vector
- * a +6 dBFS pensado para saturar. Se informa, no se exige: que un vector
+ * Lo que NO dice es si el CONTENIDO de la BRAM es el correcto: la memoria no
+ * tiene camino de lectura hacia AXI-Lite. Esto es MAS DEBIL que la
+ * comprobacion de v8..v10, donde una pasada completa del DMA probaba que los
+ * bytes habian llegado dentro de la PL porque el unico que levantaba `tready`
+ * era `vector_source`. La prueba del dato es ahora el espectro del rayo
+ * contra el modelo dorado (DrxRay_SelfTest + tools/dump_ray.py), que es de
+ * todas formas la que de verdad importa.
+ *
+ * De paso informa de OVERFLOW antes y despues: el catalogo trae un vector a
+ * +6 dBFS pensado para saturar. Se informa, no se exige -- que un vector
  * concreto llegue a saturar la salida del DDC depende del ajuste de ganancia
  * de la cadena y no esta medido en placa todavia. */
 bool DrxStimulus_SelfTest(uint8_t vector_id);

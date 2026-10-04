@@ -9,7 +9,7 @@
 #define DRX_PARAMS_H
 
 #define DRX_SCHEMA_VERSION 1
-#define DRX_PARAMS_SHA256 "1fba80a42d0be1a4cd8bf42c15280452cb7453f7ac01742921908221ba11b955"
+#define DRX_PARAMS_SHA256 "67de14538bbaf7843aceb2d102a246266d167b9b5807cfa004169fe23df6a5ad"
 
 #define DRX_FS_HZ_ZEDBOARD 62500000LL
 #define DRX_IF_HZ_ZEDBOARD 15000000LL
@@ -41,6 +41,13 @@
 #define DRX_N_CH_TOP 3
 #define DRX_N_TX_BURST_CH 1
 #define DRX_N_TRIGGERS 4
+
+/* Reproductor de estimulo: capacidad fisica del banco de BRAM contra la
+ * longitud que se reproduce en bucle. El firmware usa LOOP_LEN para saber
+ * cuantas escrituras hace una carga, y BRAM_DEPTH para rechazar una longitud
+ * que no cabria. */
+#define DRX_VECTOR_BRAM_DEPTH 8192
+#define DRX_VECTOR_LOOP_LEN 4000
 
 #define DRX_SAMPLE_BITS 16
 #define DRX_IQ_BITS 16

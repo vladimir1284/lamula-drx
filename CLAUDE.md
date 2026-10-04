@@ -306,8 +306,9 @@ ráfaga de once. [P-19](docs/alcance/pendientes.md#p-19) nació y murió el mism
 día: 124 ppm durante una tormenta de WiFi del host, 25 ppm con el host sano y **0 en 201 032
 rayos** con un cliente que solo hace `recv_into` sobre un buffer fijo. Era el reensamblado en
 Python de `tools/mock_dsp.py`, no la placa. **Lo que falta para cerrar ZM4:** solo el barrido
-del catálogo de estímulos contra rayos reales. Detalle en `fases.md#z4`, entradas del 2-oct
-(noche) y del 3-oct.
+del catálogo de estímulos contra rayos reales — desbloqueado el 4-oct-2026 con el estímulo desde
+BRAM (ver más abajo), pendiente de medirlo en placa. Detalle en `fases.md#z4`, entradas del 2-oct
+(noche), del 3-oct y del 4-oct.
 
 **P-16 resuelto en RTL, 3-oct-2026 — por una tercera vía que el hallazgo no contemplaba.** P-16
 daba dos salidas, las dos caras: ensanchar el stream del MM2S (tres cambios simultáneos, y
@@ -337,6 +338,40 @@ matriz de 16 corridas de D-12, 2-3 h. Y el barrido destapó además
 [P-21](docs/alcance/pendientes.md#p-21), independiente: el MM2S se atasca tras unas pocas
 selecciones encadenadas. Y esto NO convierte Throttled(DDR) en fuente
 de tiempo real: no valida nada dependiente de la tasa.
+
+**El estímulo se carga en BRAM en tiempo de ejecución y el MM2S sale del diseño, 4-oct-2026.**
+Cambio de arquitectura, no un arreglo: en vez de regenerar la IP del DDS con `Has_ACLKEN {true}`
+—que cuesta la matriz de 16 corridas de D-12 y toca un núcleo ya verificado— se elimina la fuente
+con huecos. **BRAM-loop, que siempre entregó una muestra por ciclo, pasa a ser cargable en tiempo
+de ejecución**, y Throttled(DDR) sale del RTL y del block design. Mapa de registros **v11**:
+`CTRL` bit 2 `vector_load` más `VEC_ADDR`/`VEC_DATA`/`VEC_LEN`, un par dirección-dato con
+autoincremento y difusión a los N_CH bancos — una ventana de memoria direccionable no cabe en los
+128 B de `addr_width = 7` y un `axi_bram_ctrl` habría pedido un maestro más en el interconnect.
+`CTRL` bit 1 vuelve a reservado y **no se reutiliza**. Dimensionado medido antes de elegir: 8192
+muestras/canal × 3 = **12 BRAM Tile** sobre los 140 del xc7z020 (2048 muestras de 16 bits por
+tile), partiendo de 31,5/140 reales — el 29,5/21,07 % que repetía este fichero era de antes de
+Z4.4. `VECTOR_BRAM_DEPTH` (8192, capacidad) y `VECTOR_LOOP_LEN` (4000, lo que suena y valor de
+reset de `VEC_LEN`) son dos números distintos porque la longitud tiene que ser múltiplo de
+`IF_NORM_DEN` = 25 y 8192 no lo es; los dos viven en `config/params.toml` con gate en
+`gen_params.py`, comprobado por mutación. Con `VEC_LEN` reseteando a 4000 y el mismo `$readmemh`
+detrás, **un arranque en frío reproduce exactamente el bucle de v10**, así que los −9,03 dBFS
+medidos siguen siendo la regresión. El strobe de escritura va registrado junto con dirección,
+banco y dato, y la dirección que ve la BRAM es la de ANTES de incrementar — la cicatriz de
+`nco_pinc_we` aplicada antes de que mordiera, con las dos mutaciones comprobadas. Firmware:
+`drx_stimulus.c` reescrito entero contra la ventana, sin DMA, sin descriptores, sin buffer en DDR
+y sin la tarea de rearme — con ella desaparece el mecanismo donde vivía P-21; `repeat != 0` pasa a
+`unimplemented` y el contrato NO cambia de versión. **Dos cosas que esto NO hace:** no cierra
+P-16 (el DDS sigue sin `aclken` y vuelve a romper con cualquier fuente con huecos futura; se
+**rebaja**, no se cierra) y no cierra P-21 (el bug no está arreglado ni entendido, está
+inalcanzable). **Y una que se pierde:** nada en el diseño ejercita ya el camino DMA PS→PL.
+`make check` en verde con 160 tests, y **P&R `-top zynq` cierra: WNS = 1,618 ns, WHS = 0,014 ns,
+Block RAM Tile 38,5/140 (27,50 %) desde 31,5/140** — o sea la BRAM se infirió como BRAM y no cayó
+a LUTRAM, que era el riesgo principal. El WNS baja 0,776 ns desde los 2,394 ns del 3-oct y **no
+por el camino nuevo**: el crítico medido es el FIFO del FIR Compiler → `overflow_sticky_r` de
+`drx_axil_regs`, 12 niveles, un camino que ya existía; lo que cambió es la colocación.
+`XPAR_FABRIC_DMA_S2MM_INTROUT_INTR` sigue en 61, así que `drx_ray.c` no se toca. `BOOT.BIN`
+reproducible. **Nada de esto ha corrido en silicio todavía**: falta la regresión de −9,03 dBFS en
+frío y el barrido 8/8, que necesitan la placa. Detalle en `fases.md#z4`, entrada del 4-oct.
 
 **Infraestructura de medida, 3-oct-2026.** `tools/net_drx_link.sh` deja el enlace cableado al DRx
 con perfil persistente (192.168.1.1/24 estática, `never-default`): el perfil por defecto de

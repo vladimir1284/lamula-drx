@@ -45,7 +45,18 @@ REG_BINS_HIGH_ADDR = 0x4C
 REG_GATE_TRUNCATED_ADDR = 0x50
 REG_TRIG_COUNT_ADDR = 0x54  # v7, Z4.1
 REG_NCO_PINC_ADDR = 0x58  # v9, Z4.5
-REG_RESERVED_ADDR = 0x5C  # primera palabra sin implementar desde v9
+REG_VEC_ADDR_ADDR = 0x5C  # v11
+REG_VEC_DATA_ADDR = 0x60  # v11
+REG_VEC_LEN_ADDR = 0x64  # v11
+REG_RESERVED_ADDR = 0x68  # primera palabra sin implementar desde v11
+
+#: Ancho del puntero de VEC_ADDR/VEC_LEN, el mismo `$clog2(VECTOR_BRAM_DEPTH)`
+#: que usan `drx_axil_regs` y `vector_source`. Derivado, no literal: si la
+#: profundidad del banco cambia, el test tiene que seguirla sola.
+VEC_ADDR_BITS = (PARAMS.vector_bram_depth - 1).bit_length()
+VEC_ADDR_MASK = (1 << VEC_ADDR_BITS) - 1
+BANK_SHIFT = 16
+BANK_ALL = 7
 
 #: Leída de config/registers.toml, no fijada aquí. Los OFFSETS de arriba sí son
 #: literales a propósito -- si alguien mueve un registro, este test tiene que
@@ -143,8 +154,22 @@ async def _escribe_contando_strobe(dut, addr: int, data: int) -> tuple[int, list
     llevaba la palabra de la escritura anterior porque el pulso llegaba un ciclo
     antes que el dato.
     """
+    return await _escribe_muestreando(
+        dut, addr, data, lambda: int(dut.nco_pinc.value), dut.nco_pinc_we
+    )
+
+
+async def _escribe_muestreando(dut, addr, data, leer, strobe) -> tuple[int, list]:
+    """Escribe en `addr` y muestrea `leer()` en cada ciclo con `strobe` alto.
+
+    Mismo mecanismo que usaba `_escribe_contando_strobe` para NCO_PINC, sacado
+    aparte porque la ventana de carga del vector (v11) tiene exactamente el
+    mismo problema y la misma solucion: el consumidor escribe la BRAM en el
+    flanco en que ve el strobe, asi que la direccion y el dato tienen que
+    valer lo nuevo EN ESE ciclo.
+    """
     pulsos = 0
-    vistos: list[int] = []
+    vistos: list = []
     corriendo = True
 
     async def muestreador() -> None:
@@ -152,9 +177,9 @@ async def _escribe_contando_strobe(dut, addr: int, data: int) -> tuple[int, list
         while corriendo:
             await RisingEdge(dut.clk)
             await ReadOnly()
-            if int(dut.nco_pinc_we.value):
+            if int(strobe.value):
                 pulsos += 1
-                vistos.append(int(dut.nco_pinc.value))
+                vistos.append(leer())
 
     tarea = cocotb.start_soon(muestreador())
     await axil_write(dut, addr, data)
@@ -181,7 +206,7 @@ async def test_version_de_solo_lectura(dut):
 
 @cocotb.test()
 async def test_ctrl_mode_coarse_rw(dut):
-    """CTRL bit 0 controla `mode_coarse`; bits 31:2 son reservados (leen 0)."""
+    """CTRL bit 0 controla `mode_coarse`; el bit 1 y los 31:3 leen 0."""
     cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
     await _reset(dut)
 
@@ -190,8 +215,10 @@ async def test_ctrl_mode_coarse_rw(dut):
 
     await axil_write(dut, REG_CTRL_ADDR, 0xFFFF_FFFF)
     assert int(dut.mode_coarse.value) == 1, "mode_coarse no siguió a CTRL bit 0"
-    # 0b11: bits 0 y 1 implementados desde v8, el resto reservados y a 0.
-    assert await axil_read(dut, REG_CTRL_ADDR) == 0b11, (
+    # 0b101: bit 0 (mode_coarse) y bit 2 (vector_load, v11). El bit 1 fue
+    # `vector_source_ddr` entre v8 y v10 y volvió a reservado al retirarse el
+    # modo Throttled(DDR); el resto nunca estuvo implementado.
+    assert await axil_read(dut, REG_CTRL_ADDR) == 0b101, (
         "los bits reservados de CTRL deben leer 0"
     )
 
@@ -200,29 +227,162 @@ async def test_ctrl_mode_coarse_rw(dut):
 
 
 @cocotb.test()
-async def test_ctrl_vector_source_ddr_rw(dut):
-    """CTRL bit 1 (v8) controla `vector_source_ddr`, y es independiente del bit 0.
+async def test_ctrl_vector_load_rw(dut):
+    """CTRL bit 2 (v11) controla `vector_load`, y es independiente del bit 0.
 
     Que sean independientes no es obvio ni gratis: los dos salen de la MISMA
     escritura a CTRL, así que un desplazamiento de un bit en el RTL dejaría a
-    `mode_coarse` siguiendo al selector de fuente. En placa eso se vería como
-    "la decimación cambia sola al activar el modo DDR", que es un síntoma que
-    no apunta a este registro.
+    `mode_coarse` siguiendo al bit de carga. En placa eso se vería como "la
+    decimación cambia sola al cargar un vector", un síntoma que no apunta a
+    este registro.
     """
     cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
     await _reset(dut)
 
-    assert int(dut.vector_source_ddr.value) == 0, "arranca en BRAM-loop"
+    assert int(dut.vector_load.value) == 0, "arranca reproduciendo"
 
-    await axil_write(dut, REG_CTRL_ADDR, 0b10)
-    assert int(dut.vector_source_ddr.value) == 1, "no siguió a CTRL bit 1"
-    assert int(dut.mode_coarse.value) == 0, "el bit 1 arrastró al bit 0"
-    assert await axil_read(dut, REG_CTRL_ADDR) == 0b10
+    await axil_write(dut, REG_CTRL_ADDR, 0b100)
+    assert int(dut.vector_load.value) == 1, "no siguió a CTRL bit 2"
+    assert int(dut.mode_coarse.value) == 0, "el bit 2 arrastró al bit 0"
+    assert await axil_read(dut, REG_CTRL_ADDR) == 0b100
 
-    await axil_write(dut, REG_CTRL_ADDR, 0b01)
-    assert int(dut.vector_source_ddr.value) == 0, "el bit 0 arrastró al bit 1"
+    await axil_write(dut, REG_CTRL_ADDR, 0b001)
+    assert int(dut.vector_load.value) == 0, "el bit 0 arrastró al bit 2"
     assert int(dut.mode_coarse.value) == 1
-    assert await axil_read(dut, REG_CTRL_ADDR) == 0b01
+    assert await axil_read(dut, REG_CTRL_ADDR) == 0b001
+
+
+@cocotb.test()
+async def test_ctrl_bit1_es_reservado_desde_v11(dut):
+    """El bit 1 fue `vector_source_ddr` entre v8 y v10; en v11 lee 0 y no hace nada.
+
+    No se reutiliza para otra cosa a propósito: un firmware de v8..v10 que lo
+    escriba tiene que no activar NADA, en vez de activar algo distinto en
+    silencio. Este test es lo que impide que un bit nuevo acabe ahí por
+    comodidad.
+    """
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    await axil_write(dut, REG_CTRL_ADDR, 0b010)
+    assert await axil_read(dut, REG_CTRL_ADDR) == 0, "CTRL bit 1 tiene que leer 0"
+    assert int(dut.mode_coarse.value) == 0
+    assert int(dut.vector_load.value) == 0
+
+    # Y escribirlo junto a los bits vivos no los perturba.
+    await axil_write(dut, REG_CTRL_ADDR, 0b111)
+    assert await axil_read(dut, REG_CTRL_ADDR) == 0b101
+    assert int(dut.mode_coarse.value) == 1
+    assert int(dut.vector_load.value) == 1
+
+
+@cocotb.test()
+async def test_vec_len_arranca_en_vector_loop_len(dut):
+    """VEC_LEN resetea a la longitud que `$readmemh` precarga de verdad.
+
+    Es la condición que hace que un sistema que nunca escriba aquí reproduzca
+    exactamente el bucle de v10 y anteriores -- y por tanto que los -9,03 dBFS
+    ya medidos en placa sigan siendo la línea base contra la que comparar.
+    """
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    assert int(dut.vec_len.value) == PARAMS.vector_loop_len
+    assert await axil_read(dut, REG_VEC_LEN_ADDR) == PARAMS.vector_loop_len
+
+    nuevo = PARAMS.vector_loop_len // 2
+    await axil_write(dut, REG_VEC_LEN_ADDR, nuevo)
+    assert int(dut.vec_len.value) == nuevo
+    assert await axil_read(dut, REG_VEC_LEN_ADDR) == nuevo
+
+    # Los bits por encima del puntero son reservados y no se guardan.
+    await axil_write(dut, REG_VEC_LEN_ADDR, 0xFFFF_FFFF)
+    assert int(dut.vec_len.value) == VEC_ADDR_MASK
+    assert await axil_read(dut, REG_VEC_LEN_ADDR) == VEC_ADDR_MASK
+
+
+@cocotb.test()
+async def test_vec_addr_autoincrementa_y_conserva_el_banco(dut):
+    """Cada escritura de VEC_DATA incrementa el puntero y deja el banco quieto.
+
+    El autoincremento es lo que hace que cargar un vector sea una escritura de
+    VEC_ADDR y N de VEC_DATA. Si el banco se perdiera por el camino, la
+    difusión dejaría de serlo a partir de la segunda muestra y solo se
+    cargaría el canal 0 -- en placa, dos canales en silencio.
+    """
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    base = 0x12
+    await axil_write(dut, REG_VEC_ADDR_ADDR, (BANK_ALL << BANK_SHIFT) | base)
+    assert await axil_read(dut, REG_VEC_ADDR_ADDR) == (BANK_ALL << BANK_SHIFT) | base
+    assert int(dut.vec_bank.value) == BANK_ALL
+
+    for k in range(4):
+        await axil_write(dut, REG_VEC_DATA_ADDR, 0x1000 + k)
+        esperado = (base + k + 1) & VEC_ADDR_MASK
+        leido = await axil_read(dut, REG_VEC_ADDR_ADDR)
+        assert leido & VEC_ADDR_MASK == esperado, (
+            f"tras {k + 1} escrituras el puntero tiene que estar en {esperado}"
+        )
+        assert leido >> BANK_SHIFT == BANK_ALL, "el banco se perdió al incrementar"
+        assert int(dut.vec_bank.value) == BANK_ALL
+
+    # El puntero envuelve dentro de su ancho y no para en la profundidad: es
+    # una decisión, no un descuido -- ver el comentario del bloque en
+    # `rtl/drx_axil_regs.sv`.
+    await axil_write(dut, REG_VEC_ADDR_ADDR, VEC_ADDR_MASK)
+    await axil_write(dut, REG_VEC_DATA_ADDR, 0x7FFF)
+    assert await axil_read(dut, REG_VEC_ADDR_ADDR) & VEC_ADDR_MASK == 0
+
+
+@cocotb.test()
+async def test_vec_we_llega_alineado_con_direccion_y_dato(dut):
+    """El strobe de escritura trae la dirección y el dato de ESA escritura.
+
+    Es el mismo fallo que NCO_PINC tuvo y que costó una sesión de placa el
+    2-oct-2026: `vector_source` graba la memoria en el flanco en que ve
+    `vec_we`, así que un strobe combinacional sobre `write_commit` grabaría el
+    dato de la escritura anterior. Y la dirección tiene que ser la de ANTES de
+    incrementar, o el vector entero sale desplazado una posición -- que en el
+    espectro solo se ve como una fase distinta.
+
+    Quitar el registro de un ciclo de `vec_we_r`, o usar `vec_addr_r` en vez
+    de `vec_addr_q`, tiene que hacer fallar este test.
+    """
+    cocotb.start_soon(Clock(dut.clk, CLK_PERIOD_PS, units="ps").start())
+    await _reset(dut)
+
+    base = 0x30
+    await axil_write(dut, REG_VEC_ADDR_ADDR, (2 << BANK_SHIFT) | base)
+
+    def _muestra():
+        return (
+            int(dut.vec_addr.value),
+            int(dut.vec_bank.value),
+            int(dut.vec_data.value),
+        )
+
+    for k, dato in enumerate([0x0ABC, 0x7FFF, 0x8000, 0x0001]):
+        pulsos, vistos = await _escribe_muestreando(
+            dut, REG_VEC_DATA_ADDR, dato, _muestra, dut.vec_we
+        )
+        assert pulsos == 1, f"vec_we tiene que pulsar un solo ciclo, pulsó {pulsos}"
+        assert vistos == [(base + k, 2, dato)], (
+            f"escritura {k}: con el strobe alto se esperaba "
+            f"{(base + k, 2, dato)} y se vio {vistos}"
+        )
+
+    # Ninguna otra dirección genera el strobe.
+    pulsos, _ = await _escribe_muestreando(
+        dut, REG_CTRL_ADDR, 0x1, _muestra, dut.vec_we
+    )
+    assert pulsos == 0, "solo VEC_DATA genera vec_we"
+
+    pulsos, _ = await _escribe_muestreando(
+        dut, REG_VEC_ADDR_ADDR, 0x7, _muestra, dut.vec_we
+    )
+    assert pulsos == 0, "escribir VEC_ADDR no graba nada"
 
 
 @cocotb.test()

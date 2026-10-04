@@ -89,8 +89,18 @@ module drx_axil_regs
   // parametros, no en el del mapa de registros: es un numero del modelo dorado,
   // no una direccion.
   import drx_params_pkg::NCO_PHASE_INC;
+  // v11: capacidad fisica del banco de BRAM de `vector_source` y longitud del
+  // bucle precargado. La primera fija el ancho del puntero de VEC_ADDR; la
+  // segunda es el valor de reset de VEC_LEN, y tiene que ser la misma que
+  // `$readmemh` precarga o el bucle de arranque en frio no cerraria fase.
+  import drx_params_pkg::VECTOR_BRAM_DEPTH;
+  import drx_params_pkg::VECTOR_LOOP_LEN;
 #(
-    parameter int N_CH = 3
+    parameter int N_CH = 3,
+
+    // En la lista de parametros, no en el cuerpo: los puertos de la ventana de
+    // carga son de este ancho.
+    localparam int VecAddrBits = $clog2(VECTOR_BRAM_DEPTH)
 ) (
     input logic clk,
     input logic rst_n,
@@ -121,8 +131,23 @@ module drx_axil_regs
 
     // Registro -> planta.
     output logic mode_coarse,
-    // v8 (Z4.3): CTRL bit 1 -- selector de modo de `vector_source`.
-    output logic vector_source_ddr,
+
+    // v11: ventana de carga del vector de estimulo hacia `vector_source`.
+    //
+    // CTRL bit 1 era `vector_source_ddr` entre v8 y v10 y ya no existe: el
+    // modo Throttled(DDR) que seleccionaba salio del diseno junto con el canal
+    // MM2S del AXI DMA. El bit vuelve a reservado y lee 0.
+    //
+    // `vec_we` es un pulso de un ciclo por cada escritura de VEC_DATA, con
+    // `vec_addr`/`vec_bank`/`vec_data` validos en ESE mismo ciclo. No va
+    // cualificado por `vec_load` aqui: quien decide si la escritura llega a la
+    // memoria es `vector_source`, en un solo sitio.
+    output logic                 vector_load,
+    output logic                 vec_we,
+    output logic [VecAddrBits-1:0] vec_addr,
+    output logic [            2:0] vec_bank,
+    output logic [           15:0] vec_data,
+    output logic [VecAddrBits-1:0] vec_len,
 
     // v9 (Z4.5): NCO_PINC -- palabra de incremento de fase del NCO, hacia el
     // canal S_AXIS_CONFIG del DDS Compiler de cada canal del DDC. `nco_pinc_we`
@@ -241,17 +266,20 @@ module drx_axil_regs
   end
 
   logic mode_coarse_r;
-  logic vector_source_ddr_r;
-  assign mode_coarse       = mode_coarse_r;
-  assign vector_source_ddr = vector_source_ddr_r;
+  logic vector_load_r;
+  assign mode_coarse = mode_coarse_r;
+  assign vector_load = vector_load_r;
 
+  // El bit 1 no se decodifica: reservado desde v11, lee 0. No se reutiliza
+  // para otra cosa a proposito, para que un firmware de v8..v10 que lo
+  // escriba no active algo distinto en silencio.
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      mode_coarse_r       <= 1'b0;  // fino, el mismo default que el `ModeCoarse` fijo anterior
-      vector_source_ddr_r <= 1'b0;  // BRAM-loop, el modo que existia antes de v8
+      mode_coarse_r <= 1'b0;  // fino, el mismo default que el `ModeCoarse` fijo anterior
+      vector_load_r <= 1'b0;  // reproduciendo el bucle precargado
     end else if (write_commit && awaddr_r == REG_CTRL_ADDR) begin
-      mode_coarse_r       <= wdata_r[0];
-      vector_source_ddr_r <= wdata_r[1];
+      mode_coarse_r <= wdata_r[0];
+      vector_load_r <= wdata_r[2];
     end
   end
 
@@ -286,6 +314,79 @@ module drx_axil_regs
       nco_pinc_we_r <= write_commit && (awaddr_r == REG_NCO_PINC_ADDR);
       if (write_commit && awaddr_r == REG_NCO_PINC_ADDR) begin
         nco_pinc_r <= wdata_r;
+      end
+    end
+  end
+
+  // Ventana de carga del vector de estimulo (v11): VEC_ADDR / VEC_DATA /
+  // VEC_LEN. Es la via por la que el PS escribe los bancos de BRAM de
+  // `vector_source` en tiempo de ejecucion, y sustituye entera al camino
+  // DDR -> AXI DMA MM2S -> AXI4-Stream que v8 habia construido para lo mismo.
+  //
+  // Por que un par direccion/dato con autoincremento y no una ventana de
+  // memoria direccionable: `REGS_ADDR_WIDTH` son 7 bits, 128 B en total, y no
+  // cabe. Un `axi_bram_ctrl` habria pedido un maestro mas en el
+  // `axi_interconnect` y un segmento nuevo en el mapa de direcciones. A cambio
+  // de eso, una carga de VECTOR_LOOP_LEN muestras son otras tantas escrituras
+  // de VEC_DATA, del orden de 1 ms, y ocurre una vez por seleccion de vector.
+  //
+  // Los cuatro (strobe, direccion, banco y dato) se registran JUNTOS, por la
+  // misma razon que `nco_pinc_we` de arriba y con la misma cicatriz detras: el
+  // consumidor escribe la memoria en el flanco en que ve el strobe, y un
+  // strobe combinacional sobre `write_commit` llegaria acompanado del dato
+  // de la escritura anterior.
+  //
+  // `vec_addr_q` es la direccion ANTES del incremento. Sin ella, la muestra se
+  // grabaria una posicion mas alla de donde toca y el vector entero saldria
+  // desplazado un sitio -- un fallo que en el espectro solo se ve como una
+  // fase distinta, no como un error.
+  logic [VecAddrBits-1:0] vec_addr_r;
+  logic [VecAddrBits-1:0] vec_addr_q;
+  logic [            2:0] vec_bank_r;
+  logic [           15:0] vec_data_r;
+  logic [VecAddrBits-1:0] vec_len_r;
+  logic                   vec_we_r;
+
+  assign vec_addr = vec_addr_q;
+  assign vec_bank = vec_bank_r;
+  assign vec_data = vec_data_r;
+  assign vec_len  = vec_len_r;
+  assign vec_we   = vec_we_r;
+
+  logic vec_addr_write;
+  logic vec_data_write;
+  assign vec_addr_write = write_commit && (awaddr_r == REG_VEC_ADDR_ADDR);
+  assign vec_data_write = write_commit && (awaddr_r == REG_VEC_DATA_ADDR);
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      vec_addr_r <= '0;
+      vec_addr_q <= '0;
+      vec_bank_r <= '0;
+      vec_data_r <= '0;
+      // Reset = la longitud que `$readmemh` precarga de verdad en el
+      // bitstream. Un sistema que nunca escriba VEC_LEN reproduce exactamente
+      // el bucle de v10 y anteriores.
+      vec_len_r  <= VecAddrBits'(VECTOR_LOOP_LEN);
+      vec_we_r   <= 1'b0;
+    end else begin
+      vec_we_r <= vec_data_write;
+
+      if (vec_addr_write) begin
+        vec_addr_r <= wdata_r[VecAddrBits-1:0];
+        vec_bank_r <= wdata_r[18:16];
+      end else if (vec_data_write) begin
+        vec_data_r <= wdata_r[15:0];
+        vec_addr_q <= vec_addr_r;
+        // Envuelve dentro de VecAddrBits y no para al llegar a la
+        // profundidad: cargar de mas es un error del que carga, y pararlo
+        // aqui costaria un comparador en un camino que ya es el critico del
+        // diseno sin evitar el error, solo cambiando su sintoma.
+        vec_addr_r <= vec_addr_r + VecAddrBits'(1);
+      end
+
+      if (write_commit && awaddr_r == REG_VEC_LEN_ADDR) begin
+        vec_len_r <= wdata_r[VecAddrBits-1:0];
       end
     end
   end
@@ -511,7 +612,7 @@ module drx_axil_regs
       REG_VERSION_ADDR: rdata_next = 32'(REGS_VERSION);
       REG_CTRL_ADDR: begin
         rdata_next[0] = mode_coarse_r;
-        rdata_next[1] = vector_source_ddr_r;
+        rdata_next[2] = vector_load_r;
       end
       REG_STATUS_ADDR: begin
         for (int c = 0; c < N_CH; c++) rdata_next[c] = overrun_in[c];
@@ -521,6 +622,16 @@ module drx_axil_regs
       end
       REG_TRIG_COUNT_ADDR: rdata_next = trig_count_r;
       REG_NCO_PINC_ADDR: rdata_next = nco_pinc_r;
+      REG_VEC_ADDR_ADDR: begin
+        rdata_next[VecAddrBits-1:0] = vec_addr_r;
+        rdata_next[18:16]           = vec_bank_r;
+      end
+      // Devuelve la ultima palabra escrita, NO el contenido de la BRAM: la
+      // memoria no tiene camino de lectura hacia AXI-Lite, y anadirlo costaria
+      // un puerto mas por banco sin comprar nada. Quien quiera verificar una
+      // carga, que mida el espectro del rayo.
+      REG_VEC_DATA_ADDR: rdata_next[15:0] = vec_data_r;
+      REG_VEC_LEN_ADDR:  rdata_next[VecAddrBits-1:0] = vec_len_r;
       REG_OVERFLOW_ADDR: begin
         for (int c = 0; c < N_CH; c++) rdata_next[c] = overflow_sticky_r[c];
       end

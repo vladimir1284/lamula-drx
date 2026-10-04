@@ -114,6 +114,21 @@ class Params:
         return int(self.invariant["n_ch_top"])
 
     @property
+    def vector_bram_depth(self) -> int:
+        """Capacidad física de cada banco de BRAM de `rtl/vector_source.sv`."""
+        return int(self.invariant["vector_bram_depth"])
+
+    @property
+    def vector_loop_len(self) -> int:
+        """Longitud que se reproduce en bucle; reset de VEC_LEN (mapa v11).
+
+        Múltiplo de `if_norm.denominator` por construcción — `tools/gen_params.py`
+        lo comprueba —, para que el tono cierre un número entero de periodos y no
+        haya salto de fase al envolver.
+        """
+        return int(self.invariant["vector_loop_len"])
+
+    @property
     def sample_bits(self) -> int:
         return int(self.invariant["sample_bits"])
 

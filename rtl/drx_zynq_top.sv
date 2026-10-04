@@ -23,10 +23,11 @@
 // `drx_axil_regs.sv`) y nunca tuvieron puerto para ellas -- no hay nada del
 // otro lado que conectar.
 //
-// Z4.3 (fases.md#z4): `m_axis_vec_*` es el sentido contrario -- el canal MM2S
-// del mismo AXI DMA lee vectores de estimulo de la DDR del PS y los entrega a
-// `drx_top.s_vec_*`, que los mete en el modo Throttled(DDR) de
-// `vector_source.sv`. El vector deja asi de quedar fijo en el bitstream.
+// `m_axis_vec_*` (canal MM2S del AXI DMA hacia el modo Throttled(DDR) de
+// `vector_source`) existio entre Z4.3 y el 4-oct-2026. Se retiro: el estimulo
+// se carga ahora por la ventana AXI-Lite del mapa v11 directamente a la BRAM
+// de `vector_source`, a una muestra por ciclo, que es lo que P-16 necesitaba.
+// El canal MM2S salio tambien del block design (`tcl/gen_zynq_bd.tcl`).
 //
 // Z4.0 (fases.md#z4): `s_axis_ray_*` es el AXI4-Stream de `drx_top.m_ray_*`
 // (empaquetador de rayo, N_CH canales entrelazados) hacia el AXI DMA S2MM
@@ -96,21 +97,6 @@ module drx_zynq_top
   logic [2*IQ_BITS-1:0] s_axis_ray_tdata;
   logic                 s_axis_ray_tlast;
 
-  // Z4.3: el sentido contrario -- el vector de estimulo sale del canal MM2S
-  // del mismo AXI DMA y entra en el modo Throttled(DDR) de `vector_source`.
-  // 16 bits, una muestra por beat (ver la cabecera de `vector_source.sv`).
-  logic                   m_axis_vec_tvalid;
-  logic                   m_axis_vec_tready;
-  logic [SAMPLE_BITS-1:0] m_axis_vec_tdata;
-  logic                   m_axis_vec_tlast;
-  logic [1:0]             m_axis_vec_tkeep;
-  logic                   unused_vec_tkeep;
-  // TKEEP existe en el interfaz porque el VLNV `axis_rtl` lo lleva, pero con
-  // una muestra de 16 bits por beat no hay bytes parciales que señalar.
-  // Conectarlo a un bote de lint, y no dejarlo sin conectar, por el mismo
-  // motivo que las salidas de rayo de `drx_top_tieoff.sv`.
-  assign unused_vec_tkeep = &{1'b0, m_axis_vec_tkeep};
-
   drx_zynq_bd_wrapper u_bd (
       .DDR_addr         (DDR_addr),
       .DDR_ba           (DDR_ba),
@@ -163,16 +149,8 @@ module drx_zynq_top
       .s_axis_ray_tlast (s_axis_ray_tlast),
       // El stream nunca trae bytes parciales -- `drx_top`/`drx_ray_packer` no
       // tienen ni necesitan noción de TKEEP, ver la cabecera.
-      .s_axis_ray_tkeep (4'hF),
-
-      .m_axis_vec_tvalid(m_axis_vec_tvalid),
-      .m_axis_vec_tready(m_axis_vec_tready),
-      .m_axis_vec_tdata (m_axis_vec_tdata),
-      .m_axis_vec_tlast (m_axis_vec_tlast),
-      .m_axis_vec_tkeep (m_axis_vec_tkeep)
+      .s_axis_ray_tkeep (4'hF)
   );
-
-  logic [drx_debug_pkg::DbgWidth-1:0] dbg_bus;
 
   drx_top u_drx_top (
       .clk          (pl_clk0),
@@ -202,80 +180,16 @@ module drx_zynq_top
       .m_ray_valid(s_axis_ray_tvalid),
       .m_ray_ready(s_axis_ray_tready),
       .m_ray_data (s_axis_ray_tdata),
-      .m_ray_last (s_axis_ray_tlast),
-
-      .s_vec_valid(m_axis_vec_tvalid),
-      .s_vec_ready(m_axis_vec_tready),
-      .s_vec_data (signed'(m_axis_vec_tdata)),
-      .s_vec_last (m_axis_vec_tlast),
-
-      .dbg_bus(dbg_bus)
+      .m_ray_last (s_axis_ray_tlast)
   );
 
-  // --- ILA de depuracion (P-21) ---------------------------------------------
-  //
-  // Solo en la build de depuracion: `tcl/build.tcl -debug 1` define
-  // DRX_DEBUG_ILA y lee el XCI de `ip_debug/`. La build normal no cambia ni un
-  // LUT -- sin este `ifdef` no hay ILA, no hay dbg_hub y `opt_design` se lleva
-  // la sonda entera salvo el contador de `drx_debug_probe`.
-  //
-  // El troceado en probes sale de `drx_debug_pkg`, no de numeros a mano: si el
-  // bus cambia de orden, los nombres del ILA siguen apuntando al bit correcto.
-  //
-  // Como se usa, y por que esta configurado asi (disparo con `stalled` y
-  // almacenamiento calificado por actividad), en `docs/implementacion/ila.md`.
-`ifdef DRX_DEBUG_ILA
-  // Una señal CON NOMBRE por probe, y `dont_touch` en todas. `write_debug_probes`
-  // bautiza cada probe con el nombre del net que lleva conectado: atando los
-  // puertos del ILA directamente a rebanadas de `dbg_bus`, la captura saldría
-  // con once vectores llamados `dbg_bus[17:15]` y habría que acordarse de que
-  // el 17 es `gate_valid[2]` -- justo el error que el paquete existe para
-  // evitar. `dont_touch` impide que la síntesis se las coma por ser meros
-  // renombres.
-  (* dont_touch = "true" *) logic [2:0] dbg_s_vec;       // valid, ready, last
-  (* dont_touch = "true" *) logic [2:0] dbg_m_ray;       // valid, ready, last
-  (* dont_touch = "true" *) logic [5:0] dbg_ctrl;        // ddr, enable, paced, moved, trig, stalled
-  (* dont_touch = "true" *) logic [N_CH_TOP-1:0] dbg_vs_valid;
-  (* dont_touch = "true" *) logic [N_CH_TOP-1:0] dbg_vs_ready;
-  (* dont_touch = "true" *) logic [N_CH_TOP-1:0] dbg_ddc_valid;
-  (* dont_touch = "true" *) logic [N_CH_TOP-1:0] dbg_gate_valid;
-  (* dont_touch = "true" *) logic [N_CH_TOP-1:0] dbg_gate_ready;
-  (* dont_touch = "true" *) logic [N_CH_TOP-1:0] dbg_overrun;
-  (* dont_touch = "true" *) logic [N_CH_TOP-1:0] dbg_truncated;
-  (* dont_touch = "true" *) logic [drx_debug_pkg::DbgIdleBits-1:0] dbg_idle_cnt;
-
-  assign dbg_s_vec       = dbg_bus[drx_debug_pkg::DbgSVecValid+:3];
-  assign dbg_m_ray       = dbg_bus[drx_debug_pkg::DbgMRayValid+:3];
-  assign dbg_ctrl        = dbg_bus[drx_debug_pkg::DbgDdrMode+:6];
-  assign dbg_vs_valid    = dbg_bus[drx_debug_pkg::DbgVsValid+:N_CH_TOP];
-  assign dbg_vs_ready    = dbg_bus[drx_debug_pkg::DbgVsReady+:N_CH_TOP];
-  assign dbg_ddc_valid   = dbg_bus[drx_debug_pkg::DbgDdcValid+:N_CH_TOP];
-  assign dbg_gate_valid  = dbg_bus[drx_debug_pkg::DbgGateValid+:N_CH_TOP];
-  assign dbg_gate_ready  = dbg_bus[drx_debug_pkg::DbgGateReady+:N_CH_TOP];
-  assign dbg_overrun     = dbg_bus[drx_debug_pkg::DbgOverrun+:N_CH_TOP];
-  assign dbg_truncated   = dbg_bus[drx_debug_pkg::DbgTruncated+:N_CH_TOP];
-  assign dbg_idle_cnt    = dbg_bus[drx_debug_pkg::DbgIdleCnt+:drx_debug_pkg::DbgIdleBits];
-
-  drx_debug_ila u_debug_ila (
-      .clk(pl_clk0),
-
-      .probe0 (dbg_s_vec),
-      .probe1 (dbg_m_ray),
-      .probe2 (dbg_ctrl),
-      .probe3 (dbg_vs_valid),
-      .probe4 (dbg_vs_ready),
-      .probe5 (dbg_ddc_valid),
-      .probe6 (dbg_gate_valid),
-      .probe7 (dbg_gate_ready),
-      .probe8 (dbg_overrun),
-      .probe9 (dbg_truncated),
-      .probe10(dbg_idle_cnt)
-  );
-`else
-  // Mismo bote de lint que `unused_vec_tkeep`: sin ILA nadie lee el bus.
-  logic unused_dbg_bus;
-  assign unused_dbg_bus = &{1'b0, dbg_bus};
-`endif
+  // El ILA de P-21 vivia aqui, bajo `ifdef DRX_DEBUG_ILA`, hasta el
+  // 4-oct-2026. Se retiro con la sonda que lo alimentaba: media el camino
+  // `s_vec_*` -> `m_ray_*` del MM2S, y ese camino ya no existe. Los XCI de
+  // `ip_debug/`, `tcl/gen_ip_debug.tcl` y `rtl/drx_debug_pkg.sv` se quedan en
+  // el arbol sin usar, y la evidencia de las tres corridas esta en
+  // `docs/implementacion/evidencia/p-21/`. `tcl/build.tcl -debug 1` sigue
+  // existiendo pero ya no engancha nada.
 
 endmodule
 

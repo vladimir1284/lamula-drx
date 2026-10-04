@@ -96,11 +96,34 @@
 # El bit NO se deriva de `vector_source_ddr` a proposito -- poder pacear sin
 # DDR, o correr DDR sin pacear, es lo que distingue un fallo del pacer de un
 # fallo del modo.
-schema_version = 10
+# v11 (4-oct-2026) RETIRA el modo Throttled(DDR) y hace el bucle de BRAM
+# cargable en tiempo de ejecucion. El bit 1 de CTRL (`vector_source_ddr` de v8)
+# vuelve a ser reservado y a leer 0: el canal MM2S del AXI DMA sale del block
+# design y `rtl/vector_source.sv` pierde su mitad de DDR, asi que ya no hay dos
+# modos entre los que elegir. No se reutiliza el bit para otra cosa a proposito
+# -- un firmware de v8..v10 que lo escriba no debe activar algo distinto en
+# silencio. El bit 2, `vector_load`, es el que gobierna la carga: congela el
+# lector de BRAM mientras el PS escribe y, al soltarlo, deja el puntero en la
+# muestra 0.
+# Registros nuevos VEC_ADDR/VEC_DATA/VEC_LEN: la ventana por la que el PS
+# escribe la BRAM. No es una ventana de memoria direccionable porque no cabe --
+# addr_width = 7 son 128 B en total-- y un axi_bram_ctrl habria pedido un
+# maestro mas en el axi_interconnect y un segmento nuevo en el mapa de
+# direcciones. A cambio, una carga de 4000 muestras son 4000 escrituras de
+# VEC_DATA con autoincremento, del orden de 1 ms, y ocurre una vez por
+# seleccion de vector.
+# Motivo del cambio: P-16. El DDS Compiler no tiene `aclken`, asi que avanza un
+# paso de fase por ciclo de reloj mire o no `valid`; con Throttled(DDR)
+# entregando una muestra cada N_CH ciclos el DDC mezclaba a ~N_CH veces el IF y
+# la salida caia al suelo de ruido (-87,3 dBFS medidos contra -9,02 del modelo,
+# 3-oct-2026). Con el estimulo saliendo de BRAM a una muestra por ciclo las dos
+# bases de tiempo vuelven a coincidir. Esto NO arregla la causa raiz, que sigue
+# en el diseno para cualquier fuente con huecos futura.
+schema_version = 11
 
 # Bytes direccionables: 2^addr_width = 128 B = 32 palabras de 32 bits. Las
-# primeras 23 palabras (0x00-0x58) están implementadas (Z1 + Z2 v3/v5/v6 +
-# Z4.1 v7 + Z4.5 v9); el resto (0x5C en adelante) queda reservado sin
+# primeras 26 palabras (0x00-0x64) están implementadas (Z1 + Z2 v3/v5/v6 +
+# Z4.1 v7 + Z4.5 v9 + v11); el resto (0x68 en adelante) queda reservado sin
 # implementar (lee 0, escritura sin efecto), sin diseñarlo ahora.
 addr_width = 7
 
@@ -114,7 +137,7 @@ doc = "Versión de ESTE mapa de registros (= schema_version de arriba). Permite 
 name = "ctrl"
 offset = 0x04
 access = "rw"
-doc = "Bit 0: mode_coarse (0 = fino, valor de reset; 1 = grueso), compartido por los N_CH canales de drx_ddc_quad_top (decimación), igual que ya lo era como localparam. Desde v5 (D-15) ya NO llega a drx_range_gate -- el conteo de bins de range-gate es BINS_LOW/BINS_HIGH, no una elección fino/grueso fija. Bit 1 (v8): vector_source_ddr -- 0 = BRAM-loop (valor de reset), el vector queda fijo en el bitstream; 1 = Throttled(DDR), las muestras llegan por AXI4-Stream desde un AXI DMA MM2S alimentado por la DDR del PS, y el vector se elige en tiempo de ejecución (mensaje test_stimulus_select del contrato v0.5). Solo es seguro cambiarlo con la cadena parada: vector_source no vacía el conjunto a medio llenar al conmutar. Bits 31:2 reservados: leen 0, una escritura ahí no tiene efecto."
+doc = "Bit 0: mode_coarse (0 = fino, valor de reset; 1 = grueso), compartido por los N_CH canales de drx_ddc_quad_top (decimación), igual que ya lo era como localparam. Desde v5 (D-15) ya NO llega a drx_range_gate -- el conteo de bins de range-gate es BINS_LOW/BINS_HIGH, no una elección fino/grueso fija. Bit 1: RESERVADO desde v11, lee 0 y una escritura ahí no tiene efecto -- fue vector_source_ddr entre v8 y v10, y el modo Throttled(DDR) que seleccionaba ya no existe (el canal MM2S salió del block design). No se reutiliza para otra cosa, para que un firmware de v8..v10 que lo escriba no active algo distinto en silencio. Bit 2 (v11): vector_load -- 0 = reproduciendo (valor de reset); 1 = carga en curso, el lector de BRAM de vector_source se congela y el PS puede escribir por VEC_ADDR/VEC_DATA sin que el consumidor lea una mezcla del vector viejo y el nuevo. Al bajar de 1 a 0 el puntero de lectura queda en la muestra 0, así que la reproducción siempre empieza en un punto conocido. Bits 31:3 reservados: leen 0, una escritura ahí no tiene efecto."
 
 [[register]]
 name = "status"
@@ -247,3 +270,27 @@ name = "nco_pinc"
 offset = 0x58
 access = "rw"
 doc = "Palabra de incremento de fase del NCO (NCO_PHASE_BITS = 32 bits), compartida por los N_CH canales de drx_ddc_quad_top: los N_CH ven el mismo IF, un retune que moviera solo uno los dejaria desalineados. Valor de reset = NCO_PHASE_INC, el mismo PINC1 que la IP del DDS Compiler lleva congelado como valor inicial, de modo que no escribir aqui deja la cadena bit a bit como antes de v9. CADA escritura genera un pulso de un ciclo hacia el canal S_AXIS_CONFIG del core (sin TREADY: se acepta siempre), incluso si el valor no cambia -- es la via de actuacion del mensaje `afc` del contrato DRx<->DSP. No hay continuidad de fase garantizada en el salto: el acumulador sigue desde donde estaba con el incremento nuevo, igual que `mode_coarse`, y por el mismo motivo (la correccion se aplica entre rayos, nunca dentro de uno; ver `apply_at_seq` del mensaje `afc`)."
+
+# --- v11 (4-oct-2026): ventana de carga del vector de estimulo --------------
+#
+# Las tres juntas son el camino por el que el PS escribe los bancos de BRAM de
+# `rtl/vector_source.sv` en tiempo de ejecucion, y sustituyen entero al camino
+# DDR -> AXI DMA MM2S -> AXI4-Stream que v8 habia construido para lo mismo.
+
+[[register]]
+name = "vec_addr"
+offset = 0x5C
+access = "rw"
+doc = "Puntero y banco de la ventana de carga del vector de estímulo. Bits 12:0: dirección de escritura dentro del banco, en muestras, de 0 a VECTOR_BRAM_DEPTH-1; AUTOINCREMENTA en 1 después de cada escritura de VEC_DATA, de modo que cargar un vector entero es escribir este registro una vez y VEC_DATA tantas veces como muestras tenga. Bits 18:16: banco de destino -- 0..N_CH-1 escribe solo ese canal, y 7 es difusión a los N_CH a la vez. La difusión es lo que hace que una carga cueste una pasada y no N_CH; los bancos siguen siendo independientes en RTL, así que un estímulo distinto por canal (Config A: Tx + H + V) es escribir tres veces, no un cambio de diseño. Un banco entre N_CH y 6 no escribe en ninguno. Bits 15:13 y 31:19 reservados: leen 0. El autoincremento envuelve dentro de los 13 bits y NO para al llegar a VECTOR_BRAM_DEPTH."
+
+[[register]]
+name = "vec_data"
+offset = 0x60
+access = "rw"
+doc = "Una muestra de 16 bits con signo, en los bits 15:0 (bits 31:16 ignorados en escritura). Escribir aquí graba la muestra en el banco y la dirección que VEC_ADDR tenga en ese momento, y después incrementa VEC_ADDR[12:0]. La escritura solo llega a la BRAM con CTRL bit 2 (vector_load) en 1: con el lector corriendo, escribir aquí no tiene efecto, para que no se pueda corromper el vector que esta sonando. LEER este registro devuelve la última palabra escrita, NO el contenido de la BRAM: la memoria no tiene camino de lectura hacia AXI-Lite y añadirlo costaría un puerto más por banco sin comprar nada -- quien quiera verificar una carga, que mida el espectro del rayo, que es la prueba que de verdad importa."
+
+[[register]]
+name = "vec_len"
+offset = 0x64
+access = "rw"
+doc = "Bits 12:0: longitud del bucle en muestras. El puntero de lectura de vector_source envuelve en VEC_LEN-1, no en la profundidad física del banco: VECTOR_BRAM_DEPTH (8192) es capacidad, esto es lo que se reproduce. Valor de reset = VECTOR_LOOP_LEN (4000), que es exactamente la longitud del tono que $readmemh precarga en el bitstream, así que un sistema que nunca escriba aquí reproduce el mismo bucle que v10 y antes. Una longitud que no sea múltiplo de IF_NORM_DEN deja un salto de fase en cada vuelta: el hardware la acepta, el gate de tools/gen_params.py solo cubre el valor de reset, y comprobarlo para un vector cargado en caliente es responsabilidad de quien lo carga. El valor 0 se trata como 1 (un bucle de una muestra), no como 'parado': parar es CTRL bit 2. Bits 31:13 reservados: leen 0."

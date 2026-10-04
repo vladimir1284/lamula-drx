@@ -3,11 +3,16 @@
 El toplevel elaborado es el shim `vector_source_tb_dut` (`sim/tb_sv/`), no
 `vector_source` directamente — ver la cabecera del shim.
 
-`DEPTH` se baja a 8: el valor de producción son 4000 muestras por canal, y
-recorrerlas enteras para ver un `last` de BRAM-loop costaría 4000 ciclos por
-caso sin probar nada que 8 no pruebe. `INIT_FILE` se deja vacío a propósito —
-ninguno de los casos compara el CONTENIDO de la BRAM, que es lo que cubre L1
-contra la IP real.
+`DEPTH` se baja a 8: el valor de producción es `VECTOR_BRAM_DEPTH` (8192
+muestras por canal) y recorrerlo entero para ver un `last` costaría otros
+tantos ciclos por caso sin probar nada que 8 no pruebe. Con DEPTH = 8,
+`AddrBits` son 3 bits en vez de los 13 del mapa de registros real, y los
+tests escriben el banco entero en ocho ciclos.
+
+`INIT_FILE` se deja vacío a propósito: desde v11 el contenido se CARGA en cada
+caso por la ventana `vec_addr`/`vec_data`, así que ningún test depende de lo
+que `$readmemh` hubiera dejado. El contenido precargado en el bitstream se
+comprueba en placa, midiendo el espectro del rayo contra el modelo dorado.
 """
 
 from pathlib import Path

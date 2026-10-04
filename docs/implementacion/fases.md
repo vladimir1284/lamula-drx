@@ -2127,6 +2127,174 @@ Trabajo:
     achacar al conductor, al pacer o al DMA sin forma de distinguirlos.
 
 
+!!! success "4-oct-2026: el estímulo se carga en BRAM en tiempo de ejecución, y el MM2S sale del diseño"
+    **Cambio de arquitectura, no un arreglo.** El 3-oct la medida dejó P-16 abierto por una causa
+    que ninguna de las dos salidas previstas contemplaba: el DDS Compiler no tiene `aclken`
+    (`rtl/drx_ddc_mixer.sv:99`, `tcl/gen_ip.tcl:238`) y avanza un paso de fase por ciclo de reloj
+    mire o no `valid`. Con Throttled(DDR) entregando una muestra cada `N_CH` ciclos, el DDC
+    mezclaba a ~`N_CH` veces el IF: **−87,3 dBFS contra −9,02 del modelo dorado**.
+
+    El arreglo simétrico —regenerar la IP con `Has_ACLKEN {true}`, cablear `aclken = advance`,
+    extender el diferido de `S_AXIS_CONFIG`, y la matriz de 16 corridas de D-12 como gate, 2–3 h—
+    existía y no se tomó. En su lugar se eliminó la fuente con huecos: **el modo BRAM-loop, que
+    siempre entregó una muestra por ciclo, pasa a ser cargable en tiempo de ejecución, y
+    Throttled(DDR) sale del RTL y del block design.**
+
+    Lo único que le faltaba a BRAM-loop era elegir el vector sin volver a sintetizar. Ahora lo
+    tiene, y la ventaja frente al DMA es que sale **a tasa plena**, que es lo que hace medible el
+    barrido del catálogo — lo último que le queda a ZM4.
+
+    **Mapa de registros v11.** `CTRL` bit 2 `vector_load` (congela el lector mientras el PS
+    escribe, y al soltarlo deja el puntero en la muestra 0), más `VEC_ADDR` (0x5C, puntero con
+    autoincremento + banco de destino, con difusión a los `N_CH` en el banco 7), `VEC_DATA` (0x60,
+    una muestra por escritura) y `VEC_LEN` (0x64, longitud del bucle, reset = `VECTOR_LOOP_LEN`).
+    `CTRL` bit 1 —el `vector_source_ddr` de v8— vuelve a reservado y **no se reutiliza**: un
+    firmware de v8..v10 que lo escriba no debe activar algo distinto en silencio. Detalle en
+    [registros.md](registros.md#z4-en-v11).
+
+    **Par dirección/dato y no ventana de memoria.** `addr_width = 7` son 128 B en total y una
+    ventana direccionable no cabe; un `axi_bram_ctrl` habría pedido un maestro más en el
+    `axi_interconnect` (los dos de `NUM_MI` están ocupados) y un segmento nuevo en el mapa de
+    direcciones. A cambio, una carga de 4000 muestras son 4000 escrituras con autoincremento, del
+    orden de milisegundos, una vez por selección de vector.
+
+    **Dimensionado: 8192 muestras por canal, 12 BRAM Tile.** El xc7z020 tiene 140 tiles de 36 Kbit
+    con 32768 bits de dato cada uno, o sea 2048 muestras de 16 bits por tile; 8192 × 3 canales son
+    4 RAMB36 exactos por canal. Se midió antes de elegir: la ocupación de partida era 31,5/140
+    (22,5 %), no el 29,5 que repetía `CLAUDE.md` desde antes de Z4.4. Se descartó ir a 32 768
+    muestras/canal (48 tiles) porque no tiene cliente hoy y obligaría a sacar el catálogo de la
+    imagen del firmware: 8 vectores × 3 canales × 32 Ki × 2 B no caben donde hoy caben 62 KiB.
+
+    **Las dos longitudes, y por qué no son la misma.** `VECTOR_BRAM_DEPTH` (8192) es capacidad;
+    `VECTOR_LOOP_LEN` (4000) es lo que se reproduce y el valor de reset de `VEC_LEN`. La longitud
+    tiene que ser múltiplo de `IF_NORM_DEN` (25) para que el tono cierre un número entero de
+    periodos, y 8192 no lo es. Las dos viven ahora en `config/params.toml` y `tools/gen_params.py`
+    comprueba las dos condiciones — el gate se verificó por mutación: con `vector_loop_len = 4001`
+    la generación falla en vez de dejar faldas alrededor del tono en placa. Es el mismo patrón que
+    `n_ch_top`, y existe por la misma razón: `DRX_STIMULUS_N_CH` ya estuvo escrito a mano en dos
+    sitios sin nada que los comparara.
+
+    **El valor de reset de `VEC_LEN` es lo que protege la línea base.** `$readmemh` sigue
+    precargando el mismo tono de 4000 muestras (ahora en un fichero de 8192 líneas, con ceros
+    detrás, para no dejar ni una palabra indefinida en el array), así que **un arranque en frío
+    sin ninguna escritura reproduce exactamente el bucle de v10**. Los −9,03 dBFS ya medidos
+    siguen valiendo como regresión.
+
+    **La cicatriz de v9, aplicada antes de que mordiera.** `vec_we`, `vec_addr`, `vec_bank` y
+    `vec_data` se registran JUNTOS, y la dirección que ve la BRAM es la de antes del incremento
+    (`vec_addr_q`). Con un strobe combinacional sobre `write_commit` —lo que tenía `nco_pinc_we`
+    hasta el 2-oct— la memoria se habría llevado el dato de la escritura anterior; con
+    `vec_addr_r` el vector entero habría salido desplazado una posición, que en el espectro solo
+    se ve como una fase distinta. Las dos cosas tienen test, y **las dos mutaciones se
+    comprobaron**: `tb_drx_axil_regs.py::test_vec_we_llega_alineado_con_direccion_y_dato` falla
+    con cualquiera de ellas.
+
+    **Un hallazgo del propio L0, que no se esperaba.** El envolvente del puntero pasó de `==` a
+    `>=`. Con la igualdad estricta, acortar `vec_len` con el puntero ya más allá del nuevo final
+    obliga a recorrer el banco ENTERO antes de resincronizar — y ese recorrido pasa por la parte
+    no cargada de la memoria. El flujo normal nunca lo ve (`VEC_LEN` se escribe con `vec_load` en
+    alto, que ya deja el puntero en 0), pero el test lo destapó y el arreglo cuesta un comparador.
+
+    **Lo que sale del diseño.** El canal MM2S del `axi_dma` (`c_include_mm2s 0`), el tercer
+    maestro del `axi_interconnect` hacia HP0 (`NUM_SI` de 3 a 2), el puerto externo `m_axis_vec`,
+    el `xlconcat` de interrupciones (una sola fuente vuelve a conectarse directa a `IRQ_F2P`,
+    como antes de Z4.3), la mitad DDR de `rtl/vector_source.sv`, los puertos `s_vec_*` de
+    `drx_top`, y la sonda `drx_debug_probe` con su ILA — la sonda medía el camino `s_vec_*` →
+    `m_ray_*`, que ya no existe. El módulo y los XCI de `ip_debug/` se quedan en el árbol sin
+    instanciar; la evidencia de las tres corridas está en `evidencia/p-21/`.
+
+    **Dos cosas que esto NO hace, y conviene no confundirlas con lo que sí hace.**
+
+    1. **No cierra P-16.** El DDS sigue sin `aclken`. Cualquier fuente futura con huecos —un ADC
+       real, el JESD204B de la ZU9 si su `valid` no es continuo— vuelve a mezclar a la frecuencia
+       equivocada, con el mismo síntoma mudo, en una plataforma donde diagnosticarlo cuesta mucho
+       más. P-16 se **rebaja** a «no bloquea ZedBoard», no se cierra.
+    2. **No cierra P-21.** El atasco del MM2S no está arreglado ni entendido: está inalcanzable.
+       Si el MM2S vuelve, vuelve con él.
+
+    **Y una cosa que se pierde:** después de este cambio **nada en el diseño ejercita el camino
+    DMA PS→PL**. `M_AXI_MM2S` contra `S_AXI_HP0` era la única cobertura de ese sentido. Decisión
+    explícita del 4-oct-2026, no un descuido.
+
+    **Firmware.** `fw/src/app/drx_stimulus.c` se reescribe entero contra la ventana de registros:
+    desaparecen el buffer entrelazado de 24000 B en `.bss`, el anillo de descriptores,
+    `submit_pass`/`reap_pass`, `set_modo_ddr` y la tarea de FreeRTOS que rearmaba entre pasadas —
+    es decir, desaparece el mecanismo entero donde vivía P-21. `DrxStimulusTask_Create` queda como
+    no-op con comentario. `repeat` distinto de 0 pasa a contestar `unimplemented` (código 11, ya
+    en el contrato v0.8): la BRAM reproduce en bucle por hardware y no hay nada que cuente
+    pasadas, así que aceptarlo y reproducir indefinidamente dejaría al par remoto sin enterarse.
+    **El contrato no cambia de versión.**
+
+    `DrxStimulus_Stop()` cambia de semántica y hay que decirlo: ya no devuelve la fuente al tono
+    de síntesis, porque el `$readmemh` solo corre al cargar el bitstream. La BRAM se queda con el
+    último vector cargado sonando; volver al nominal es cargar `tono_if`, que es el mismo tono.
+    `main.c` pierde el `DrxStimulus_Stop()` previo a `DrxRay_Init` —existía porque en
+    Throttled(DDR) no salía ni un rayo entero— y en su lugar recarga el vector 0, para que la
+    autoprueba de rayos mida contra el mismo tono que el modelo dorado y no contra el de +6 dBFS
+    que dejó el último self-test.
+
+    `DrxStimulus_SelfTest` es ahora **más débil** que la de v8..v10, y está dicho en su cabecera:
+    relee `VEC_LEN` y `CTRL` por AXI-Lite, lo que prueba que la ventana existe y que el slave
+    aceptó las escrituras, pero no que el CONTENIDO de la BRAM sea el correcto — no hay camino de
+    lectura desde la memoria. Antes, una pasada completa del DMA sí probaba que los bytes habían
+    entrado en la PL. La prueba del dato es el espectro del rayo contra el modelo dorado.
+
+    **Verificación.** `make check` en verde, **160 tests**. L0 de `vector_source` reescrito entero
+    (9 casos) y `tb_drx_axil_regs.py` en 24. La matriz L1 de D-12 **no hace falta** y conviene
+    decirlo en vez de saltársela en silencio: el DDC, el NCO, el CIC, los FIR y el range gate no
+    se tocan, y `vector_source` no tiene caso L1.
+
+    **P&R, `-top zynq -step xsa`: cierra, y la BRAM se infirió.**
+
+    | | antes (3-oct) | ahora (4-oct) |
+    |---|---|---|
+    | WNS | 2,394 ns | **1,618 ns** |
+    | WHS | 0,013 ns | **0,014 ns** |
+    | Block RAM Tile | 31,5 / 140 (22,50 %) | **38,5 / 140 (27,50 %)** |
+    | Slice LUTs | — | 9702 / 53 200 (18,24 %) |
+    | Registros | 19 656 (18,47 %) | 18 604 (17,48 %) |
+    | DSP48 | 159 / 220 | 159 / 220 |
+
+    **La BRAM se infirió como BRAM**, que era el riesgo principal: +7,0 tiles contra los +6
+    previstos (12 nuevos menos los ~6 del banco de 4000 que había), y las LUT no se dispararon. Si
+    hubiera caído a LUTRAM —el fallo que `rtl/drx_range_gate.sv:180-186` ya documenta— el conteo
+    de BRAM se habría quedado donde estaba y el de LUT habría subido en miles. Los registros bajan
+    1052 al irse el camino DDR, la FSM del conjunto y la sonda de P-21.
+
+    **El WNS baja 0,776 ns, y NO por el camino nuevo.** Era el riesgo que el plan daba por más
+    probable, y la medida lo descarta: el camino crítico es
+
+    ```
+    u_drx_top/u_ddc/g_ch[1].u_ddc/g_branch[1].u_fir/.../fifo_2_reg[18]/C
+      -> u_drx_top/u_regs/overflow_sticky_r_reg[1]/D
+    13,940 ns, 12 niveles (CARRY4 x8, DSP48E1, LUT4 x2, LUT5), lógica 7,019 / rutado 6,921
+    ```
+
+    O sea el FIFO interno del FIR Compiler hasta el latch sticky de OVERFLOW — un camino que ya
+    existía y que no toca ni `vec_we` ni los bancos. Lo que cambió es la colocación: mover 12
+    tiles de BRAM y sacar el MM2S reordena el die. `drx_axil_regs` sigue siendo el sumidero del
+    camino crítico, como desde Z2, pero el origen ya no es el PS7 sino el DDC. Queda margen
+    (1,618 ns sobre un periodo de 16 ns) y queda la advertencia de Z2: cada pieza nueva se apila
+    sobre este mismo bloque.
+
+    **XSA, BSP y `BOOT.BIN`.** `tools/build_vitis.sh zedboard` compila y enlaza sin símbolos sin
+    resolver; los únicos avisos son los tres `fall through` de `xadapter.c` del port de lwIP de
+    Xilinx, ya conocidos. **El ID de interrupción del S2MM no se mueve**, que era la comprobación
+    obligada tras tocar el block design: `XPAR_FABRIC_DMA_S2MM_INTROUT_INTR` sigue en **61**, que
+    es el macro que usa `drx_ray.c:42`. Lo que sí cambia es un alias que nadie usa
+    (`XPAR_FABRIC_AXIDMA_0_S2MM_INTROUT_VEC_ID` pasa a `XPAR_FABRIC_AXIDMA_0_VEC_ID` al quedar un
+    solo canal). `tools/make_boot.sh zedboard` da `BOOT.BIN` reproducible,
+    `f3923c9d…`, con los dos avisos de solapamiento de `bootgen` ya cerrados como falso positivo
+    el 1-oct.
+
+    **Lo que falta, y necesita la placa.** Nada de lo anterior ha corrido en silicio. En orden:
+    (1) `drx_status` confirmando mapa **v11**; (2) **regresión antes de cargar nada** — arranque
+    en frío con el tono precargado, espectro del rayo contra el modelo dorado, **tiene que dar
+    −9,03 dBFS**, y si no da, el cambio rompió algo que funcionaba; (3) cargar `tono_if` por la
+    ventana y repetir la medida, que tiene que coincidir; (4) `tools/sweep_catalogo.py --settle 1`
+    → **8/8**, que es el cierre de ZM4 y lo que P-16 bloqueaba (hoy da 0/8). Hace falta un ciclo
+    de `SW8`: reprogramar la PL con el S2MM en marcha traba HP0 y no se recupera por software.
+
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
 Trabajo:

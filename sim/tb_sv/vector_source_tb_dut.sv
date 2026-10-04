@@ -10,8 +10,12 @@
 //
 // `DEPTH` e `INIT_FILE` son parámetros para que el test pueda usar un vector
 // corto y propio en vez del de `tools/gen_vector_source_init.py`: la BRAM real
-// son 4000 muestras por canal y recorrerla entera para ver un `last` costaría
-// 4000 ciclos por cada caso.
+// son VECTOR_BRAM_DEPTH muestras por canal y recorrerla entera para ver un
+// `last` costaría otras tantas.
+//
+// `vec_addr` y `vec_len` salen de `$clog2(DEPTH)` dentro del DUT, así que el
+// shim los declara igual: con DEPTH = 8 son 3 bits, no los 13 del mapa de
+// registros real.
 //
 // Orden de bits: canal 0 en el grupo menos significativo de cada bus
 // empaquetado, el mismo convenio que el shim del empaquetador de rayo.
@@ -24,17 +28,19 @@ module vector_source_tb_dut
 #(
     parameter int N_CH = 3,
     parameter int DEPTH = 8,
-    parameter string INIT_FILE = ""
+    parameter string INIT_FILE = "",
+
+    localparam int AddrBits = $clog2(DEPTH)
 ) (
     input logic clk,
     input logic rst_n,
 
-    input logic ddr_mode,
-
-    input  logic                          s_axis_valid,
-    output logic                          s_axis_ready,
-    input  logic signed [SAMPLE_BITS-1:0] s_axis_data,
-    input  logic                          s_axis_last,
+    input logic                          vec_load,
+    input logic                          vec_we,
+    input logic [          AddrBits-1:0] vec_addr,
+    input logic [                   2:0] vec_bank,
+    input logic signed [SAMPLE_BITS-1:0] vec_data,
+    input logic [          AddrBits-1:0] vec_len,
 
     input  logic [N_CH-1:0]                       ready,
     output logic [N_CH-1:0]                       valid,
@@ -65,12 +71,12 @@ module vector_source_tb_dut
       .clk  (clk),
       .rst_n(rst_n),
 
-      .ddr_mode(ddr_mode),
-
-      .s_axis_valid(s_axis_valid),
-      .s_axis_ready(s_axis_ready),
-      .s_axis_data (s_axis_data),
-      .s_axis_last (s_axis_last),
+      .vec_load(vec_load),
+      .vec_we  (vec_we),
+      .vec_addr(vec_addr),
+      .vec_bank(vec_bank),
+      .vec_data(vec_data),
+      .vec_len (vec_len),
 
       .ready(ready_arr),
       .valid(valid_arr),

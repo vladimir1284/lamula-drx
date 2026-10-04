@@ -67,6 +67,33 @@ n_tx_burst_ch = 1
 # cabecera en banda del rayo lo lleva, así que además se comprueba en runtime.
 n_ch_top = 3
 
+# Reproductor de vectores de estimulo (`rtl/vector_source.sv`).
+#
+# Dos numeros distintos, y la distincion importa:
+#
+#   vector_bram_depth  capacidad FÍSICA de cada banco de BRAM, en muestras. Es
+#                      lo que se sintetiza y lo que cuesta recursos: 8192 x 16
+#                      bits son 4 RAMB36 exactos por canal, 12 BRAM Tile con
+#                      n_ch_top = 3, sobre los 140 del xc7z020. Dimensionado
+#                      contra la pieza más pequeña de las dos plataformas.
+#
+#   vector_loop_len    longitud que se REPRODUCE en bucle. Es el valor de reset
+#                      del registro VEC_LEN (mapa v11), escribible en tiempo de
+#                      ejecución, y la longitud de los vectores del catálogo que
+#                      el PS carga por la ventana AXI-Lite.
+#
+# vector_loop_len tiene que ser múltiplo de if_norm_den o el tono no cierra un
+# número entero de periodos y hay un salto de fase en cada vuelta del bucle.
+# 8192 NO es múltiplo de 25, y por eso la capacidad y la longitud no pueden ser
+# el mismo numero. `tools/gen_params.py` comprueba las dos condiciones.
+#
+# Viven aquí, y no como literales repartidos, por el mismo motivo que n_ch_top:
+# los consumen el RTL (profundidad del array y reset de VEC_LEN), el firmware
+# (cuántas escrituras hace una carga) y tres generadores de Python
+# (gen_vector_source_init, gen_stimulus_catalog, y el gate de gen_params).
+vector_bram_depth = 8192
+vector_loop_len = 4000
+
 # Anchos de datos.
 sample_bits = 16    # muestra de ADC por la SSA
 iq_bits = 16        # I y Q a la salida del DDC, por componente

@@ -25,22 +25,41 @@ primera clase en lugar de un hack de bring-up, lo cual también es lo correcto p
 el plan original ya contaba con inyección digital al nivel del ADC/JESD como método de prueba
 determinista.
 
-## Reproductor de vectores: tres modos
+## Reproductor de vectores: los modos previstos, y el que quedó
 
 El ancho de banda de DDR3 de la ZedBoard (32 bits a 533 MT/s, unos 2133 MB/s de pico; *estimación*
-de ~1400 MB/s sostenidos) limita lo que se puede reproducir en tiempo real dilatado. De ahí tres
-modos con compromisos distintos:
+de ~1400 MB/s sostenidos) limita lo que se puede reproducir en tiempo real dilatado. El diseño
+original preveía por eso tres modos con compromisos distintos:
 
-| Modo | Fuente | Canales | Tasa | Uso |
-|---|---|---|---|---|
-| **RT** | DDR vía MM2S DMA | 1–2 | 100 MSPS (≈200–400 MB/s) | Fidelidad temporal, señales largas |
-| **BRAM-loop** | BRAM, forma de onda repetitiva | 4 | 100 MSPS | Ensayos de tasa sostenida y de timing |
-| **Throttled** | DDR con backpressure AXIS | 4 | < tiempo real | Corrección funcional, bit-exacta |
+| Modo | Fuente | Tasa | Estado |
+|---|---|---|---|
+| **BRAM-loop** | BRAM interna, forma de onda repetitiva | una muestra por ciclo | **el único implementado**, y desde el 4-oct-2026 cargable en tiempo de ejecución |
+| **RT** | DDR vía MM2S DMA | tiempo real dilatado | sin implementar |
+| **Throttled** | DDR con backpressure AXIS | < tiempo real | implementado en Z4.3, **retirado el 4-oct-2026** |
 
-BRAM disponible en el 7Z020: 4,9 Mb ≈ 613 KB. A 16 bits × 4 canales son unas **76 k
-muestras/canal**, es decir 766 µs de señal a 100 MSPS — suficiente para varias PRIs a PRF alta.
+BRAM total del 7Z020: 140 tiles de 36 Kbit, 32768 bits de dato cada uno → **2048 muestras de 16
+bits por tile**, 286 720 en toda la pieza. Lo que el reproductor usa hoy es
+`VECTOR_BRAM_DEPTH = 8192` muestras por canal × `N_CH = 3` = **12 tiles**, sobre una ocupación
+total del diseño que se queda en el entorno del 27 %.
 
-!!! success "1-oct-2026: *Throttled* implementado y verificado en ZedBoard (Z4.3)"
+!!! success "4-oct-2026: BRAM-loop cargable en tiempo de ejecución, y *Throttled* fuera"
+    Lo único que le faltaba a BRAM-loop era poder elegir el vector sin volver a sintetizar. Desde
+    hoy lo tiene: el PS escribe los bancos por la ventana `VEC_ADDR`/`VEC_DATA`/`VEC_LEN` del mapa
+    de registros **v11**, protegida por `CTRL` bit 2 (`vector_load`), y el mensaje
+    `test_stimulus_select` del contrato sigue siendo la interfaz del par remoto. El catálogo de
+    ocho vectores cuesta ocho mensajes, igual que con Throttled, **pero ahora además sale a tasa
+    plena**, que es lo que lo hace medible.
+
+    Con eso, Throttled(DDR) deja de tener razón de ser y sale del RTL y del block design: el canal
+    MM2S del AXI DMA, el puerto `m_axis_vec` y `CTRL` bit 1 desaparecen. **RT sigue sin
+    implementar.**
+
+    **Consecuencia aceptada:** nada en el diseño ejercita ya el camino DMA PS→PL. `M_AXI_MM2S`
+    contra `S_AXI_HP0` era la única cobertura de ese sentido. El camino S2MM (rayos) no se toca.
+
+    Por qué se retiró, y no es por el DMA: ver el cuadro de P-16 más abajo.
+
+!!! info "1-oct-2026: *Throttled* implementado y verificado en ZedBoard (Z4.3) — retirado el 4-oct"
     `rtl/vector_source.sv` tiene desde hoy los dos modos: BRAM-loop, que es el que tenía, y
     **Throttled(DDR)**, con las muestras llegando por AXI4-Stream desde el canal MM2S de un AXI DMA
     alimentado por la DDR del PS. Se elige en tiempo de ejecución con `CTRL` bit 1 (mapa de
@@ -60,9 +79,10 @@ muestras/canal**, es decir 766 µs de señal a 100 MSPS — suficiente para vari
     dato llegue correcto hasta la salida del DDC: no hay camino de vuelta para leerlo hasta que
     Z4.4 ensamble rayos. Ver `fases.md#z4`, entrada del 1-oct.
 
-**El modo *Throttled* produce salida bit a bit idéntica al modo RT; solo tarda más.** Es el modo de
-referencia para corrección, y por eso la limitación de ancho de banda de DDR no compromete la
-validación funcional: solo la fidelidad temporal, que se cubre con BRAM-loop.
+**El modo *Throttled* produce salida bit a bit idéntica al modo RT; solo tarda más.** Eso era el
+razonamiento, y resultó ser falso por una razón que el análisis no miró — ver el cuadro siguiente.
+El que de verdad cubre hoy la corrección funcional y la fidelidad temporal a la vez es BRAM-loop,
+porque entrega una muestra por ciclo y ya es elegible en caliente.
 
 !!! warning "1-oct-2026 (Z4.4): *Throttled* y el motor de timing no pueden correr a la vez"
     «Solo tarda más» es cierto para la aritmética y falso para el range gating, y la diferencia
@@ -89,6 +109,21 @@ validación funcional: solo la fidelidad temporal, que se cubre con BRAM-loop.
     v10) las dos se frenan con el mismo factor y el rayo se llena con los bins que toca a
     cualquier tasa. **Esto no sube la tasa de este modo**: sigue siendo «por debajo de tiempo
     real», que es lo que su nombre dice y lo que esta tabla promete.
+
+    **Y resolvió el síntoma, no el dato.** `GATE_TRUNCATED` bajó a `0x0` y los rayos salieron
+    enteros, pero el espectro dio **−87,3 dBFS contra −9,02 del modelo dorado**. Había una TERCERA
+    base de tiempo que nadie había mirado: el **DDS Compiler no tiene `aclken`**
+    (`rtl/drx_ddc_mixer.sv:99`, `tcl/gen_ip.tcl:238`), así que avanza un paso de fase por ciclo de
+    reloj mire o no `valid`. Con la fuente a una muestra de cada N_CH, el DDC mezcla a ~N_CH veces
+    el IF y la salida cae al suelo de ruido.
+
+    El arreglo simétrico existía —regenerar la IP con `Has_ACLKEN {true}` y cablear
+    `aclken = advance`, con la matriz de 16 corridas de D-12 como gate, 2–3 h—, y no se tomó. El
+    4-oct-2026 se eliminó en su lugar la fuente con huecos: BRAM-loop pasó a ser cargable en
+    tiempo de ejecución y Throttled(DDR) salió del diseño. **Esto NO cierra
+    [P-16](../alcance/pendientes.md#p-16)**: la causa raíz sigue en el RTL y vuelve el día que
+    haya una fuente con huecos de verdad — un ADC real, la ZU9—, en una plataforma donde medirlo
+    cuesta mucho más.
 
 ## Consecuencia para la portabilidad
 

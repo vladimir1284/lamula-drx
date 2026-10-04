@@ -73,6 +73,10 @@ retirado. Sí lo es, y de los tres riesgos originales sigue habiendo dos más, s
 1. **Cierre de temporización a 100 MHz en grado -1.** Con el DSP48 ya al 91-96 %, esto se agrava:
    la congestión de rutado alrededor de bloques DSP densos es exactamente el patrón que dificulta
    cerrar timing, no un problema independiente del área.
-2. **Ancho de banda de DDR** para la reproducción de vectores de 4 canales en tiempo real, mitigado
-   por los modos BRAM-loop y Throttled — ver [Fuente de
-   muestras](fuente-de-muestras.md#reproductor-de-vectores-tres-modos).
+2. **Ancho de banda de DDR** para la reproducción de vectores de 4 canales en tiempo real. Dejó
+   de ser un riesgo del reproductor el 4-oct-2026: Throttled(DDR) salió del diseño y el estímulo
+   se carga en BRAM, que entrega una muestra por ciclo sin tocar la DDR. El coste es de
+   capacidad, no de ancho de banda — 8192 muestras por canal × `N_CH` = 3 son **12 BRAM Tile** de
+   los 140 — y a cambio el bucle no puede representar un perfil que dependa del rango: un rayo
+   completo en modo fino son 208 416 muestras por canal, 102 tiles. Ver [Fuente de
+   muestras](fuente-de-muestras.md#reproductor-de-vectores-los-modos-previstos-y-el-que-quedo).

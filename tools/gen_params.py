@@ -86,6 +86,33 @@ def _chain_derived(sel: Params) -> dict:
     }
 
 
+def _check_vector_source(sel: Params) -> None:
+    """Gate: la longitud del bucle tiene que caber y tiene que cerrar fase.
+
+    Las dos condiciones son silenciosas si se violan. Una longitud mayor que la
+    capacidad desborda el array de `vector_source.sv` sin ningún error de
+    elaboración (el puntero es de `$clog2(DEPTH)` bits y envuelve); una longitud
+    que no es múltiplo de `if_norm_den` deja un salto de fase en cada vuelta del
+    bucle, que en el espectro aparece como faldas alrededor del tono y no como
+    un fallo. Las dos salen mucho más baratas aquí que en la placa.
+    """
+    inv = sel.invariant
+    depth = int(inv["vector_bram_depth"])
+    loop = int(inv["vector_loop_len"])
+    den = int(inv["if_norm_den"])
+    if loop < 1 or loop > depth:
+        raise SystemExit(
+            f"config/params.toml: vector_loop_len ({loop}) tiene que estar entre 1 y "
+            f"vector_bram_depth ({depth})"
+        )
+    if loop % den != 0:
+        raise SystemExit(
+            f"config/params.toml: vector_loop_len ({loop}) no es múltiplo de "
+            f"if_norm_den ({den}); el tono no cerraría un número entero de periodos "
+            f"y habría un salto de fase en cada vuelta del bucle"
+        )
+
+
 def _sv_platform_block(p: Params) -> str:
     return f"""
   // --- {p.name}: {p.board} ---
@@ -156,6 +183,13 @@ package drx_params_pkg;
   localparam int N_CH_TOP = {inv['n_ch_top']};
   localparam int N_TX_BURST_CH = {inv['n_tx_burst_ch']};
   localparam int N_TRIGGERS = {inv['n_triggers']};
+
+  // Reproductor de estímulo: capacidad física del banco de BRAM contra la
+  // longitud que se reproduce en bucle. VECTOR_LOOP_LEN es el valor de reset
+  // de VEC_LEN (mapa v11) y tiene que ser múltiplo de IF_NORM_DEN;
+  // tools/gen_params.py comprueba las dos cosas.
+  localparam int VECTOR_BRAM_DEPTH = {inv['vector_bram_depth']};
+  localparam int VECTOR_LOOP_LEN = {inv['vector_loop_len']};
 
 {widths}
 
@@ -257,6 +291,13 @@ def render_h(platforms: dict[str, Params], sel: Params, derived: dict) -> str:
 #define DRX_N_CH_TOP {inv['n_ch_top']}
 #define DRX_N_TX_BURST_CH {inv['n_tx_burst_ch']}
 #define DRX_N_TRIGGERS {inv['n_triggers']}
+
+/* Reproductor de estimulo: capacidad fisica del banco de BRAM contra la
+ * longitud que se reproduce en bucle. El firmware usa LOOP_LEN para saber
+ * cuantas escrituras hace una carga, y BRAM_DEPTH para rechazar una longitud
+ * que no cabria. */
+#define DRX_VECTOR_BRAM_DEPTH {inv['vector_bram_depth']}
+#define DRX_VECTOR_LOOP_LEN {inv['vector_loop_len']}
 
 #define DRX_SAMPLE_BITS {inv['sample_bits']}
 #define DRX_IQ_BITS {inv['iq_bits']}
@@ -430,6 +471,7 @@ def main() -> int:
 
     platforms = load_all()
     sel = platforms["zedboard"]
+    _check_vector_source(sel)
     derived = _chain_derived(sel)
     outputs = {
         SV_OUT: render_sv(platforms, sel, derived),

@@ -1954,12 +1954,15 @@ respecto al contrato, luego actualizamos a DSP»), mismo patrón que el puente P
 como aviso pendiente de dar: cualquier implementación que el equipo DSP hubiera empezado contra
 v0.5 tiene que migrar.
 
-### P-16 · El modo Throttled(DDR) no puede coexistir con el motor de timing { #p-16 }
+### P-16 · El DDS Compiler no tiene `aclken`: una fuente con huecos mezcla a la frecuencia equivocada { #p-16 }
 
-**Estado:** ABIERTO. El 3-oct-2026 se resolvió una de sus tres causas y la medida en placa
-destapó las otras dos · **Dueño:** Z4.6 · **Bloquea:** el barrido del catálogo de estímulos
-contra rayos reales. Nunca bloqueó Z4.4. Leer hasta el final: el alcance de este hallazgo es
-mayor de lo que decía su primera redacción.
+**Estado:** **ABIERTO, rebajado** 4-oct-2026 · **Dueño:** Z5 / portabilidad ZU9 · **Bloquea:**
+nada hoy. Ya NO bloquea el barrido del catálogo: el 4-oct-2026 se eliminó la fuente con huecos
+—Throttled(DDR) salió del diseño y el estímulo pasa a cargarse en la BRAM de `vector_source`, que
+entrega una muestra por ciclo— así que el síntoma desaparece. **La causa raíz sigue en el RTL.**
+Leer hasta el final: el título de este hallazgo cambió dos veces porque su alcance real resultó
+ser mayor que el de su primera redacción, y lo que queda abierto no es lo que decía el título
+original.
 
 `rtl/vector_source.sv` en Throttled(DDR) llena un conjunto de N_CH muestras tomando una por beat de
 un AXI4-Stream de 16 bits y lo presenta durante un ciclo, así que el `s_valid` que ve
@@ -2079,9 +2082,41 @@ el resto y con `advance` a 1 no cambia nada. Dos cosas que hay que resolver con 
 **Y una segunda causa, independiente, que el barrido también destapó:** ver
 [P-21](#p-21).
 
-Mientras tanto, la medida de rayos de Z4.4 corre en BRAM-loop, cuyo contenido
-(`tools/gen_vector_source_init.py`) es exactamente el caso `tono_if` del catálogo —comprobado array
-a array—, así que la comparación contra el modelo dorado sigue siendo posible.
+---
+
+**4-oct-2026: rebajado, no cerrado. Se eliminó la fuente con huecos en vez de arreglar el NCO.**
+
+Ninguna de las dos cosas que hacían falta para el arreglo simétrico —regenerar la IP con
+`Has_ACLKEN {true}` y extender el diferido de `S_AXIS_CONFIG`— se hizo. Lo que se hizo fue quitar
+el motivo por el que había huecos:
+
+- **Throttled(DDR) sale del diseño.** El canal MM2S del AXI DMA, el puerto externo `m_axis_vec`,
+  la mitad DDR de `rtl/vector_source.sv` y `CTRL` bit 1 desaparecen del RTL y del block design.
+- **BRAM-loop pasa a ser cargable en tiempo de ejecución.** El PS escribe los bancos de
+  `vector_source` por la ventana `VEC_ADDR`/`VEC_DATA`/`VEC_LEN` del mapa **v11**
+  ([registros.md](../implementacion/registros.md#z4-en-v11)). El catálogo sigue costando ocho
+  mensajes y ahora además sale **a una muestra por ciclo**.
+- **`timing_paced` se queda en 0.** Con la fuente a tasa plena, ciclos y avances de muestra son
+  lo mismo y el pacer colapsa en la síntesis. El bit y el módulo se quedan: siguen siendo la
+  respuesta correcta para una fuente lenta, y no cuestan nada con el bit a 0.
+
+**Por qué esta salida y no la simétrica.** La simétrica cuesta la matriz de 16 corridas de D-12
+(2–3 h) y toca una IP ya verificada; ésta no toca el DDC en absoluto, así que la matriz no hace
+falta, y además desbloquea el barrido del catálogo, que es lo último que le queda a ZM4.
+
+**Qué queda abierto, exactamente.** El DDS Compiler sigue sin `aclken`. Cualquier fuente futura
+que no entregue una muestra por ciclo —un ADC real con huecos, el JESD204B de la ZU9 si su
+`valid` no es continuo, un modo RT a tasa reducida— vuelve a mezclar a la frecuencia equivocada,
+con el mismo síntoma: salida en el suelo de ruido, sin ningún error ni bandera. En la ZU9
+diagnosticarlo cuesta mucho más que aquí. El camino de arreglo y sus dos pegas siguen escritos
+arriba, intactos, porque siguen siendo válidos.
+
+**Condición de cierre, tercera versión.** O bien la IP se regenera con `Has_ACLKEN {true}`,
+`aclken = advance`, el diferido de `S_AXIS_CONFIG` extendido a «mientras no haya avance», y la
+matriz de 16 de D-12 en verde; o bien se decide por escrito que la SSA garantiza una muestra por
+ciclo en todas las plataformas, y entonces esto deja de ser un hallazgo y pasa a ser un
+requisito de interfaz en [fuente de muestras](../plataforma/fuente-de-muestras.md). Lo que no
+vale es dejarlo como está sin decir cuál de las dos.
 
 ### P-17 · Sin presupuesto de latencia para la ISR del S2MM { #p-17 }
 
@@ -2294,9 +2329,15 @@ ya aplica `apply_at_seq` entre rayos en `drx_ray.c` es donde va.
 ### P-21 · El MM2S se atasca tras unas pocas selecciones de estímulo { #p-21 }
 
 **Estado:** **aparcado** 4-oct-2026, no cerrado · encontrado 3-oct-2026 (primer barrido del
-catálogo) · **Dueño:** Z4.6 · **Bloquea:** nada hoy. El barrido del catálogo está bloqueado por
-[P-16](#p-16) de todas formas, y el camino MM2S del estímulo puede dejar de existir — ver el
-cierre de esta entrada.
+catálogo) · **Dueño:** Z4.6 · **Bloquea:** nada. El camino que lo provocaba **ya no existe**: el
+mismo 4-oct-2026, más tarde, el canal MM2S del AXI DMA salió del block design y la mitad DDR de
+`rtl/vector_source.sv` salió del RTL ([P-16](#p-16)). El estímulo se carga ahora por la ventana
+AXI-Lite del mapa v11 y no hay ningún DMA que se pueda atascar.
+
+**Eso NO lo cierra.** El bug no está arreglado ni entendido: está inalcanzable. Si el MM2S vuelve
+—un modo RT desde DDR, el puente de la ZU9— vuelve esto con él, y entonces hay que empezar por la
+evidencia de abajo y no desde cero. La sonda `rtl/drx_debug_probe.sv` y el ILA de
+`tcl/gen_ip_debug.tcl` se quedan en el árbol sin instanciar por el mismo motivo.
 
 Encadenando `test_stimulus_select`, el canal MMSS del AXI DMA deja de aceptar pasadas:
 

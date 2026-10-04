@@ -264,17 +264,14 @@ int main_thread()
 	 * fw/src/app/drx_timing_cfg.c. */
 	(void)DrxTiming_Start();
 
-	/* Z4.3: el camino DDR -> AXI DMA MM2S -> vector_source. La tarea tiene
-	 * que existir antes de la comprobacion: es la que rearma el DMA entre
-	 * pasadas, y la comprobacion cuenta pasadas completas. */
+	/* v11: la ventana de carga AXI-Lite -> BRAM de vector_source. */
 	if (DrxStimulus_Init()) {
 		DrxStimulusTask_Create();
 		/* Dos vectores y no uno: el primero es el tono nominal y el
 		 * ultimo del catalogo es el de +6 dBFS, pensado para saturar.
-		 * Que una pasada se complete ya prueba que los BYTES llegaron a
-		 * la PL; que OVERFLOW salga distinto entre los dos probaria
-		 * ademas que llego el DATO, porque lo unico que cambia entre las
-		 * dos corridas es el contenido del buffer. */
+		 * Que OVERFLOW salga distinto entre los dos es lo mas cerca que
+		 * se puede estar de mirar el DATO sin leer un rayo, porque lo
+		 * unico que cambia entre las dos cargas es el contenido. */
 		(void)DrxStimulus_SelfTest(0u);
 		(void)DrxStimulus_SelfTest(DRX_STIMULUS_COUNT - 1u);
 	}
@@ -287,22 +284,18 @@ int main_thread()
 	 * aqui STATUS (overrun) y GATE_TRUNCATED estaban en 0x7 a proposito
 	 * porque nadie programaba descriptores; que caigan a cero es el criterio
 	 * de que el camino entero funciona. */
-	/* Los rayos EXIGEN el modo BRAM-loop, y esto no es una preferencia.
+	/* El DrxStimulus_Stop() que habia aqui era obligatorio hasta v10: en
+	 * Throttled(DDR) la fuente entregaba una muestra cada N_CH ciclos, el
+	 * rayo tardaba ~N_CH veces el PRI en llenarse, `ray_start` lo truncaba
+	 * y no salia NINGUN rayo entero (P-16). Desde v11 la BRAM entrega una
+	 * muestra por ciclo y el vector cargado por DrxStimulus_SelfTest se
+	 * queda sonando mientras se miden los rayos -- que es justamente lo que
+	 * hace medible el barrido del catalogo.
 	 *
-	 * En Throttled(DDR) `vector_source` presenta un conjunto de N_CH
-	 * muestras cada N_CH+1 ciclos como mucho (llena el conjunto muestra a
-	 * muestra desde un stream de 16 bits y lo presenta un ciclo), asi que el
-	 * `s_valid` que ve el DDC esta alto ~1 de cada 4 ciclos. La cadena solo
-	 * avanza con `valid`, asi que una muestra decimada sale cada ~4*R1
-	 * ciclos en vez de cada R1. Un rayo de `bins_for_pri(prf_div)` bins
-	 * necesitaria entonces unas cuatro veces el PRI, y `ray_start` lo
-	 * truncaria antes de completarse: GATE_TRUNCATED subiria y no saldria
-	 * NINGUN rayo entero. El nombre del modo ya lo dice -- es throttled.
-	 *
-	 * Para elegir vector en caliente a tasa plena hace falta que el DMA
-	 * entregue N_CH muestras por ciclo, es decir un stream de N_CH*16 bits;
-	 * hoy es de 16. Queda anotado, no es Z4.4. */
-	DrxStimulus_Stop();
+	 * El ultimo SelfTest deja cargado el vector de +6 dBFS, pensado para
+	 * saturar. Se recarga el nominal para que la autoprueba de rayos mida
+	 * contra el mismo tono que el modelo dorado. */
+	(void)DrxStimulus_Select(0u, 0u);
 
 	if (DrxRay_Init()) {
 		DrxRayTask_Create();

@@ -1,7 +1,7 @@
-# Mapa de registros AXI-Lite — v7 (Z1 + Z2 + Z4.1)
+# Mapa de registros AXI-Lite — v11 (Z1 + Z2 + Z4)
 
 Hasta el 19-sep-2026 este entregable de Z1 no existía en absoluto — ni RTL ni documento. Esta
-página describe el mapa **v7** (26-sep-2026): lo que `drx_top` controla y observa hoy vía
+página describe el mapa **v11** (4-oct-2026): lo que `drx_top` controla y observa hoy vía
 `drx_axil_regs`, y lo que deliberadamente queda fuera todavía. La sección de más abajo explica por
 qué "vía AXI-Lite" no significa todavía "alcanzable desde firmware real".
 
@@ -12,8 +12,13 @@ reservados de TIMING_STATUS para los checks autocontenidos de D-09 — ver [Z2 e
 y con eso cierra D-09 del todo — ver [Z2 en v5](#z2-en-v5). **v6** añade GATE_TRUNCATED, el BITE de
 tiempo muerto que D-14 dejaba explícitamente abierto — ver [Z2 en v6](#z2-en-v6). **v7** añade
 TRIG_COUNT, el contador de trigger que el firmware de ensamblado de rayos (Z4.4) necesitará como
-metadato — ver [Z4 en v7](#z4-en-v7). v1/v2 (Z1, 19/20-sep-2026) siguen descritas tal cual en la
-sección [Historial](#historial-v1v2).
+metadato — ver [Z4 en v7](#z4-en-v7). **v8** usa el bit 1 de CTRL como `vector_source_ddr` — ver
+[Z4 en v8](#z4-en-v8). **v9** añade NCO_PINC, la actuación AFC — ver [Z4 en v9](#z4-en-v9).
+**v10** usa el bit 1 de TIMING_CTRL como `timing_paced` — ver [P-16 en v10](#p-16-en-v10).
+**v11** retira `vector_source_ddr` (el bit 1 de CTRL vuelve a reservado) y añade la ventana de
+carga del vector de estímulo, VEC_ADDR/VEC_DATA/VEC_LEN más el bit 2 de CTRL — ver
+[Z4 en v11](#z4-en-v11). v1/v2 (Z1, 19/20-sep-2026) siguen descritas tal cual en la sección
+[Historial](#historial-v1v2).
 
 Fuente única de verdad: `config/registers.toml`. `tools/gen_registers.py` genera
 `rtl/generated/drx_regs_pkg.sv` (RTL) y `fw/include/drx_regs.h` (firmware) desde ese fichero —
@@ -77,8 +82,8 @@ palabras — subió de 6/16 en v3 porque el bloque de Z2 no cabía). Implementad
 
 | Offset | Nombre   | Acceso            | Bits usados   | Significado |
 |--------|----------|-------------------|---------------|-------------|
-| `0x00` | VERSION  | RO                | `[31:0]`      | Versión de este mapa de registros (`schema_version` de `config/registers.toml`, hoy 5). Permite a firmware confirmar que habla con el mapa que espera antes de tocar el resto. |
-| `0x04` | CTRL     | RW                | `[0]`         | `mode_coarse`: 0 = fino (valor de reset), 1 = grueso. Compartido por los `N_CH` canales de `drx_ddc_quad_top` (decimación/tamaño de celda). Desde v5 (D-15) ya NO llega a `drx_range_gate` — el conteo de bins de range-gate es BINS_LOW/BINS_HIGH, no una elección fino/grueso fija. Bits `[31:1]` reservados: leen 0, una escritura ahí no tiene efecto. |
+| `0x00` | VERSION  | RO                | `[31:0]`      | Versión de este mapa de registros (`schema_version` de `config/registers.toml`, hoy 11). Permite a firmware confirmar que habla con el mapa que espera antes de tocar el resto. |
+| `0x04` | CTRL     | RW                | `[0]`, `[2]`  | Bit 0 = `mode_coarse`: 0 = fino (valor de reset), 1 = grueso. Compartido por los `N_CH` canales de `drx_ddc_quad_top` (decimación/tamaño de celda). Desde v5 (D-15) ya NO llega a `drx_range_gate` — el conteo de bins de range-gate es BINS_LOW/BINS_HIGH, no una elección fino/grueso fija. Bit 1: **reservado desde v11**, lee 0 — fue `vector_source_ddr` entre v8 y v10, y el modo Throttled(DDR) que seleccionaba ya no existe; no se reutiliza a propósito, para que un firmware viejo que lo escriba no active algo distinto en silencio. Bit 2 (v11) = `vector_load`: 1 congela el lector de BRAM de `vector_source` y habilita las escrituras de VEC_DATA; al bajar a 0, el puntero de lectura queda en la muestra 0. Ver [Z4 en v11](#z4-en-v11). Bits `[31:3]` reservados: leen 0, una escritura ahí no tiene efecto. |
 | `0x08` | STATUS   | RO + write-1-to-clear | `[N_CH-1:0]` | Bit `c` = `overrun` sticky del canal `c` de range-gate (`drx_range_gate_quad_top.overrun[c]`). El latch sticky vive en `drx_range_gate` (puerto `clear` nuevo — ver más abajo); este bloque solo lo lee y pulsa la limpieza en origen. Si hay un overrun genuino el mismo ciclo que la limpieza, gana el set. |
 | `0x0C` | OVERFLOW | RO + write-1-to-clear | `[N_CH-1:0]` | Bit `c` = overflow de saturación del DDC del canal `c` (`drx_ddc_quad_top.overflow[c]`, combinación de las ramas I/Q de `drx_ddc_top`). A diferencia de STATUS, el latch sticky vive **dentro de `drx_axil_regs`**, no en la fuente: `drx_saturate` es deliberadamente combinacional y sin estado (ver su cabecera), así que añadir un latch ahí habría tocado más de lo necesario en un núcleo ya verificado bit a bit. Misma prioridad set-sobre-clear que STATUS. |
 | `0x10` | TIMING_CTRL | RW | `[1:0]` | Bit 0 = `enable` de `drx_prf_batch_seq` (arranca/detiene el secuenciador de 2 lotes, D-13). Reset: 0 (detenido). Bit 1 (v10) = `timing_paced`: 0 = el motor cuenta ciclos de reloj (reset, el comportamiento de v3..v9); 1 = cuenta avances de muestra. Ver [P-16 en v10](#p-16-en-v10). Bits `[31:2]` reservados: leen 0. |
@@ -94,7 +99,10 @@ palabras — subió de 6/16 en v3 porque el bloque de Z2 no cabía). Implementad
 | `0x50` | GATE_TRUNCATED | RO + write-1-to-clear | `[N_CH-1:0]` | Bit `c` = `ray_truncated` sticky del canal `c` de range-gate (BITE de D-14, v6) — ver [Z2 en v6](#z2-en-v6). |
 | `0x54` | TRIG_COUNT | RO | `[31:0]` | Contador libre de 32 bits: incrementa un pulso de `pulse_trig` de `drx_timing_engine` (el mismo que ya dispara `ray_start`, D-14) por ciclo. Sin write-1-to-clear — es un conteo monótono, no un diagnóstico sticky; envuelve en 2^32 pulsos. Ver [Z4 en v7](#z4-en-v7). |
 | `0x58` | NCO_PINC | RW | `[31:0]` | Palabra de incremento de fase del NCO (v9, Z4.5), compartida por los `N_CH` canales: todos ven el mismo IF. Valor de reset = `NCO_PHASE_INC`, el mismo PINC1 que la IP del DDS Compiler lleva como valor inicial, así que no escribir aquí deja la cadena bit a bit como antes de v9. **Cada** escritura pulsa el canal `S_AXIS_CONFIG` del core, incluso si el valor no cambia. Ver [Z4 en v9](#z4-en-v9). |
-| `0x5C`… | — | — | — | Reservado, sin implementar. Lee 0, escribir no tiene efecto. |
+| `0x5C` | VEC_ADDR | RW | `[12:0]`, `[18:16]` | Puntero y banco de la ventana de carga (v11). Bits 12:0 = dirección de escritura dentro del banco, en muestras; **autoincrementa** tras cada escritura de VEC_DATA. Bits 18:16 = banco: 0…`N_CH`-1 un canal, 7 difusión a todos. El autoincremento envuelve dentro de los 13 bits y no para en `VECTOR_BRAM_DEPTH`. Ver [Z4 en v11](#z4-en-v11). |
+| `0x60` | VEC_DATA | RW | `[15:0]` | Una muestra de 16 bits con signo. Escribirla graba en el banco y la dirección que VEC_ADDR tenga **en ese momento**, y después incrementa el puntero. Solo llega a la BRAM con CTRL bit 2 en 1. Leerla devuelve la última palabra escrita, **no** el contenido de la memoria: no hay camino de lectura desde la BRAM hacia AXI-Lite. |
+| `0x64` | VEC_LEN | RW | `[12:0]` | Longitud del bucle en muestras. El puntero de lectura envuelve aquí, no en la profundidad física del banco. Valor de reset = `VECTOR_LOOP_LEN` (4000), exactamente la longitud del tono que `$readmemh` precarga en el bitstream, así que no escribir aquí reproduce el mismo bucle que v10 y anteriores. El máximo es `VECTOR_BRAM_DEPTH`-1 = 8191: el puntero tiene `$clog2(8192)` = 13 bits y 8192 no cabe en ellos. El valor 0 se trata como 1; parar es CTRL bit 2. |
+| `0x68`… | — | — | — | Reservado, sin implementar. Lee 0, escribir no tiene efecto. |
 
 `N_CH` es el mismo generic que ya usa `drx_top` (3 hoy, Config A/B de
 [P-12](../alcance/pendientes.md#p-12); sería `N_RX_CH` en la ZU9). El ancho de STATUS/OVERFLOW se
@@ -552,3 +560,88 @@ Verificación en L0: `sim/tb/tb_drx_sample_pacer.py` (qué cuenta como avance, l
 de `valid`/`ready` con y sin `paced`) y `sim/tb/tb_drx_timing_paced.py` (la traza paceada contra la
 del mismo motor sin pacear, dos radiales completos muestra a muestra). `tb_drx_axil_regs.py` gana
 los dos bits de `TIMING_CTRL` como independientes.
+
+### Z4 en v11 { #z4-en-v11 }
+
+**4-oct-2026.** Dos cosas a la vez, y conviene no mezclarlas: **el bit 1 de CTRL se retira** y
+**entra la ventana de carga del vector de estímulo** (CTRL bit 2 + VEC_ADDR/VEC_DATA/VEC_LEN).
+
+**Qué se retira y por qué.** `vector_source_ddr` seleccionaba el modo Throttled(DDR) de
+`rtl/vector_source.sv`: las muestras llegaban de la DDR del PS por el canal MM2S de un AXI DMA.
+Ese modo medía mal el dato, y la causa no estaba en él sino aguas abajo. `vector_source` junta
+`N_CH` beats de 16 bits por conjunto, o sea entrega una muestra cada `N_CH` ciclos; el DDS
+Compiler **no tiene `aclken`** (`rtl/drx_ddc_mixer.sv:99`, `tcl/gen_ip.tcl:238`) y avanza un paso
+de fase por ciclo de reloj mire o no `valid`. El DDC mezclaba a ~`N_CH` veces el IF y la salida
+caía al suelo de ruido: **−87,3 dBFS medidos contra −9,02 del modelo dorado**
+([P-16](../alcance/pendientes.md#p-16), 3-oct-2026). El pacing de v10 arregló el truncado de rayos
+pero no el dato.
+
+El bit vuelve a reservado y **no se reutiliza para otra cosa**. Un firmware de v8..v10 que lo
+escriba tiene que no activar nada, en vez de activar algo distinto en silencio;
+`tb_drx_axil_regs.py` tiene un test dedicado a impedir que un bit nuevo acabe ahí por comodidad.
+`DRX_REG_CTRL_VECTOR_SOURCE_DDR_MASK` desaparece de `fw/include/drx_regs.h` a propósito: que un
+firmware viejo deje de compilar es mejor que que siga escribiendo un bit muerto.
+
+**Qué entra.** El estímulo se carga ahora directamente en los bancos de BRAM de `vector_source`,
+que reproducen a **una muestra por ciclo** — las dos bases de tiempo vuelven a coincidir y el
+síntoma de P-16 desaparece sin tocar la IP del DDS, lo que ahorra regenerarla con
+`Has_ACLKEN {true}` y volver a correr la matriz de 16 casos de D-12 que sería su gate.
+
+Esto **no arregla la causa raíz**: el DDS sigue sin `aclken` y volverá a romper con cualquier
+fuente con huecos futura (ADC real, ZU9). P-16 se rebaja, no se cierra.
+
+**Por qué un par dirección/dato y no una ventana de memoria.** `addr_width = 7` son 128 B en
+total: una ventana direccionable de 16 KiB no cabe. Un `axi_bram_ctrl` habría pedido un maestro
+más en el `axi_interconnect` (los dos de `NUM_MI` están en uso) y un segmento nuevo en el mapa de
+direcciones. A cambio de eso: una carga de 4000 muestras son 4000 escrituras de VEC_DATA con
+autoincremento, del orden de milisegundos, y ocurre una vez por selección de vector.
+
+**La difusión no es un atajo cosmético.** `vec_bank = 7` escribe los `N_CH` bancos a la vez, así
+que una carga cuesta una pasada y no `N_CH`. Los bancos siguen siendo independientes en RTL: un
+estímulo distinto por canal — Config A, Tx + H + V — es llamar tres veces con banco 0, 1 y 2, no
+un cambio de diseño.
+
+**Las dos longitudes.** `VECTOR_BRAM_DEPTH` (8192) es capacidad física: 4 RAMB36 por canal
+exactos, 12 BRAM Tile con `N_CH = 3` sobre los 140 del xc7z020. `VECTOR_LOOP_LEN` (4000) es lo que
+se reproduce, y es el valor de reset de VEC_LEN. No pueden ser el mismo número: la longitud tiene
+que ser múltiplo de `IF_NORM_DEN` (25) para que el tono cierre un número entero de periodos y no
+haya salto de fase al envolver, y 8192 no lo es. Las dos viven en `config/params.toml` y
+`tools/gen_params.py` comprueba las dos condiciones — con un `vector_loop_len` de 4001 la
+generación falla en vez de dejar faldas alrededor del tono en placa.
+
+**El strobe va registrado, y esa es la cicatriz de v9.** `vec_we`, `vec_addr`, `vec_bank` y
+`vec_data` se registran **juntos**. El consumidor graba la memoria en el flanco en que ve el
+strobe, así que un strobe combinacional sobre `write_commit` llegaría acompañado del dato de la
+escritura **anterior** — exactamente el bug de `nco_pinc_we` que costó una sesión de placa el
+2-oct-2026. Y la dirección que ve la BRAM es la de **antes** del incremento (`vec_addr_q`): sin
+eso el vector entero sale desplazado una posición, que en el espectro solo se ve como una fase
+distinta.
+
+**`vector_load` no es cosmético.** Con el lector corriendo, una escritura dejaría medio vector
+viejo y medio nuevo sonando a la vez: sin error, sin bandera, solo un espectro raro. El hardware
+descarta las escrituras con el bit en bajo, y al bajarlo deja el puntero de lectura en la muestra
+0 — así la reproducción empieza siempre en un punto conocido y el rayo que se compara contra el
+modelo dorado arranca igual en cada selección.
+
+**Lo que esta ventana NO puede hacer: releer la BRAM.** VEC_DATA en lectura devuelve la última
+palabra escrita, no el contenido de la memoria. Añadir un camino de lectura costaría un puerto más
+por banco y no compraría nada: la prueba de que una carga es correcta es el espectro del rayo
+contra el modelo dorado, no un volcado de la memoria. `DrxStimulus_SelfTest` es por tanto **más
+débil** que la de v8..v10, donde una pasada completa del DMA probaba que los bytes habían llegado
+dentro de la PL porque el único que levantaba `tready` era `vector_source`. Dicho, no escondido.
+
+**Consecuencia aceptada:** con el canal MM2S fuera del block design, nada en el diseño ejercita ya
+el camino DMA PS→PL. Era la única cobertura que había de ese sentido.
+
+Verificación en L0: `sim/tb/tb_vector_source.py` se reescribe entero contra la ventana (carga y
+reproducción en orden, `vec_len` mandando sobre `DEPTH`, difusión contra escritura por banco, un
+banco inexistente que no escribe, `vec_load` protegiendo y rearmando, `last` en `vec_len-1`, y el
+reenganche inmediato al acortar `vec_len` en caliente). `tb_drx_axil_regs.py` gana el bit 2 de
+CTRL, el bit 1 como reservado que lee 0, el valor de reset de VEC_LEN, el autoincremento de
+VEC_ADDR con el banco conservado, y el test de alineación del strobe — **comprobado por mutación**:
+quitar el registro de un ciclo de `vec_we_r`, o usar `vec_addr_r` en vez de `vec_addr_q`, lo hace
+fallar.
+
+La matriz L1 de D-12 **no hace falta** para este cambio, y conviene decirlo en vez de saltársela en
+silencio: el DDC, el NCO, el CIC, los FIR y el range gate no se tocan, y `vector_source` no tiene
+caso L1.

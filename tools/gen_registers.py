@@ -100,12 +100,24 @@ def render_h(schema: dict) -> str:
         # muchos mas, el sitio donde arreglarlo es el esquema, no esta lista.
         "#define DRX_REG_CTRL_MODE_COARSE_BIT 0u",
         "#define DRX_REG_CTRL_MODE_COARSE_MASK (1u << DRX_REG_CTRL_MODE_COARSE_BIT)",
-        "#define DRX_REG_CTRL_VECTOR_SOURCE_DDR_BIT 1u",
-        "#define DRX_REG_CTRL_VECTOR_SOURCE_DDR_MASK (1u << DRX_REG_CTRL_VECTOR_SOURCE_DDR_BIT)",
+        # El bit 1 de CTRL fue VECTOR_SOURCE_DDR entre v8 y v10. En v11 vuelve
+        # a reservado y el macro desaparece a proposito: que un firmware viejo
+        # deje de compilar es mejor que que siga escribiendo un bit muerto.
+        "#define DRX_REG_CTRL_VECTOR_LOAD_BIT 2u",
+        "#define DRX_REG_CTRL_VECTOR_LOAD_MASK (1u << DRX_REG_CTRL_VECTOR_LOAD_BIT)",
         "#define DRX_REG_TIMING_CTRL_ENABLE_BIT 0u",
         "#define DRX_REG_TIMING_CTRL_ENABLE_MASK (1u << DRX_REG_TIMING_CTRL_ENABLE_BIT)",
         "#define DRX_REG_TIMING_CTRL_PACED_BIT 1u",
         "#define DRX_REG_TIMING_CTRL_PACED_MASK (1u << DRX_REG_TIMING_CTRL_PACED_BIT)",
+        "",
+        "/* Campos de la ventana de carga del vector (v11). El banco 7 es",
+        " * difusion a los N_CH canales a la vez. */",
+        "#define DRX_REG_VEC_ADDR_PTR_MASK 0x1FFFu",
+        "#define DRX_REG_VEC_ADDR_BANK_SHIFT 16u",
+        "#define DRX_REG_VEC_ADDR_BANK_MASK (0x7u << DRX_REG_VEC_ADDR_BANK_SHIFT)",
+        "#define DRX_REG_VEC_ADDR_BANK_ALL 7u",
+        "#define DRX_REG_VEC_DATA_SAMPLE_MASK 0xFFFFu",
+        "#define DRX_REG_VEC_LEN_MASK 0x1FFFu",
         "",
         "#endif /* DRX_REGS_H */",
         "",

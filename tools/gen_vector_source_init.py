@@ -24,6 +24,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "model"))
 
@@ -32,34 +34,47 @@ from drx_model import params as params_mod  # noqa: E402
 
 OUT_ROOT = ROOT / "build" / "vector-source-init"
 
-#: Piso de profundidad del bucle. El valor real se redondea hacia arriba al
-#: múltiplo de `if_norm.denominator` más cercano (ver `_loop_depth`), para que
-#: el tono complete un número entero de periodos y no haya salto de fase al
-#: envolver en `vector_source.sv`. El contenido en sí no importa para el cierre
-#: de temporización (STA es estructural, no depende de los datos) — esto solo
-#: deja bien planteada la fase de bring-up físico que viene después.
-MIN_DEPTH = 4000
-
 INIT_FILE = "vector_source_init.hex"
 
 
 def _loop_depth(params: params_mod.Params) -> int:
-    den = params.if_norm.denominator
-    reps = -(-MIN_DEPTH // den)  # ceil sin importar float
-    return reps * den
+    """Longitud del bucle, de `config/params.toml`.
+
+    Hasta el 4-oct-2026 esto era un `MIN_DEPTH = 4000` local redondeado al
+    múltiplo de `if_norm.denominator` más cercano. Ahora el número vive en
+    `config/params.toml` como `vector_loop_len` porque lo consumen también el
+    RTL (valor de reset de VEC_LEN, mapa v11) y el firmware (cuántas
+    escrituras hace una carga), y `tools/gen_params.py` es quien comprueba
+    que sea múltiplo del denominador y que quepa en la BRAM.
+    """
+    return params.vector_loop_len
 
 
 def generate(platform: str, out_root: Path = OUT_ROOT) -> Path:
     params = params_mod.load(platform)
-    depth = _loop_depth(params)
-    stimulus = vectors.tone(params, depth)
+    loop = _loop_depth(params)
+    depth = params.vector_bram_depth
+    stimulus = vectors.tone(params, loop)
+
+    # El fichero tiene `depth` líneas, no `loop`: el array de
+    # `rtl/vector_source.sv` es de la profundidad FÍSICA del banco, y un
+    # `$readmemh` más corto deja el resto del array indefinido -- X en xsim,
+    # ruido en lint, y palabras que un VEC_LEN cargado en caliente sí podría
+    # llegar a leer. Las posiciones por encima del bucle van a cero: nunca se
+    # leen con el VEC_LEN de reset, y si alguien amplía el bucle sin cargar
+    # nada se oye silencio, que es un síntoma inequívoco.
+    padded = np.zeros(depth, dtype=stimulus.dtype)
+    padded[:loop] = stimulus
 
     directory = out_root / params.name
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / INIT_FILE
-    l1_vectors._write_hex(path, stimulus, params.sample_bits)
-    periods = depth // params.if_norm.denominator
-    print(f"{platform}: {depth} muestras ({periods} periodos de IF) -> {path}")
+    l1_vectors._write_hex(path, padded, params.sample_bits)
+    periods = loop // params.if_norm.denominator
+    print(
+        f"{platform}: {loop} muestras de tono ({periods} periodos de IF) "
+        f"+ {depth - loop} de relleno = {depth} -> {path}"
+    )
     return path
 
 
