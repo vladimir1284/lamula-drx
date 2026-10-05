@@ -177,7 +177,17 @@ def model_channel(platform: str, vector: str, bins: int, mode_coarse: bool,
     out = ddc.process(stimulus)
     i = np.asarray(out.i)[64 : 64 + bins]
     q = np.asarray(out.q)[64 : 64 + bins]
-    return spectrum(i, q)
+    stats = spectrum(i, q)
+    # Si el modelo satura en esta ventana, el hardware tiene que levantar
+    # `ddc_overflow` en el rayo, y si no satura no debe levantarlo. Sale de
+    # aqui y no de una lista de nombres de vector: el 4-oct-2026 se midio que
+    # `tono_sobre_escala` NO satura la salida del DDC -- la entrada esta a
+    # +6 dBFS pero el ajuste de ganancia de la cadena deja el pico de salida
+    # en 21005 de 32767, 3,9 dB por debajo del fondo-- y una expectativa
+    # escrita a mano daba por hecho lo contrario.
+    overflow = np.asarray(out.overflow)[64 : 64 + bins]
+    stats["overflow"] = bool(np.any(overflow))
+    return stats
 
 
 def main(argv: list[str] | None = None) -> int:

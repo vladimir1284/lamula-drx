@@ -117,14 +117,25 @@ def compara(ray, medido: list[dict], vector: str, platform: str) -> list[str]:
                 f"{esperado['peak_db']:+.2f} dBFS"
             )
 
-    # `tono_sobre_escala` existe para ejercitar el reporte de overflow de punta
-    # a punta (ver tools/gen_l1_vectors.py). Que el pico coincida no prueba
-    # eso: la bandera tiene que llegar, y NO debe llegar con los demás.
+    # La bandera de overflow se compara contra el MODELO, no contra una lista
+    # de nombres de vector. Hasta el 4-oct-2026 esto exigia `ddc_overflow` en
+    # `tono_sobre_escala` por su nombre, y la primera medida en placa demostro
+    # que esa expectativa era falsa: la entrada esta a +6 dBFS, pero el ajuste
+    # de ganancia de la cadena deja el pico de salida del DDC en 21005 de
+    # 32767 -- 3,9 dB por debajo del fondo de escala--, asi que no hay nada que
+    # saturar. El modelo dorado dice lo mismo, para los ocho vectores y en los
+    # dos modos de celda.
+    #
+    # CONSECUENCIA, y no es menor: NINGUN vector del catalogo ejercita hoy el
+    # camino de overflow del DDC, asi que el registro OVERFLOW, su latch sticky
+    # en `drx_axil_regs` y la bandera `ddc_overflow` del rayo siguen sin
+    # verificarse de punta a punta en silicio. Ver P-22.
     hubo_overflow = bool(ray.ray_flags & C.RayFlag.DDC_OVERFLOW)
-    if vector == "tono_sobre_escala" and not hubo_overflow:
-        fallos.append("ray_flags sin ddc_overflow en el vector de sobre-escala")
-    if vector != "tono_sobre_escala" and hubo_overflow:
-        fallos.append(f"ray_flags con ddc_overflow inesperado en {vector}")
+    if hubo_overflow != esperado["overflow"]:
+        fallos.append(
+            f"ray_flags con ddc_overflow={hubo_overflow}, el modelo dice "
+            f"{esperado['overflow']}"
+        )
     return fallos, esperado
 
 

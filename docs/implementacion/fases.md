@@ -2287,13 +2287,67 @@ Trabajo:
     `f3923c9d…`, con los dos avisos de solapamiento de `bootgen` ya cerrados como falso positivo
     el 1-oct.
 
-    **Lo que falta, y necesita la placa.** Nada de lo anterior ha corrido en silicio. En orden:
-    (1) `drx_status` confirmando mapa **v11**; (2) **regresión antes de cargar nada** — arranque
-    en frío con el tono precargado, espectro del rayo contra el modelo dorado, **tiene que dar
-    −9,03 dBFS**, y si no da, el cambio rompió algo que funcionaba; (3) cargar `tono_if` por la
-    ventana y repetir la medida, que tiene que coincidir; (4) `tools/sweep_catalogo.py --settle 1`
-    → **8/8**, que es el cierre de ZM4 y lo que P-16 bloqueaba (hoy da 0/8). Hace falta un ciclo
-    de `SW8`: reprogramar la PL con el S2MM en marcha traba HP0 y no se recupera por software.
+!!! success "4-oct-2026 (más tarde): medido en placa — el barrido del catálogo cierra 8/8 y con él ZM4"
+    Arranque en frío tras ciclo de `SW8`, carga por JTAG con `tools/cargar.sh` (nuevo: el hermano
+    de `cargar_dbg.sh` para el bitstream de producción, porque el de depuración ya no engancha
+    ningún ILA).
+
+    **El mapa y la ventana, confirmados por AXI-Lite:**
+
+    ```
+    drx_status: mapa de registros v11 confirmado por AXI-Lite
+    drx_stimulus: vector 0 (tono_if), 4000 muestras en bucle
+    drx_stimulus: vector tono_if -- VEC_LEN=4000 (esperado 4000) vector_load=0 OVERFLOW 0 -> 0
+    ```
+
+    **Y algo que antes era imposible por definición:** la autoprueba carga dos vectores **y** se
+    capturan rayos en la misma corrida. Hasta v10, `main.c` tenía que llamar a
+    `DrxStimulus_Stop()` antes de `DrxRay_Init` porque en Throttled(DDR) no salía ni un rayo
+    entero. Ahora:
+
+    ```
+    drx_ray: 219 rayos en 1000 ms, overrun=0x0 truncated=0x0
+    drx_ray: dma_errors=0 resync=1 bad_magic=0 bad_n_ch=0 short=0 trig_gaps=0 ray_gaps=0
+    ```
+
+    **La regresión del dato, por el cable y no por JTAG** (`tools/mock_dsp.py --spectrum`, 5 s,
+    1113 rayos, **222,6 rayos/s, 0 huecos de `seq`**, BITE limpio):
+
+    ```
+    canal 0: pico en bin +0 (+0.00000 de fs_dec), -9.03 dBFS
+    canal 1: pico en bin +0 (+0.00000 de fs_dec), -9.03 dBFS
+    canal 2: pico en bin +0 (+0.00000 de fs_dec), -9.03 dBFS
+    ```
+
+    **−9,03 dBFS, la misma cifra de antes del cambio**, en los tres canales. Y es una prueba más
+    fuerte de lo que el plan pedía: el plan quería medir el tono que `$readmemh` deja en el
+    bitstream, y esto mide `tono_if` **cargado por la ventana AXI-Lite**, así que valida el camino
+    de carga además del dato. Dicho lo que NO se midió: el estado de precarga pura ya no es
+    observable sin recompilar, porque `main.c` carga el vector 0 al arrancar. Es el mismo tono, y
+    el riesgo que esa medida cubría —que el cambio rompiera algo que funcionaba— queda cubierto
+    por ésta.
+
+    **El barrido del catálogo: `tools/sweep_catalogo.py --settle 1` → 8/8, código de salida 0.**
+    Los ocho vectores coinciden con el modelo dorado en bin de pico y en nivel, en los dos
+    conteos de bins que el secuenciador de lotes alterna (1002 y 3689). **Eso cierra lo último
+    que le quedaba a ZM4**, y es exactamente lo que P-16 bloqueaba: el 3-oct el mismo barrido daba
+    0/8 con −87,3 dBFS.
+
+    **La primera pasada dio 7/8, y el fallo era de la herramienta.** `tono_sobre_escala` coincidía
+    en espectro (−4,32 dBFS medidos contra −4,32 del modelo) pero `sweep_catalogo.py` exigía que
+    levantara `ddc_overflow` por su nombre. Preguntado el modelo dorado, para los ocho vectores y
+    en los dos modos: **overflow = 0 en todos**, con el pico de salida de `tono_sobre_escala` en
+    21005 de 32767 — la entrada está a +6 dBFS pero el ADC la recorta antes del DDC y el ajuste de
+    ganancia de Z1 deja la salida 3,9 dB por debajo del fondo. El hardware y el modelo coinciden;
+    la expectativa escrita a mano era falsa, y Z4.3 ya la había marcado como no medida. Corregido
+    haciendo que la bandera se compare contra lo que el modelo predice
+    (`dump_ray.model_channel` devuelve ahora `overflow`) en vez de contra una lista de nombres.
+
+    Eso deja un hueco real anotado como [P-22](../alcance/pendientes.md#p-22): con el catálogo de
+    hoy **nada ejercita el camino de overflow del DDC de punta a punta en silicio** — ni
+    `drx_saturate`, ni el latch sticky de `drx_axil_regs`, ni el registro OVERFLOW, ni la bandera
+    de la trama `ray`. L0 lo cubre con estímulo inyectado; a la fuente real no se le ha visto
+    nunca levantarlo.
 
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 

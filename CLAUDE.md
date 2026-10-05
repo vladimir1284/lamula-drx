@@ -305,10 +305,10 @@ hueco), y es la contrapresión haciendo su trabajo: el rayo que no cabe cuesta u
 ráfaga de once. [P-19](docs/alcance/pendientes.md#p-19) nació y murió el mismo
 día: 124 ppm durante una tormenta de WiFi del host, 25 ppm con el host sano y **0 en 201 032
 rayos** con un cliente que solo hace `recv_into` sobre un buffer fijo. Era el reensamblado en
-Python de `tools/mock_dsp.py`, no la placa. **Lo que falta para cerrar ZM4:** solo el barrido
-del catálogo de estímulos contra rayos reales — desbloqueado el 4-oct-2026 con el estímulo desde
-BRAM (ver más abajo), pendiente de medirlo en placa. Detalle en `fases.md#z4`, entradas del 2-oct
-(noche), del 3-oct y del 4-oct.
+Python de `tools/mock_dsp.py`, no la placa. **El barrido del catálogo de estímulos contra rayos
+reales —lo último que le faltaba a ZM4— cerró el 4-oct-2026 en 8/8** con el estímulo cargado en
+BRAM (ver más abajo). Detalle en `fases.md#z4`, entradas del 2-oct (noche), del 3-oct y del
+4-oct.
 
 **P-16 resuelto en RTL, 3-oct-2026 — por una tercera vía que el hallazgo no contemplaba.** P-16
 daba dos salidas, las dos caras: ensanchar el stream del MM2S (tres cambios simultáneos, y
@@ -370,8 +370,18 @@ a LUTRAM, que era el riesgo principal. El WNS baja 0,776 ns desde los 2,394 ns d
 por el camino nuevo**: el crítico medido es el FIFO del FIR Compiler → `overflow_sticky_r` de
 `drx_axil_regs`, 12 niveles, un camino que ya existía; lo que cambió es la colocación.
 `XPAR_FABRIC_DMA_S2MM_INTROUT_INTR` sigue en 61, así que `drx_ray.c` no se toca. `BOOT.BIN`
-reproducible. **Nada de esto ha corrido en silicio todavía**: falta la regresión de −9,03 dBFS en
-frío y el barrido 8/8, que necesitan la placa. Detalle en `fases.md#z4`, entrada del 4-oct.
+reproducible. **Medido en placa el mismo día, y cierra ZM4:** mapa v11 confirmado por AXI-Lite,
+la ventana de carga releída (`VEC_LEN=4000`), **219 rayos en 1000 ms con `overrun=0x0
+truncated=0x0`** y la autoprueba cargando vectores a la vez que se capturan rayos —imposible hasta
+v10—, el espectro del rayo por el cable en **−9,03 dBFS en los tres canales** (la misma cifra de
+antes del cambio, y ahora con el vector cargado por la ventana, no solo precargado) a 222,6
+rayos/s sin huecos de `seq`, y **`tools/sweep_catalogo.py --settle 1` en 8/8, código 0**, contra
+el 0/8 del 3-oct. La primera pasada dio 7/8 y el fallo era de la herramienta: exigía
+`ddc_overflow` en `tono_sobre_escala` por su nombre, y el modelo dorado dice overflow=0 para los
+ocho vectores — la entrada a +6 dBFS la recorta el ADC antes del DDC y la ganancia de Z1 deja la
+salida 3,9 dB bajo el fondo. Corregido comparando la bandera contra el modelo; queda
+[P-22](docs/alcance/pendientes.md#p-22) abierto: ningún vector del catálogo ejercita hoy el camino
+de overflow del DDC en silicio. Detalle en `fases.md#z4`, entradas del 4-oct.
 
 **Infraestructura de medida, 3-oct-2026.** `tools/net_drx_link.sh` deja el enlace cableado al DRx
 con perfil persistente (192.168.1.1/24 estática, `never-default`): el perfil por defecto de
@@ -395,7 +405,7 @@ Lo que sí está hecho y verificado, además de lo de arriba:
 1. `docs/alcance/contexto.md` — qué es y qué no es, y la relación con los proyectos DSP y RCP.
 2. `docs/alcance/decisiones.md` — las doce decisiones congeladas (D-01…D-12). Ninguna se revierte
    sin discutirlo.
-3. `docs/alcance/pendientes.md` — hallazgos abiertos (P-01…P-21), supuestos de entorno a verificar y
+3. `docs/alcance/pendientes.md` — hallazgos abiertos (P-01…P-22), supuestos de entorno a verificar y
    riesgos de la estrategia ZedBoard.
 4. `docs/implementacion/fases.md` — el plan de trabajo.
 5. `AGENTS.md` — las reglas que no se negocian, antes de escribir la primera línea de código.

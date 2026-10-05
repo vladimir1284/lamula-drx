@@ -2519,3 +2519,50 @@ hipótesis de partida lo debilita como causa, pero no lo descarta.
 Detalle, las tres trampas de recargar solo el ELF por JTAG y la regla de que una recarga en
 caliente no es comparable con un arranque en frío, en
 [docs/implementacion/ila.md](../implementacion/ila.md).
+
+### P-22 · Ningún vector del catálogo ejercita el overflow del DDC { #p-22 }
+
+**Estado:** abierto, encontrado 4-oct-2026 (primer barrido completo del catálogo que llegó a
+comparar dato) · **Dueño:** Z5 · **Bloquea:** nada hoy. Es un hueco de verificación, no un fallo.
+
+El catálogo trae `tono_sobre_escala`, un tono a **+6 dBFS** que `tools/gen_l1_vectors.py:129`
+describe así: «Entrada sobre-escala: el ADC real satura, no envuelve. Ejercita el…» reporte de
+overflow. `tools/sweep_catalogo.py` exigía en consecuencia que ese vector, y solo ese, levantara
+`ddc_overflow` en las banderas del rayo.
+
+**Medido en placa el 4-oct-2026: no lo levanta, y no debería.** El rayo da **−4,32 dBFS**, y el
+modelo dorado da exactamente **−4,32 dBFS**. Preguntado al modelo directamente, para los ocho
+vectores y en los dos modos de celda:
+
+```
+fine    tono_sobre_escala   overflow = 0/19   |pico| = 21005  (fondo de escala 32767)
+coarse  tono_sobre_escala   overflow = 0/9    |pico| =   462
+```
+
+La entrada está a +6 dBFS, pero el ADC la recorta a fondo de escala **antes** de entrar al DDC, y
+el ajuste de ganancia fina de Z1 deja el pico de salida 3,9 dB por debajo del fondo. No hay nada
+que saturar. **El hardware y el modelo coinciden; lo que estaba mal era la expectativa escrita a
+mano en la herramienta**, puesta antes de que nadie midiera — y Z4.3 ya lo había anotado como tal
+en `fw/include/drx_stimulus.h`: «Se informa, no se exige: que un vector concreto llegue a saturar
+la salida del DDC depende del ajuste de ganancia de la cadena y **no está medido en placa
+todavía**». Ya está medido.
+
+Corregido el mismo día: `sweep_catalogo.py` compara la bandera contra lo que el modelo predice
+(`dump_ray.model_channel` devuelve ahora `overflow`), no contra una lista de nombres de vector.
+Con eso el barrido cierra **8/8**. La corrección es la correcta en los dos sentidos: también
+detectaría un `ddc_overflow` espurio, y sigue valiendo el día que alguien añada un vector que sí
+desborde.
+
+**Lo que queda abierto, que es lo que importa.** Con el catálogo de hoy, **nada ejercita el camino
+de overflow del DDC de punta a punta en silicio**: ni la salida `overflow` de `drx_saturate`, ni su
+propagación por `drx_ddc_quad_top`, ni el latch sticky de `drx_axil_regs`, ni el registro OVERFLOW
+(v2), ni la bandera `ddc_overflow` de la trama `ray`. L0 cubre el registro y el sticky con un
+estímulo inyectado; lo que no se ha visto nunca es a la FUENTE real levantarlo.
+
+**Condición de cierre:** un vector del catálogo para el que el modelo dorado prediga
+`overflow > 0`, barrido en placa, y que la bandera llegue hasta la trama `ray`. Y hay una pega que
+conviene decir antes de que alguien lo intente subiendo la amplitud: **no se llega por ahí**. La
+entrada ya está recortada a fondo de escala por el ADC, así que subir los dBFS del tono no cambia
+lo que entra al DDC. Haría falta un estímulo cuyo contenido espectral concentre la ganancia de la
+cadena en la banda de paso — inferencia, no medida; el diseño concreto de ese vector es parte del
+trabajo.
