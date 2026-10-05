@@ -2349,6 +2349,51 @@ Trabajo:
     de la trama `ray`. L0 lo cubre con estímulo inyectado; a la fuente real no se le ha visto
     nunca levantarlo.
 
+!!! success "4-oct-2026 (noche): soak del catálogo — 2136 selecciones encadenadas, ningún atasco"
+    La afirmación que el cambio de arquitectura deja implícita —que sin el canal MM2S no queda
+    nada en el camino de estímulo que se pueda atascar— no estaba medida. Ahora sí.
+    `tools/soak_catalogo.sh` (nuevo) encadena barridos del catálogo; no reusa
+    `tools/conductor_p21.sh` porque la premisa de aquel se invirtió: toleraba `rc=1` porque con
+    Throttled(DDR) el barrido daba 0/8 por P-16, y ahora cualquier `rc != 0` es un fallo real.
+
+    **Primera corrida, 41 min: 201 pasadas, 1608 selecciones, cero atascos.** El criterio que
+    buscaba —tres fallos seguidos— no se disparó ni una vez, y la cadena nunca se quedó parada.
+    `dma_overruns = 0`, `ray_gaps = 0`, `BITE = 0x0`, **223,2 rayos/s sostenidos** (553 495 rayos
+    en 2480 s) contra los 223,47 predichos.
+
+    **Pero 27 de las 201 pasadas dieron 7/8, y eso obliga a corregir lo que se dijo por la
+    tarde.** El 8/8 de la pasada suelta fue en parte suerte. Los 27 fallos son el **mismo vector y
+    el mismo modo de fallo**: `dos_tonos`, con el pico en el bin espejo —`-156` donde el modelo
+    pone `+156`, y una vez `-575` contra `+575` en el otro conteo de bins—.
+
+    No es del DRx. `dos_tonos` son dos tonos colocados simétricamente alrededor del IF
+    (`if_norm ∓ 0,0008`), así que en banda base el espectro es **exactamente** simétrico: el
+    modelo dorado da `4657187.1` en `+156` y `4657187.1` en `-156`, bit a bit. Comparar el bin de
+    `argmax` entre dos valores iguales no puede ser determinista — qué lado gana lo decide el
+    ruido de cuantización, y lo decidió al revés un 13 % de las veces.
+
+    Corregido en `tools/dump_ray.py`: `spectrum()` marca `peak_ambiguo` cuando el bin espejo está
+    dentro de 0,5 dB del pico, y `sweep_catalogo.py` compara entonces `|bin|` en vez del bin con
+    signo. Sale del modelo, no de una lista de nombres de vector — mismo criterio que la bandera
+    de overflow, y por la misma razón. De los ocho vectores, `dos_tonos` es el único ambiguo, en
+    los dos conteos de bins, así que la corrección no afloja los otros siete.
+
+    **Segunda corrida con el criterio arreglado, 10 min: 66 pasadas, 528 selecciones, 0 fallos.**
+
+    **Y un hallazgo nuevo que el soak hizo visible: cargar un vector cuesta un rayo.**
+    `trig_gaps` sube **1,05–1,12 por selección** en las dos corridas. La causa es directa:
+    `vector_load` congela el lector de `vector_source` mientras el PS escribe las 4000 muestras,
+    pero el motor de timing cuenta ciclos de reloj (`timing_paced = 0`) y no se entera, así que
+    `ray_start` dispara sobre una cadena sin muestras. Los 101 cortos y 96 largos acumulados son
+    los rayos de esa frontera, y los 174 `enc_fail` son `DrxRayFrame_Encode` negándose a
+    enmarcarlos — **no llega dato malo al DSP**. Anotado como
+    [P-23](../alcance/pendientes.md#p-23), sin arreglar: cuesta un rayo cada 1600 PRIs durante un
+    barrido de banco de pruebas y cero en operación normal, y arreglarlo toca el motor de timing,
+    cerrado y medido desde Z2.
+
+    `sink_drops`, `cola` y `snd_fail` salen altos porque el barrido conecta y desconecta 2136
+    veces; son artefactos de interacción con el cliente, no criterio de salud.
+
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
 Trabajo:

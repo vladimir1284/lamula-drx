@@ -2566,3 +2566,55 @@ entrada ya está recortada a fondo de escala por el ADC, así que subir los dBFS
 lo que entra al DDC. Haría falta un estímulo cuyo contenido espectral concentre la ganancia de la
 cadena en la banda de paso — inferencia, no medida; el diseño concreto de ese vector es parte del
 trabajo.
+
+### P-23 · Cargar un vector cuesta un rayo: el motor de timing no se entera { #p-23 }
+
+**Estado:** abierto, encontrado 4-oct-2026 (primer soak encadenando barridos del catálogo) ·
+**Dueño:** Z5 · **Bloquea:** nada. No llega dato malo al DSP. Es un coste conocido, no una
+corrupción.
+
+Cada `test_stimulus_select` pone `CTRL` bit 2 (`vector_load`) y lo mantiene mientras el PS escribe
+las `VECTOR_LOOP_LEN` muestras por `VEC_DATA`. Con `vector_load` en alto, `rtl/vector_source.sv`
+congela el lector a propósito — es lo que impide que medio vector viejo y medio nuevo suenen a la
+vez. Pero **el motor de timing no sabe nada de eso**: con `timing_paced = 0` cuenta ciclos de
+reloj, así que `ray_start` sigue disparando sobre una cadena sin muestras.
+
+**Medido:** 201 barridos encadenados, 41 min, 1608 selecciones más 3 del arranque.
+
+```
+drx_status: rayo  trig_gaps=1684(d=2)  cortos=68 largos=65 enc_fail=114
+                  dma_err=0 ray_gaps=0 magic=0 n_ch=0
+drx_status: BITE=0x0 uptime=2480s rayos=553495 dma_overruns=0 ddc_overflows=0
+                  ssa_underruns=0 last_error=0
+```
+
+**1684 / 1611 = 1,045 huecos de trigger por selección.** El resto cuadra con la aritmética: la
+carga son 4000 escrituras AXI-Lite contra PRIs de 12,28 ms (lote bajo) y 3,33 ms (lote alto), así
+que la ventana de congelación abarca aproximadamente un disparo. La latencia por escritura no está
+medida, así que el factor exacto es inferencia; el 1,045 sí es medida.
+
+**Lo que NO pasa, y es lo que importa:** `dma_overruns = 0`, `ray_gaps = 0`, `ddc_overflows = 0`,
+`BITE = 0x0`, y **223,2 rayos/s sostenidos** (553 495 rayos en 2480 s) contra los 223,47
+predichos. Los 68 cortos y 65 largos son rayos de la frontera de la carga —cabecera de una
+configuración y carga útil de otra, la misma clase de evento que
+[P-18](#p-18)— y los 114 `enc_fail` son `DrxRayFrame_Encode` **negándose a enmarcarlos**, que es
+exactamente para lo que esa comprobación existe. No llega dato malo al DSP.
+
+`sink_drops`, `cola` y `snd_fail` salen altos (20 386 / 20 272 / 203) porque el barrido conecta y
+desconecta 1608 veces; son artefactos de interacción con el cliente y no se usan como criterio de
+salud, igual que en las corridas de Z4.6.
+
+**Condición de cierre:** que `vector_load` también retenga el motor de timing, de modo que una
+carga no consuma PRIs. El enganche natural es el mismo `advance` de `rtl/drx_sample_pacer.sv`
+(mapa v10): poner `timing_paced = 1` durante la carga lo conseguiría sin RTL nuevo, porque sin
+muestras no hay avances y el motor se para solo — **inferencia, no medida**, y hay que comprobar
+que el cambio de base de tiempo a mitad de radial no deje ese radial con dos PRIs distintas, que
+es justamente lo que `drx_regs_hw.c` evita hoy parando el secuenciador antes de tocar el bit.
+
+Alternativa más limpia y más cara: un puerto de retención en `drx_timing_engine` que congele el
+secuenciador sin cambiar lo que `prf_div` significa.
+
+**Por qué no se arregló al encontrarlo:** cuesta un rayo cada 1608 PRIs durante un barrido de
+banco de pruebas, y cero en operación normal —nadie recarga vectores con el radar funcionando—.
+Arreglarlo toca el motor de timing, que está cerrado y medido desde Z2. No vale la pena hasta que
+alguien necesite barrer el catálogo sin perder un solo rayo.

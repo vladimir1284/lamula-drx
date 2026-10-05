@@ -116,6 +116,14 @@ def parse_header(words: np.ndarray) -> dict:
     }
 
 
+#: Cuánto tienen que parecerse el pico y su bin espejo para que el signo deje
+#: de ser un criterio. Holgado a propósito: con un espectro simétrico la
+#: diferencia real es 0 dB y lo único que la separa de 0 es el ruido de
+#: cuantización de la cadena, así que un umbral apretado volvería a hacer el
+#: test dependiente de la suerte -- que es justo lo que se está arreglando.
+PEAK_MIRROR_TOL_DB = 0.5
+
+
 def spectrum(i: np.ndarray, q: np.ndarray) -> dict:
     """Pico y potencia de un canal, sin depender de dónde empiece el rayo."""
     iq = i.astype(np.float64) + 1j * q.astype(np.float64)
@@ -135,11 +143,28 @@ def spectrum(i: np.ndarray, q: np.ndarray) -> dict:
         peak_db = 20.0 * np.log10(max(mag[peak], 1e-12) / full_scale)
         power_db = 10.0 * np.log10(max(float(np.mean(np.abs(iq) ** 2)), 1e-12)
                                    / full_scale**2)
+    # ¿El pico tiene un gemelo en el bin espejo con la MISMA magnitud? Si lo
+    # tiene, qué lado gana lo decide el ruido y `argmax` no es un criterio
+    # estable.
+    #
+    # No es hipotético: `dos_tonos` son dos tonos colocados simétricamente
+    # alrededor del IF (`if_norm -+ 0,0008`), así que en banda base el espectro
+    # es EXACTAMENTE simétrico -- el modelo da 4657187.1 en +156 y en -156, bit
+    # a bit. Medido el 4-oct-2026 en 201 barridos encadenados: el pico sale en
+    # -156 en 27 de ellos, un 13 %. El DRx está bien; lo que no servía era
+    # comparar el signo.
+    mirror_db = -np.inf
+    if peak_signed != 0 and abs(peak_signed) != n // 2:
+        mirror = (-peak_signed) % n
+        with np.errstate(divide="ignore"):
+            mirror_db = 20.0 * np.log10(max(mag[mirror], 1e-12) / full_scale)
+
     return {
         "peak_bin": peak_signed,
         "peak_frac": peak_signed / n,
         "peak_db": peak_db,
         "power_db": power_db,
+        "peak_ambiguo": bool(abs(mirror_db - peak_db) < PEAK_MIRROR_TOL_DB),
         "max_abs": int(np.max(np.abs(np.concatenate([i, q])))),
     }
 

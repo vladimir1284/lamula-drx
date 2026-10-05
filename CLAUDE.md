@@ -381,7 +381,20 @@ el 0/8 del 3-oct. La primera pasada dio 7/8 y el fallo era de la herramienta: ex
 ocho vectores — la entrada a +6 dBFS la recorta el ADC antes del DDC y la ganancia de Z1 deja la
 salida 3,9 dB bajo el fondo. Corregido comparando la bandera contra el modelo; queda
 [P-22](docs/alcance/pendientes.md#p-22) abierto: ningún vector del catálogo ejercita hoy el camino
-de overflow del DDC en silicio. Detalle en `fases.md#z4`, entradas del 4-oct.
+de overflow del DDC en silicio.
+
+**Soak del catálogo esa noche: 267 pasadas, 2136 selecciones encadenadas, ningún atasco** — que
+era lo que el cambio dejaba implícito al sacar el MM2S y no estaba medido. `dma_overruns=0`,
+`ray_gaps=0`, `BITE=0x0`, 223,2 rayos/s sostenidos. Dos cosas salieron de ahí. Una, que **el 8/8
+de la pasada suelta fue en parte suerte**: 27 de las 201 primeras pasadas dieron 7/8, siempre
+`dos_tonos` y siempre con el pico en el bin espejo, porque son dos tonos simétricos respecto al IF
+y el modelo da los dos bins **bit a bit iguales** (`4657187.1` en +156 y en −156) — comparar el
+`argmax` entre dos valores idénticos no puede ser determinista. Corregido en `dump_ray.spectrum`
+(`peak_ambiguo`, compara `|bin|`), y con eso 66/66 pasadas limpias. Dos,
+[P-23](docs/alcance/pendientes.md#p-23): **cargar un vector cuesta un rayo**, 1,05–1,12
+`trig_gaps` por selección, porque `vector_load` congela la fuente pero el motor de timing cuenta
+ciclos y no se entera; los rayos de esa frontera los rechaza `DrxRayFrame_Encode`, así que no
+llega dato malo al DSP. Detalle en `fases.md#z4`, entradas del 4-oct.
 
 **Infraestructura de medida, 3-oct-2026.** `tools/net_drx_link.sh` deja el enlace cableado al DRx
 con perfil persistente (192.168.1.1/24 estática, `never-default`): el perfil por defecto de
@@ -405,7 +418,7 @@ Lo que sí está hecho y verificado, además de lo de arriba:
 1. `docs/alcance/contexto.md` — qué es y qué no es, y la relación con los proyectos DSP y RCP.
 2. `docs/alcance/decisiones.md` — las doce decisiones congeladas (D-01…D-12). Ninguna se revierte
    sin discutirlo.
-3. `docs/alcance/pendientes.md` — hallazgos abiertos (P-01…P-22), supuestos de entorno a verificar y
+3. `docs/alcance/pendientes.md` — hallazgos abiertos (P-01…P-23), supuestos de entorno a verificar y
    riesgos de la estrategia ZedBoard.
 4. `docs/implementacion/fases.md` — el plan de trabajo.
 5. `AGENTS.md` — las reglas que no se negocian, antes de escribir la primera línea de código.

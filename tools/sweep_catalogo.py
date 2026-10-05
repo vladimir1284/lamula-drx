@@ -105,11 +105,25 @@ def compara(ray, medido: list[dict], vector: str, platform: str) -> list[str]:
         platform, vector, int(ray.bins), bool(ray.cell_mode)
     )
     fallos = []
+    # Con un espectro simétrico el pico y su bin espejo valen lo mismo y qué
+    # lado gana lo decide el ruido, así que el SIGNO deja de ser un criterio y
+    # solo se compara la distancia a continua. Lo marca el modelo
+    # (`peak_ambiguo`), no una lista de nombres de vector -- mismo criterio que
+    # la bandera de overflow de más abajo, y por la misma razón.
+    #
+    # Medido el 4-oct-2026, 201 barridos encadenados: `dos_tonos` daba el pico
+    # en -156 en 27 de ellos (13 %) contra el +156 del modelo, que tiene los
+    # dos bins bit a bit iguales. Un barrido suelto pasaba o fallaba por suerte.
     for c, stats in enumerate(medido):
-        if abs(stats["peak_bin"] - esperado["peak_bin"]) > DUMP.PEAK_BIN_TOL:
+        medido_bin = stats["peak_bin"]
+        esperado_bin = esperado["peak_bin"]
+        if esperado["peak_ambiguo"]:
+            medido_bin, esperado_bin = abs(medido_bin), abs(esperado_bin)
+        if abs(medido_bin - esperado_bin) > DUMP.PEAK_BIN_TOL:
             fallos.append(
                 f"canal {c}: pico en bin {stats['peak_bin']:+d}, el modelo lo "
                 f"pone en {esperado['peak_bin']:+d}"
+                + (" (|bin|, espectro simétrico)" if esperado["peak_ambiguo"] else "")
             )
         if abs(stats["peak_db"] - esperado["peak_db"]) > DUMP.PEAK_DB_TOL:
             fallos.append(
