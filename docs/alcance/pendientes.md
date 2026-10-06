@@ -2569,9 +2569,18 @@ trabajo.
 
 ### P-23 · Cargar un vector cuesta un rayo: el motor de timing no se entera { #p-23 }
 
-**Estado:** abierto, encontrado 4-oct-2026 (primer soak encadenando barridos del catálogo) ·
-**Dueño:** Z5 · **Bloquea:** nada. No llega dato malo al DSP. Es un coste conocido, no una
-corrupción.
+**Estado:** cerrado como coste aceptado, 5-oct-2026 (encontrado 4-oct-2026 en el primer soak
+encadenando barridos del catálogo) · **Dueño:** — · **Bloquea:** nada. No llega dato malo al DSP.
+Es un coste conocido, no una corrupción.
+
+**Decisión de cierre, 5-oct-2026:** no se arregla. Nadie necesita barrer el catálogo sin perder un
+rayo, y el arreglo obvio empeora el modo de fallo. **Inferencia, no medida:** retener el motor con
+`timing_advance & ~vector_load` congelaría el rayo en curso a mitad, y al soltar la carga se
+completaría con tamaño y cabecera correctos pero mitad vector viejo y mitad nuevo.
+`DrxRayFrame_Encode` no lo rechazaría, así que cambiaría un rayo perdido y visible por uno
+empalmado y silencioso hacia el DSP. Hoy el rayo de la frontera se trunca y `Encode` se niega a
+enmarcarlo, que es el comportamiento seguro. **Si alguna vez hace falta cero huecos:** la puerta
+más un `clear` del range-gate al cerrar la carga, con P&R, L0 con mutación y medida en placa.
 
 Cada `test_stimulus_select` pone `CTRL` bit 2 (`vector_load`) y lo mantiene mientras el PS escribe
 las `VECTOR_LOOP_LEN` muestras por `VEC_DATA`. Con `vector_load` en alto, `rtl/vector_source.sv`

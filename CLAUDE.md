@@ -394,7 +394,8 @@ y el modelo da los dos bins **bit a bit iguales** (`4657187.1` en +156 y en −1
 [P-23](docs/alcance/pendientes.md#p-23): **cargar un vector cuesta un rayo**, 1,05–1,12
 `trig_gaps` por selección, porque `vector_load` congela la fuente pero el motor de timing cuenta
 ciclos y no se entera; los rayos de esa frontera los rechaza `DrxRayFrame_Encode`, así que no
-llega dato malo al DSP. Detalle en `fases.md#z4`, entradas del 4-oct.
+llega dato malo al DSP. **Cerrado como coste aceptado, 5-oct-2026**: nadie necesita el barrido sin
+pérdida, y retener el motor sin más empalmaría un rayo en silencio. Detalle en `fases.md#z4`, entradas del 4-oct.
 
 **Infraestructura de medida, 3-oct-2026.** `tools/net_drx_link.sh` deja el enlace cableado al DRx
 con perfil persistente (192.168.1.1/24 estática, `never-default`): el perfil por defecto de
@@ -418,7 +419,7 @@ Lo que sí está hecho y verificado, además de lo de arriba:
 1. `docs/alcance/contexto.md` — qué es y qué no es, y la relación con los proyectos DSP y RCP.
 2. `docs/alcance/decisiones.md` — las doce decisiones congeladas (D-01…D-12). Ninguna se revierte
    sin discutirlo.
-3. `docs/alcance/pendientes.md` — hallazgos abiertos (P-01…P-23), supuestos de entorno a verificar y
+3. `docs/alcance/pendientes.md` — hallazgos (P-01…P-23), supuestos de entorno a verificar y
    riesgos de la estrategia ZedBoard.
 4. `docs/implementacion/fases.md` — el plan de trabajo.
 5. `AGENTS.md` — las reglas que no se negocian, antes de escribir la primera línea de código.

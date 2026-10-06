@@ -2389,7 +2389,9 @@ Trabajo:
     enmarcarlos — **no llega dato malo al DSP**. Anotado como
     [P-23](../alcance/pendientes.md#p-23), sin arreglar: cuesta un rayo cada 1600 PRIs durante un
     barrido de banco de pruebas y cero en operación normal, y arreglarlo toca el motor de timing,
-    cerrado y medido desde Z2.
+    cerrado y medido desde Z2. **Cerrado como coste aceptado el 5-oct-2026**, sin tocar RTL: nadie
+    necesita el barrido sin pérdida, y retener el motor con `vector_load` empalmaría un rayo en
+    silencio (inferencia, no medida). Razonamiento en `pendientes.md#p-23`.
 
     `sink_drops`, `cola` y `snd_fail` salen altos porque el barrido conecta y desconecta 2136
     veces; son artefactos de interacción con el cliente, no criterio de salud.
