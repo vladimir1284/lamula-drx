@@ -143,7 +143,8 @@ def compara(ray, medido: list[dict], vector: str, platform: str) -> list[str]:
     # CONSECUENCIA, y no es menor: NINGUN vector del catalogo ejercita hoy el
     # camino de overflow del DDC, asi que el registro OVERFLOW, su latch sticky
     # en `drx_axil_regs` y la bandera `ddc_overflow` del rayo siguen sin
-    # verificarse de punta a punta en silicio. Ver P-22.
+    # verificarse de punta a punta en silicio. Ver P-22: cerrado como
+    # inalcanzable por estimulo (cota 0,927 fs, tools/bound_ddc_overflow.py).
     hubo_overflow = bool(ray.ray_flags & C.RayFlag.DDC_OVERFLOW)
     if hubo_overflow != esperado["overflow"]:
         fallos.append(

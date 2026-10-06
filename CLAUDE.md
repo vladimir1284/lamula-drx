@@ -379,9 +379,11 @@ rayos/s sin huecos de `seq`, y **`tools/sweep_catalogo.py --settle 1` en 8/8, c�
 el 0/8 del 3-oct. La primera pasada dio 7/8 y el fallo era de la herramienta: exigía
 `ddc_overflow` en `tono_sobre_escala` por su nombre, y el modelo dorado dice overflow=0 para los
 ocho vectores — la entrada a +6 dBFS la recorta el ADC antes del DDC y la ganancia de Z1 deja la
-salida 3,9 dB bajo el fondo. Corregido comparando la bandera contra el modelo; queda
-[P-22](docs/alcance/pendientes.md#p-22) abierto: ningún vector del catálogo ejercita hoy el camino
-de overflow del DDC en silicio.
+salida 3,9 dB bajo el fondo. Corregido comparando la bandera contra el modelo.
+[P-22](docs/alcance/pendientes.md#p-22) **cerrado el 5-oct-2026 como inalcanzable por estímulo**:
+la salida máxima posible del DDC con cualquier entrada de 16 bits es 0,927 fs (fino) y 0,832 fs
+(grueso), así que no existe vector que sature (`tools/bound_ddc_overflow.py`). El cableado
+`overflow` → sticky → trama `ray` queda sin ver en placa, solo cubierto por L0.
 
 **Soak del catálogo esa noche: 267 pasadas, 2136 selecciones encadenadas, ningún atasco** — que
 era lo que el cambio dejaba implícito al sacar el MM2S y no estaba medido. `dma_overruns=0`,

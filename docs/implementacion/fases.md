@@ -2396,6 +2396,17 @@ Trabajo:
     `sink_drops`, `cola` y `snd_fail` salen altos porque el barrido conecta y desconecta 2136
     veces; son artefactos de interacción con el cliente, no criterio de salud.
 
+!!! success "5-oct-2026: P-22 cerrado como inalcanzable por estímulo — la cota está medida"
+    Se intentó diseñar el vector que levanta `ddc_overflow` y salió que no existe. La cadena del
+    modelo es lineal salvo redondeos; midiendo su respuesta con un impulso de fondo de escala en
+    cada posición de entrada y barriendo las 25 fases del NCO, la salida máxima posible con
+    `|x| <= fs` es **0,927 fs en fino y 0,832 fs en grueso** (`tools/bound_ddc_overflow.py`, 4 min).
+    Un vector con el signo de esa respuesta dio `|pico I| = 30057` de 32767 y `overflow = 0/64`.
+    Subir la amplitud ya se sabía que no servía; esto cierra también «concentrar la ganancia en la
+    banda de paso». Sin cambiar la ganancia de Z1 (toca D-12) no hay vector. Queda sin ver en placa
+    el cableado `overflow` → sticky → trama `ray`, cubierto solo por L0; el gancho de prueba en RTL
+    que lo cerraría está descrito en `pendientes.md#p-22` y no se hace sin un requisito que lo pida.
+
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
 Trabajo:

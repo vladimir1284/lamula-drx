@@ -2522,8 +2522,36 @@ caliente no es comparable con un arranque en frío, en
 
 ### P-22 · Ningún vector del catálogo ejercita el overflow del DDC { #p-22 }
 
-**Estado:** abierto, encontrado 4-oct-2026 (primer barrido completo del catálogo que llegó a
-comparar dato) · **Dueño:** Z5 · **Bloquea:** nada hoy. Es un hueco de verificación, no un fallo.
+**Estado:** cerrado como inalcanzable por estímulo, 5-oct-2026 (encontrado 4-oct-2026 en el primer
+barrido completo del catálogo que llegó a comparar dato) · **Dueño:** — · **Bloquea:** nada. Queda
+un hueco de verificación aceptado, no un fallo.
+
+**Decisión de cierre, 5-oct-2026.** La condición de cierre original (más abajo) no se puede
+cumplir: con la ganancia de Z1, **ninguna** entrada de 16 bits hace desbordar el DDC. Medido contra
+el modelo dorado con `tools/bound_ddc_overflow.py`: la cadena es lineal salvo redondeos, así que la
+salida máxima posible con `|x| <= fs` es `fs · Σ|g|`, con `g` la respuesta medida con un impulso en
+cada posición de entrada y barriendo las 25 fases del NCO.
+
+| Modo | Salida máxima posible | Margen hasta saturar |
+|---|---|---|
+| fino (R=208) | 0,927 fs | 0,65 dB |
+| grueso (R=416) | 0,832 fs | 1,6 dB |
+
+Un vector construido con el signo de esa respuesta, o sea el peor caso, dio `|pico I| = 30057` y
+`overflow = 0/64` en modo fino. Los redondeos mueven unos pocos LSB, no el 7 % que falta. La pega
+anotada abajo se queda corta: no es que subir la amplitud no llegue, es que **ningún contenido
+espectral llega**. Un vector distinto no sirve; habría que cambiar la ganancia de Z1, y eso toca
+D-12 y su matriz de 16 corridas por una verificación de BITE.
+
+**Lo que queda sin verlo en placa:** el cableado de `overflow` desde `drx_saturate` por
+`drx_ddc_quad_top`, el sticky de `drx_axil_regs`, el registro OVERFLOW (v2) y la bandera
+`ddc_overflow` de la trama `ray`. L0 cubre `drx_saturate`, el sticky y el registro con estímulo
+inyectado. Que el cableado entre ellos funcione en silicio es **inferencia, no medida**. Hoy el
+hardware no puede levantar la bandera, y `sweep_catalogo.py` la compara contra el modelo, así que
+detectaría un `ddc_overflow` espurio. **Si alguna vez hace falta verlo levantado:** un gancho de
+prueba en RTL (bit de `CTRL` o desplazamiento de ganancia en `drx_saturate`), con registro v12, L0
+con mutación, P&R y medida en placa. El WNS de partida es 1,618 ns. El mismo problema reaparece si
+una plataforma futura sube la ganancia hasta `Σ|g| >= 1`: ahí el vector sí existiría.
 
 El catálogo trae `tono_sobre_escala`, un tono a **+6 dBFS** que `tools/gen_l1_vectors.py:129`
 describe así: «Entrada sobre-escala: el ADC real satura, no envuelve. Ejercita el…» reporte de
@@ -2559,7 +2587,7 @@ propagación por `drx_ddc_quad_top`, ni el latch sticky de `drx_axil_regs`, ni e
 (v2), ni la bandera `ddc_overflow` de la trama `ray`. L0 cubre el registro y el sticky con un
 estímulo inyectado; lo que no se ha visto nunca es a la FUENTE real levantarlo.
 
-**Condición de cierre:** un vector del catálogo para el que el modelo dorado prediga
+**Condición de cierre original (inalcanzable, ver arriba):** un vector del catálogo para el que el modelo dorado prediga
 `overflow > 0`, barrido en placa, y que la bandera llegue hasta la trama `ray`. Y hay una pega que
 conviene decir antes de que alguien lo intente subiendo la amplitud: **no se llega por ahí**. La
 entrada ya está recortada a fondo de escala por el ADC, así que subir los dBFS del tono no cambia
