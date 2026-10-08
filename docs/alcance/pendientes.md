@@ -2655,3 +2655,31 @@ secuenciador sin cambiar lo que `prf_div` significa.
 banco de pruebas, y cero en operación normal —nadie recarga vectores con el radar funcionando—.
 Arreglarlo toca el motor de timing, que está cerrado y medido desde Z2. No vale la pena hasta que
 alguien necesite barrer el catálogo sin perder un solo rayo.
+
+### P-24 · El signo del NCO del AFC solo está validado en la ZedBoard, no en la ZU9 { #p-24 }
+
+**Estado:** abierto, 8-oct-2026 (encontrado al cerrar Z4.6) · **Dueño:** — · **Bloquea:** el
+comisionado del lazo de AFC en la ZU9. No bloquea Z4.6 ni ZM4.
+
+**Qué se sabe (medido, ZedBoard):** el mezclador del DDC está conjugado. Subir `nco_phase_inc`
+sube el pico del espectro, así que el DSP manda `NCO = rx_if − freq_hz` (palabra absoluta de
+32 bits; 15 MHz a 62,5 MHz son 1030792151). Con esa convención el lazo cierra: pico del canal 2 de
+−0,416 a 0,000 de `fs_dec`, −9,03 dBFS, `afc_freq_meas_hz` y `afc_control_freq_hz` a 2 Hz tras
+90 s. Con el signo contrario el lazo se alejaría del pico en vez de acercarse.
+
+**Qué NO se sabe:** si el DDC de la ZU9 conjuga igual. Es el mismo RTL (inferencia: no se
+comparó el netlist ni se midió en la ZU9), pero el signo depende de cómo se cablea el DDS
+Compiler a cada plataforma, y la ZedBoard va dilatada ×4 en el tiempo (`fs_dec` ≈ 150,5 kHz
+medida), lo que enmascara cualquier diferencia que solo aparezca a la frecuencia real.
+
+**Cómo cerrarlo cuando llegue el hardware:** (1) con el DSP parado, barrer el NCO ±40 kHz con
+`tools/mock_dsp.py --afc` y comprobar con `--spectrum` hacia dónde se mueve el pico del canal 2;
+(2) si coincide con la ZedBoard, correr el DSP real 90 s y comprobar pico en 0 y `afc_bite = 0`;
+(3) si el signo es el contrario, el cambio es una línea en `crates/service/src/main.rs`
+(`rx_if − freq` por `rx_if + freq`), no en el firmware. Con la ZU9 sin dilatar, `LAMULA_DSP_FAST_TIME_DILATION`
+vuelve a 1.0.
+
+**Otros puntos sin cubrir del mismo cierre:** rango de captura del estimador ±0,5 ciclos/muestra
+(≈ ±75 kHz en la ZedBoard; un desvío mayor se interpreta como alias), y no se midió el desfase de
+rayos en vuelo entre la corrección aplicada y la medida (despreciable con ganancia ≈ 0,035,
+inferencia).

@@ -2427,7 +2427,7 @@ Trabajo:
     `drx_ray_ctx.c`).
 
     **Sin verificar.** El signo (mezclador conjugado, `NCO = rx_if − freq`) se validó solo en la
-    ZedBoard; falta confirmarlo en la ZU9.
+    ZedBoard; falta confirmarlo en la ZU9 ([P-24](../alcance/pendientes.md#p-24)).
 
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 

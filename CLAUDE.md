@@ -268,7 +268,8 @@ primera lectura por JTAG. Detalle en `fases.md#z4`, entradas del 2-oct.
 **Z4.6 — transporte TCP y cliente DSP de mentira: cerrada el 8-oct-2026 (empezó 2-oct, noche). El
 DSP real de `lamula-dsp` cierra el lazo de AFC sobre la ZedBoard** (pico del canal 2 de −0,416 a
 0,000 de fs_dec, −9,03 dBFS, 1168 rayos sin huecos; el signo del NCO solo está validado en la
-ZedBoard, no en la ZU9; detalle en `fases.md#z4`, entrada del 8-oct). Por fin hay un socket: `fw/src/app/drx_transport.c` (nuevo) sustituye
+ZedBoard, no en la ZU9; detalle en `fases.md#z4`, entrada del 8-oct; el signo en la ZU9 queda como
+[P-24](docs/alcance/pendientes.md#p-24)). Por fin hay un socket: `fw/src/app/drx_transport.c` (nuevo) sustituye
 al servidor de eco de la plantilla de Vitis, el DRx **escucha** en el puerto 9470 y el DSP conecta
 ([D-16](docs/alcance/decisiones.md#d-16)); contrato **v0.8**, que añade `tcp_port` al propio esquema
 para que las dos puntas no lo dupliquen a mano. `tools/mock_dsp.py` (nuevo) es la otra punta, y no
@@ -423,7 +424,7 @@ Lo que sí está hecho y verificado, además de lo de arriba:
 1. `docs/alcance/contexto.md` — qué es y qué no es, y la relación con los proyectos DSP y RCP.
 2. `docs/alcance/decisiones.md` — las doce decisiones congeladas (D-01…D-12). Ninguna se revierte
    sin discutirlo.
-3. `docs/alcance/pendientes.md` — hallazgos (P-01…P-23), supuestos de entorno a verificar y
+3. `docs/alcance/pendientes.md` — hallazgos (P-01…P-24), supuestos de entorno a verificar y
    riesgos de la estrategia ZedBoard.
 4. `docs/implementacion/fases.md` — el plan de trabajo.
 5. `AGENTS.md` — las reglas que no se negocian, antes de escribir la primera línea de código.
