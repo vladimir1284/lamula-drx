@@ -21,6 +21,7 @@
 #define DRX_TIMING_CFG_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "drx_dsp_v0_1.h"
 #include "drx_regs_hw.h"
@@ -67,5 +68,21 @@ bool DrxTiming_Start(void);
  * ultimo es el bin de guarda: D-09 valida `bin_count <= BinsMax`, no que
  * `bin_count * R` entre en `prf_div`. */
 drx_dsp_error_t DrxTiming_Apply(const drx_dsp_config_t *config);
+
+/* Metadato de rayo de la configuracion vigente, para DrxRayCtx_Fill. Antes el
+ * rayo se estampaba con los valores de bring-up aunque el DSP hubiera enviado
+ * otra config, y el DSP no veia TX_BURST_0 ni la PRF real. */
+typedef struct {
+    uint32_t prf_div_low;
+    uint32_t prf_div_high;
+    uint8_t pulse_width_idx_low;
+    uint8_t pulse_width_idx_high;
+    uint8_t channel_mask;
+    bool first_after_config;
+} DrxTimingRayMeta;
+
+/* `first_after_config` sale en true una sola vez por cada config aplicada: la
+ * llamada lo consume. */
+void DrxTiming_GetRayMeta(DrxTimingRayMeta *out);
 
 #endif /* DRX_TIMING_CFG_H */

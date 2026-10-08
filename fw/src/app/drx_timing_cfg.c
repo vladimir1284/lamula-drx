@@ -60,6 +60,15 @@
 static DrxTimingConfig g_applied;
 static bool g_have_applied;
 
+/* Metadato de rayo que no vive en DrxTimingConfig: indices de ancho de pulso
+ * (el registro guarda ciclos, el contrato quiere la posicion en la tabla),
+ * mascara de canales y la bandera first_after_config. Se actualizan junto con
+ * g_applied, solo cuando la configuracion entra de verdad. */
+static uint8_t g_applied_idx_low = (uint8_t)(DRX_N_PULSE_WIDTHS - 1u);
+static uint8_t g_applied_idx_high = 0u;
+static uint8_t g_applied_mask;
+static bool g_first_after_config;
+
 static const uint32_t kTrigDelayUs[DRX_N_TRIGGERS] = {0u, 10u, 20u, 30u};
 static const uint32_t kTrigWidthUs[DRX_N_TRIGGERS] = {1u, 2u, 4u, 8u};
 
@@ -297,6 +306,9 @@ bool DrxTiming_Start(void)
      * esta la que se restaura. */
     g_applied = cfg;
     g_have_applied = true;
+    g_applied_idx_low = (uint8_t)(DRX_N_PULSE_WIDTHS - 1u);
+    g_applied_idx_high = 0u;
+    g_applied_mask = (uint8_t)((1u << (unsigned)DRX_N_CH_TOP) - 1u);
 
     xil_printf("drx_timing: motor de timing corriendo, trig_out vivo en Pmod JA\r\n");
     return true;
@@ -471,6 +483,10 @@ drx_dsp_error_t DrxTiming_Apply(const drx_dsp_config_t *config)
 
     g_applied = nuevo;
     g_have_applied = true;
+    g_applied_idx_low = config->pulse_width_idx_low;
+    g_applied_idx_high = config->pulse_width_idx_high;
+    g_applied_mask = config->channel_mask;
+    g_first_after_config = true;
     return DRX_DSP_ERROR_OK;
 
 restaurar:
@@ -481,4 +497,29 @@ restaurar:
         DrxReg_TimingEnable();
     }
     return DRX_DSP_ERROR_PRF_RANGE_ILLEGAL;
+}
+
+void DrxTiming_GetRayMeta(DrxTimingRayMeta *out)
+{
+    if (out == NULL) {
+        return;
+    }
+    if (g_have_applied) {
+        out->prf_div_low = g_applied.prf_div_low;
+        out->prf_div_high = g_applied.prf_div_high;
+    } else {
+        DrxTimingConfig base;
+
+        DrxTiming_DefaultConfig(&base);
+        out->prf_div_low = base.prf_div_low;
+        out->prf_div_high = base.prf_div_high;
+    }
+    out->pulse_width_idx_low = g_applied_idx_low;
+    out->pulse_width_idx_high = g_applied_idx_high;
+    out->channel_mask = (g_applied_mask != 0u)
+                            ? g_applied_mask
+                            : (uint8_t)((1u << (unsigned)DRX_N_CH_TOP) - 1u);
+    /* Se consume en el primer rayo tras la config: solo ese lleva la bandera. */
+    out->first_after_config = g_first_after_config;
+    g_first_after_config = false;
 }

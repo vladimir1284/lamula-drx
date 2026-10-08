@@ -2407,6 +2407,28 @@ Trabajo:
     el cableado `overflow` → sticky → trama `ray`, cubierto solo por L0; el gancho de prueba en RTL
     que lo cerraría está descrito en `pendientes.md#p-22` y no se hace sin un requisito que lo pida.
 
+!!! success "8-oct-2026: Z4.6 cerrada — el DSP real cierra el lazo de AFC sobre la ZedBoard"
+    El DSP de Rust (`lamula-dsp`) conecta al puerto 9470, configura una NEXRAD estándar (máscara
+    `0x15`: RX_0 = I, RX_2 = Q, TX_BURST_0 = muestra del transmisor) y cierra el lazo de AFC contra
+    la placa cargada por JTAG, con la ZedBoard dilatada ×4 respecto de la ZU9 (`fs_dec` medida
+    ≈ 150,5 kHz).
+
+    **Medido.** Estimador del burst contra el pico de la FFT del canal 2, con el NCO barrido de
+    −40 kHz a +40 kHz y N = 4, 8 y 16: coinciden, sin sesgo. Lazo cerrado, 90 s: pico del canal 2
+    de **−0,416 a 0,000 de `fs_dec`** (−17,48 a **−9,03 dBFS**, el mismo −9,03 que el modelo
+    dorado), 1168 rayos sin huecos de `seq`, `afc_bite = 0`, `afc_freq_meas_hz = −62 501 Hz` y
+    `afc_control_freq_hz = −62 499 Hz` (a 30 s la diferencia era 1,1 kHz; el resto era el primer
+    orden con tau = 2 s).
+
+    **Causa de la convergencia a medias.** El burst se mide DESPUÉS del DDC ya retunado, o sea que
+    lo medido es el residuo `d − x`. El DSP lo filtraba como absoluto: punto fijo `x = d/2`
+    (−31,2 kHz medido). Arreglo en el DSP (`AfcLoop::update_residual`), no en el firmware. Del lado
+    del DRx: el sello del rayo lleva la configuración realmente aplicada (`drx_timing_cfg.c`,
+    `drx_ray_ctx.c`).
+
+    **Sin verificar.** El signo (mezclador conjugado, `NCO = rx_if − freq`) se validó solo en la
+    ZedBoard; falta confirmarlo en la ZU9.
+
 ## Z5 — Endurecimiento y dossier de portabilidad (semanas 25–28) { #z5 }
 
 Trabajo:
