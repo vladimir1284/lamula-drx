@@ -198,15 +198,50 @@ significan lo mismo:
 | `prf_div_min_high` (115 km) | 191 800 | 110 400 | exigiría PRF ≤ 750 Hz; hoy no vincula porque `prf_div_min` lo tapa, pero deja de ser coherente |
 | `pulse_width_cycles` | 200 / 415 / 825 | 115 / 239 / 475 | los pulsos durarían 1,39 / 2,89 / 5,73 µs en vez de 0,8 / 1,66 / 3,3 µs |
 
-Estas cinco aparecen además **escritas a mano fuera de `params.toml`** en
-`rtl/drx_ray_packer.sv`, `fw/src/app/drx_timing_cfg.c`, `fw/src/app/drx_control_boot.c`,
-`fw/src/drx_ray_frame_selftest.c`, `fw/tests/test_contract_io.py`, `test_ray_frame.py`,
-`test_control.py`, `sim/tb/tb_drx_timing_engine.py` y `sim/tests/test_l0_timing_engine.py`. Eso es
-lo que el gate `tools/check_hardcoded_clock.py` no ve, porque son conteos de ciclos y no relojes.
-Hay que auditarlas una a una; es el coste real de aplicar el ADR y no estaba estimado. Los valores de
-la columna «Con 143,9 MHz» son aritmética mía sobre las fórmulas del propio `params.toml`
-(`ceil(r·2·fs/c)`); **verificar con `gen_params.py` antes de firmar**, no son resultado de una
-corrida.
+**Medido el 8-oct-2026 en una copia aislada del repositorio** (diff de arriba más los valores de esta
+tabla, `gen_params.py`, `gen_coeffs.py`, `gen_contract.py`, `gen_registers.py`; sin Vivado, sin
+Verilator, sin placa):
+
+- Con el diff **literal** de este ADR, `gen_params.py` **aborta**: «`vector_loop_len` (4000) no es
+  múltiplo de `if_norm_den` (1439)». Confirma el punto 3.
+- Con los valores de esta revisión (`vector_loop_len` = 4317, `fs_hz` de ZedBoard = 62 500 087, y
+  las cinco constantes de la tabla) `gen_params.py` corre, y `tools/check_hardcoded_clock.py` pasa.
+  Las cifras de la columna «Con 143,9 MHz» son las que usé a mano; el generador las acepta, pero
+  **no las recalcula**, así que siguen siendo aritmética mía (`ceil(r·2·fs/c)`).
+- El firmware **se deriva solo** de esas constantes. `DrxTiming_DefaultConfig`
+  (`fw/src/app/drx_timing_cfg.c`) toma `max(PRF_DIV_MIN_LOW, PRF_DIV_MIN)` y lo alinea a un múltiplo
+  de `DRX_R1`. Con los valores nuevos sale `prf_div_low` = 441 600 (3680 bins, **justo en el techo
+  `BINS_MODE_FINE`, sin bin de guarda**) y `prf_div_high` = 120 000 (1000 bins). *Inferencia leída
+  del código, no ejecutada.*
+- **Corrección a la versión anterior de este párrafo:** dije que las constantes estaban «escritas a
+  mano en nueve ficheros». La mayoría son comentarios (`rtl/drx_ray_packer.sv`,
+  `drx_timing_cfg.c`, `drx_control_boot.c`) o cargas de prueba de ida y vuelta del contrato
+  (`fw/tests/*.py`, `drx_ray_frame_selftest.c`), que **siguen pasando** con 767198 porque no están
+  atadas a `params.toml`; el riesgo ahí es que queden con valores de la era de 250 MHz, no que
+  fallen. Lo que **sí falla** son 16 tests de `model/tests/` (134 en total, 118 pasan; `fw/tests` 100 %
+  verde): `test_params.py` (3 sobre dilatación, tamaño de celda y PRF de pared, más la comprobación de
+  ficheros generados), `test_timing.py` (5, anchos de pulso 200 fuera de la tabla `115/239/475`),
+  `test_chain.py` (5), `test_bloques.py` (1) y `test_gating_y_vectores.py` (1).
+
+**Hallazgo nuevo, no previsto por el ADR:** `test_la_ganancia_de_la_cadena_es_unidad_exacta_en_continua`
+**falla en los dos modos** con `cic_rate` = 30: un escalón de continua de amplitud 10 000 sale como
+9999 (fino) y 9997 (grueso), y con R = 52 salía exacto. El ajuste de ganancia fina
+(`model/drx_model/chain.py`, `GAIN_TRIM_BITS` = 18) deja de cerrar a la unidad. 3 LSB sobre 10 000
+son 0,03 % y caben en la tolerancia de D-12 (≤ 5 LSB), pero **la propiedad «ganancia exacta» que Z1
+daba por cumplida no sobrevive al cambio**, y no sé aún si es una constante que hay que reajustar o
+un redondeo intrínseco de R = 30. Hay que decidirlo antes de aplicar. Además `test_chain` y
+`test_bloques` llevan valores literales de la era R = 52 (`growth_bits == 29`, tamaños de salida
+192/96, la huella `GOLDEN` del oráculo, que el propio ADR ya anticipaba).
+
+**`make gen` no converge en una pasada.** Tras cambiar `cic_rate`, `gen_params.py --check` seguía
+fallando después de `make gen` hasta volver a correr `gen_params.py`, porque `drx_params_pkg.sv` y
+compañía incluyen cantidades que salen del modelo y de los coeficientes, y `gen_coeffs.py` corre
+después de `gen_params.py` en el `Makefile`. *Inferido del orden de ejecución; no aislé qué campo
+cambia.* Al aplicar el ADR, correr `make gen` dos veces o corregir el orden.
+
+**No ejecutado:** `sim/tests/` (cocotb sobre Verilator), `make lint-hdl*`, toda la verificación de
+RTL, xsim, P&R y placa. En particular, `test_l0_timing_engine.py` y `tb_drx_timing_engine.py`
+mencionan 767198 en comentarios y no se ejecutaron contra los valores nuevos.
 
 ### 3. `vector_loop_len` tiene que cambiar
 
