@@ -218,20 +218,25 @@ Verilator, sin placa):
   `drx_timing_cfg.c`, `drx_control_boot.c`) o cargas de prueba de ida y vuelta del contrato
   (`fw/tests/*.py`, `drx_ray_frame_selftest.c`), que **siguen pasando** con 767198 porque no están
   atadas a `params.toml`; el riesgo ahí es que queden con valores de la era de 250 MHz, no que
-  fallen. Lo que **sí falla** son 16 tests de `model/tests/` (134 en total, 118 pasan; `fw/tests` 100 %
+  fallen. Lo que **sí falla** son 16 tests de `model/tests/` (134 en total, 118 pasan; 14 tras el cambio del test de ganancia, ver abajo; `fw/tests` 100 %
   verde): `test_params.py` (3 sobre dilatación, tamaño de celda y PRF de pared, más la comprobación de
   ficheros generados), `test_timing.py` (5, anchos de pulso 200 fuera de la tabla `115/239/475`),
-  `test_chain.py` (5), `test_bloques.py` (1) y `test_gating_y_vectores.py` (1).
+  `test_chain.py` (3, tras el cambio del test de ganancia), `test_bloques.py` (1) y `test_gating_y_vectores.py` (1).
 
-**Hallazgo nuevo, no previsto por el ADR:** `test_la_ganancia_de_la_cadena_es_unidad_exacta_en_continua`
-**falla en los dos modos** con `cic_rate` = 30: un escalón de continua de amplitud 10 000 sale como
-9999 (fino) y 9997 (grueso), y con R = 52 salía exacto. El ajuste de ganancia fina
-(`model/drx_model/chain.py`, `GAIN_TRIM_BITS` = 18) deja de cerrar a la unidad. 3 LSB sobre 10 000
-son 0,03 % y caben en la tolerancia de D-12 (≤ 5 LSB), pero **la propiedad «ganancia exacta» que Z1
-daba por cumplida no sobrevive al cambio**, y no sé aún si es una constante que hay que reajustar o
-un redondeo intrínseco de R = 30. Hay que decidirlo antes de aplicar. Además `test_chain` y
-`test_bloques` llevan valores literales de la era R = 52 (`growth_bits == 29`, tamaños de salida
-192/96, la huella `GOLDEN` del oráculo, que el propio ADR ya anticipaba).
+**Hallazgo previsto como regresión y resuelto como falso positivo:**
+`test_la_ganancia_de_la_cadena_es_unidad_exacta_en_continua` fallaba en los dos modos con
+`cic_rate` = 30 (10 000 salía como 9999 en fino y 9997 en grueso). **No era el ajuste de ganancia:**
+barriendo 43 amplitudes entre 500 y 32 000, el error de continua es de ±2 (fino) y ±3 (grueso) **tanto
+con R₁ = 208 como con R₁ = 120**, sin sesgo (media −0,23 y −0,02 con los parámetros del ADR; 0,05 y
+0,00 con los de hoy). Es el redondeo de los `shift_round` previos, amplificado por el propio ajuste
+(entre ~2,6 y ~4,2). El test antiguo exigía igualdad exacta con amplitud 10 000 y pasaba por
+casualidad; la propiedad «ganancia exacta» que Z1 daba por cumplida **nunca se cumplió**. Se
+sustituyó por un barrido con cota derivada de la amplificación y comprobación de sesgo
+(`model/tests/test_chain.py`); pasa con los parámetros de hoy y con los del ADR, y un mutante con
++3 % de ganancia lo hace fallar. **No hay constante que reajustar** y este punto deja de bloquear la
+firma. Con eso, los fallos de `model/tests/` con los parámetros del ADR bajan de 16 a 14. Quedan
+`test_chain` y `test_bloques` con valores literales de la era R = 52 (`growth_bits == 29`, tamaños de
+salida 192/96, la huella `GOLDEN` del oráculo, que el propio ADR ya anticipaba).
 
 **`make gen` no converge en una pasada.** Tras cambiar `cic_rate`, `gen_params.py --check` seguía
 fallando después de `make gen` hasta volver a correr `gen_params.py`, porque `drx_params_pkg.sv` y

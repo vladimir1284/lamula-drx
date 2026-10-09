@@ -72,16 +72,30 @@ def test_el_oraculo_es_reproducible_bit_a_bit(mode):
 
 
 @pytest.mark.parametrize("mode", [MODE_FINE, MODE_COARSE])
-def test_la_ganancia_de_la_cadena_es_unidad_exacta_en_continua(mode):
-    """El ajuste de ganancia fina deshace exactamente lo que `growth_bits` deja
-    a medias: un escalón de continua tiene que salir de `_decimate` con la
-    misma amplitud con la que entró, no unos dB por debajo (Z1: «escalado de
-    ganancia... a fondo de escala»)."""
+def test_la_ganancia_de_la_cadena_es_unidad_en_continua_dentro_del_redondeo(mode):
+    """El ajuste de ganancia fina deshace lo que `growth_bits` deja a medias: un
+    escalón de continua tiene que salir de `_decimate` con la amplitud con la que
+    entró, no unos dB por debajo (Z1: «escalado de ganancia... a fondo de
+    escala»).
+
+    «Unidad» y no «unidad exacta»: los `shift_round` anteriores al ajuste
+    redondean a entero, y ese error de ±0,5 LSB por etapa lo amplifica el propio
+    ajuste (`_residual_gain`, entre ~2,6 y ~4,2). Una versión anterior de este
+    test exigía igualdad exacta con amplitud 10 000 y pasaba por casualidad:
+    barriendo amplitudes, el error es de ±2 (fino) y ±3 (grueso) tanto con R₁ =
+    208 como con R₁ = 120 (8-oct-2026). Lo que sí tiene que cumplirse es que el
+    error esté acotado por esa amplificación y que no haya sesgo, que es lo que
+    detectaría un ajuste mal calculado.
+    """
     ddc = Ddc(params=PARAMS, mode=mode)
-    amplitude = 10_000
-    step = np.full(ddc.decimation * 20, amplitude, dtype=np.int64)
-    settled = ddc._decimate(step)[-5:]
-    assert list(settled) == [amplitude] * 5
+    bound = int(np.ceil(0.5 * ddc._residual_gain())) + 1
+    errors = []
+    for amplitude in range(500, 32_000, 733):
+        step = np.full(ddc.decimation * 20, amplitude, dtype=np.int64)
+        settled = ddc._decimate(step)[-1]
+        errors.append(int(settled) - amplitude)
+    assert max(abs(e) for e in errors) <= bound
+    assert abs(np.mean(errors)) < 0.5, "sesgo: el ajuste de ganancia está mal calculado"
 
 
 def test_el_modo_grueso_diezma_el_doble_que_el_fino():
