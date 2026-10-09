@@ -203,7 +203,11 @@ def main(argv: list[str] | None = None) -> int:
         ultimo_iq = None
         cuenta = {}
         bytes_totales = 0
-        rayos = []
+        # Contadores, no la lista de rayos: a 223 rayos/s una corrida de 72 h
+        # son ~58 M de objetos y ~8 GB de RSS (medido: ~110 MB/h).
+        n_rayos = 0
+        huecos = 0
+        ultimo_seq = None
         t0 = time.monotonic()
         while time.monotonic() - t0 < args.seconds:
             try:
@@ -219,10 +223,17 @@ def main(argv: list[str] | None = None) -> int:
                 cuenta[tipo] = cuenta.get(tipo, 0) + 1
                 if header.msg_type == C.MsgType.RAY:
                     ray = C.Ray.unpack(cuerpo)
-                    rayos.append(ray)
+                    n_rayos += 1
+                    # Un hueco en `seq` es un rayo que el DRx descartó o que la red
+                    # perdió. Con TCP lo segundo no pasa en silencio, así que un
+                    # hueco aquí apunta a `sink_drops` del lado del DRx -- ver D-16
+                    # sobre la contrapresión.
+                    if ultimo_seq is not None and (ray.seq - ultimo_seq) & 0xFFFFFFFF != 1:
+                        huecos += 1
+                    ultimo_seq = ray.seq
                     if args.spectrum:
                         ultimo_iq = (ray, cuerpo[C.Ray.SIZE :])
-                    if not args.quiet and len(rayos) <= 3:
+                    if not args.quiet and n_rayos <= 3:
                         print(f"<- ray seq={ray.seq} trig={ray.trigger_count} "
                               f"bins={ray.bins} n_ch={ray.n_channels} "
                               f"flags={ray.ray_flags:#x} payload={header.payload_len}B")
@@ -247,15 +258,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"mensajes: {cuenta or 'ninguno'}")
     if args.spectrum and ultimo_iq is not None:
         _espectro(*ultimo_iq)
-    if rayos:
-        print(f"rayos: {len(rayos)} ({len(rayos) / transcurrido:.1f}/s)")
-        # Un hueco en `seq` es un rayo que el DRx descartó o que la red perdió.
-        # Con TCP lo segundo no pasa en silencio, así que un hueco aquí apunta
-        # a `sink_drops` del lado del DRx -- ver D-16 sobre la contrapresión.
-        huecos = sum(
-            1 for a, b in zip(rayos, rayos[1:], strict=False)
-            if (b.seq - a.seq) & 0xFFFFFFFF != 1
-        )
+    if n_rayos:
+        print(f"rayos: {n_rayos} ({n_rayos / transcurrido:.1f}/s)")
         print(f"huecos de seq: {huecos}")
         return 0 if huecos == 0 else 3
     print("NO llegó ningún rayo")
