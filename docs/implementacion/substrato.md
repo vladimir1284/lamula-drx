@@ -37,8 +37,10 @@ python3 tools/gen_params.py --check    # gate de CI: falla si hay desfase
 ```
 
 Cambiar `fs`, `R₁` o `R₂` —que es lo que va a pasar cuando se cierren
-[P-01](../alcance/pendientes.md#p-01) y [P-08](../alcance/pendientes.md#p-08)— es editar dos líneas
-del TOML y regenerar. Ese es el motivo entero de que este fichero exista antes que el RTL.
+[P-01](../alcance/pendientes.md#p-01) y [P-08](../alcance/pendientes.md#p-08)— empieza por editar
+dos líneas del TOML y regenerar (a 8-oct-2026 el cierre además exige auditar constantes de PRF y
+ancho de pulso y repetir la verificación; ver la revisión del
+[ADR-001](../alcance/adr-001-fs-r1-r2.md)). Ese es el motivo entero de que este fichero exista antes que el RTL.
 
 !!! warning "El gate de la constante hardcodeada es real, no decorativo"
     `tools/check_hardcoded_clock.py` falla la build si aparece un literal decimal ≥ 10⁶ en `rtl/`,

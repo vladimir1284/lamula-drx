@@ -162,6 +162,83 @@ Si resultara que la tarjeta no puede sintetizar 143,9 MHz, el plan B documentado
 pie: 247 MHz con R₁ = 206 / R₂ = 412, que da 54 m de error acumulado, reloj en rejilla de 1 MHz y
 cadena única. Y en último caso la opción B de P-01, R₂ = 417 con cadena propia.
 
+## Revisión del 8-oct-2026: lo que el diff de arriba no contempla
+
+El ADR se redactó el 30-ago-2026, antes de Z1–Z4. Desde entonces el repositorio ha cambiado en
+cuatro puntos que el diff de arriba, aplicado tal cual, rompería o dejaría incoherentes. **La
+decisión de fondo (143,9 MHz, 120/240) no cambia**; cambia lo que cuesta aplicarla y lo que hay que
+incluir en el diff. Nada de `config/params.toml` se ha tocado con esta revisión.
+
+### 1. El `fs` de la ZedBoard ya no es 100 MHz, y 99,998988 MHz ya no tiene sentido
+
+El argumento de «realismo del reloj» sostenía que la ZedBoard debía quedarse cerca de 100 MHz para
+seguir midiendo la presión de timing. Esa medida ya se hizo: el 19-sep-2026 el datapath completo
+**no cerró a 100 MHz** (WNS = −1,209 ns) y `fs_hz` de zedboard bajó a **62,5 MHz**
+(`config/params.toml`). El valor vigente hoy es 62 500 000.
+
+62,5 MHz **no es múltiplo de 1439**, así que con `if_norm` = 600/1439 es ilegal igual que lo era
+100 MHz. El múltiplo de 1439 más cercano es **62 500 087 Hz** (1439 × 43 433, +1,39 ppm). La
+dilatación pasa de 4,0 hoy (250 / 62,5) a 143,9 / 62,500087 = **2,3024** contra el nuevo `fs` de
+la ZU9. Ese número sustituye a la «dilatación 1,439» del cuerpo del ADR, que ya no es alcanzable
+en esta placa: la propia razón de bajar `fs` de la ZedBoard fue que 100 MHz no cierra. La fila de 99,998988
+MHz de la tabla de `fs` de ZedBoard queda sin efecto.
+
+### 2. Las constantes de PRF y ancho de pulso dependen de `fs` y el diff no las toca
+
+El diff solo cambia `if_norm`, `r1`, `r2`, `bins_*`, `cic_rate` y los dos `fs_hz`. Pero
+`config/params.toml` calcula otras constantes **contra el `fs` de la ZU9 de 250 MHz** y las trata
+como invariantes de registro. Con `fs` = 143,9 MHz siguen siendo números de registro, pero ya no
+significan lo mismo:
+
+| Constante | Hoy (250 MHz) | Con 143,9 MHz | Efecto si no se cambia |
+|---|---|---|---|
+| `prf_div_min` | 208 333 (1200 Hz) | 119 917 | el techo de PRF baja de 1200 Hz a 690,7 Hz y el lote Doppler (~1300 Hz) deja de ser configurable |
+| `prf_div_max` | 1 250 000 (200 Hz) | 719 500 | el suelo de PRF sube de 200 Hz a 115 Hz |
+| `prf_div_min_low` (460 km) | 767 198 | 441 599 | D-09 exigiría 799 km de rango no ambiguo (PRF ≤ 187,6 Hz) y **rechazaría el lote de vigilancia estándar de ~326 Hz** |
+| `prf_div_min_high` (115 km) | 191 800 | 110 400 | exigiría PRF ≤ 750 Hz; hoy no vincula porque `prf_div_min` lo tapa, pero deja de ser coherente |
+| `pulse_width_cycles` | 200 / 415 / 825 | 115 / 239 / 475 | los pulsos durarían 1,39 / 2,89 / 5,73 µs en vez de 0,8 / 1,66 / 3,3 µs |
+
+Estas cinco aparecen además **escritas a mano fuera de `params.toml`** en
+`rtl/drx_ray_packer.sv`, `fw/src/app/drx_timing_cfg.c`, `fw/src/app/drx_control_boot.c`,
+`fw/src/drx_ray_frame_selftest.c`, `fw/tests/test_contract_io.py`, `test_ray_frame.py`,
+`test_control.py`, `sim/tb/tb_drx_timing_engine.py` y `sim/tests/test_l0_timing_engine.py`. Eso es
+lo que el gate `tools/check_hardcoded_clock.py` no ve, porque son conteos de ciclos y no relojes.
+Hay que auditarlas una a una; es el coste real de aplicar el ADR y no estaba estimado. Los valores de
+la columna «Con 143,9 MHz» son aritmética mía sobre las fórmulas del propio `params.toml`
+(`ceil(r·2·fs/c)`); **verificar con `gen_params.py` antes de firmar**, no son resultado de una
+corrida.
+
+### 3. `vector_loop_len` tiene que cambiar
+
+`VECTOR_LOOP_LEN` (hoy 4000) debe ser múltiplo de `IF_NORM_DEN`, y `gen_params.py` lo comprueba. Hoy
+`IF_NORM_DEN` = 25 y 4000 = 160 × 25. Con 1439 el valor legal más cercano dentro de
+`vector_bram_depth` (8192) es **4317** (3 × 1439); las alternativas son 1439, 2878, 5756 y 7195. Esto
+cambia lo que suena en bucle y, con ello, el catálogo de ocho vectores de estímulo y las
+referencias de espectro que ya están medidas en placa (−9,02/−9,03 dBFS): hay que remedir.
+
+### 4. Qué verificación hay que repetir, y cuánto cuesta
+
+Cambiar `cic_rate` de 52 a 30 regenera el CIC Compiler y los coeficientes del compensador FIR. Las
+dos cosas invalidan evidencia ya cerrada:
+
+- **La matriz de 16 corridas de D-12 contra xsim real** (8 casos × {fino, grueso}). Cada corrida son
+  ~20–25 min y no hay caché; con tres en paralelo, 2–3 h.
+- **`NCO_LUT_OFFSET_K` = 655** (`tcl/gen_ip.tcl:180`) se calibró contra el arranque del Phase
+  Generator. El comentario del fichero dice que no se recalibra al cambiar la IP, pero eso se
+  verificó con la matriz de D-12 para **la frecuencia de IF de entonces**; con `if_norm` = 600/1439
+  la palabra de fase es otra. *Inferencia, no medida:* lo esperable es que siga cancelando, pero solo
+  la matriz lo dice.
+- **P&R de `-top zynq`**, que hoy cierra con WNS ≈ 1,6 ns a 62,5 MHz. El cambio de `cic_rate` mueve
+  el camino crítico (FIFO del FIR Compiler → `overflow_sticky_r`).
+- **Bring-up en placa:** las cifras de Z4.4–Z4.6 (rayos/s, −9,03 dBFS, AFC cerrado con el DSP real)
+  se vuelven a medir con el nuevo `fs`. El caudal en pared también cambia: la PRF de pared de la
+  ZedBoard es `fs / prf_div`.
+
+**Estimación de esfuerzo si se aprueba: 1–2 días de trabajo con hardware, no «dos líneas y
+`make gen`».** La frase de `substrato.md` y de `CLAUDE.md` que dice que aplicarlo es «el diff más
+`gen_params.py`» describe el cambio en `params.toml`, no el cierre de verificación, y está
+desactualizada por Z1–Z4.
+
 ## Firma
 
 | Rol | Quién | Decisión | Fecha |

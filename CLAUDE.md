@@ -509,11 +509,12 @@ matriz se volvió a correr completa el 20-sep-2026 tras añadir el puerto `overf
 el puerto `clear` de `drx_range_gate`: **6/6 PASS**, TLAST bit a bit incluido.
 
 Y no toques `R₁`/`R₂` ni `fs` en `config/params.toml` hasta que haya ADR: P-08 sigue abierto (P-01
-ya cerró — exactitud requerida). Cuando lo haya, el cambio es de dos líneas más
-`python3 tools/gen_params.py`.
+ya cerró — exactitud requerida). Cuando lo haya, el cambio en el TOML es corto,
+pero el cierre no: ver la revisión del 8-oct-2026 en `docs/alcance/adr-001-fs-r1-r2.md` (constantes de
+PRF/pulso, `vector_loop_len`, matriz D-12, P&R, bring-up; 1–2 días con hardware).
 
 P-08 ya no espera ningún dato externo: el rate mínimo del ADS42JB69 es de 60 MSPS en modo 10x, así
-que los 143,9 MHz propuestos están en spec. Lo que falta es escribir el ADR que sustituya a D-04.
+que los 143,9 MHz propuestos están en spec. El ADR ya está escrito (`docs/alcance/adr-001-fs-r1-r2.md`, revisado el 8-oct-2026); lo que falta es la firma de dirección técnica y compra.
 
 ## Lo que está bloqueado, y por quién
 

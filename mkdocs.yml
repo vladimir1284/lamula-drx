@@ -86,6 +86,7 @@ nav:
       - Modelo dorado (oráculo): pruebas/modelo-dorado.md
   - Portabilidad:
       - Registro delta ZedBoard → ZU9: portabilidad/registro-delta.md
+      - Dossier de migración ZU9: portabilidad/dossier-migracion.md
   - Referencia:
       - Plan ZedBoard (documento original): referencia/plan-zedboard.md
       - Project Plan ZU9 (34 semanas): referencia/project-plan-zu9.md
