@@ -31,6 +31,9 @@ endif
 # En CI no se notaba —el árbol de build nace vacío en cada corrida— así que el
 # síntoma sólo aparecía en local, y parecía un fallo del framer.
 CONTRACT_H := ../contract/generated/drx_dsp_v0_1.h
+# Segunda cabecera generada (`make gen`): `drx_afc.c` y otros leen DRX_NCO_PHASE_INC
+# y demás de aquí; sin esto, cambiar `fs` dejaba el binario del AFC viejo.
+GEN_H := $(CONTRACT_H) include/drx_params.h
 
 SELFTEST := $(BUILD_DIR)/drx_params_selftest
 
@@ -54,31 +57,31 @@ all: check
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(SELFTEST): src/drx_params_selftest.c include/drx_params.h $(CONTRACT_H) | $(BUILD_DIR)
+$(SELFTEST): src/drx_params_selftest.c $(GEN_H) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $< -o $@
 
 $(CONTRACT_IO): src/drx_contract_io_selftest.c src/app/drx_contract_io.c \
-                include/drx_contract_io.h $(CONTRACT_H) | $(BUILD_DIR)
+                include/drx_contract_io.h $(GEN_H) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) src/drx_contract_io_selftest.c src/app/drx_contract_io.c -o $@
 
 $(CONTROL): src/drx_control_selftest.c src/app/drx_control.c src/app/drx_contract_io.c \
-            include/drx_control.h include/drx_contract_io.h $(CONTRACT_H) | $(BUILD_DIR)
+            include/drx_control.h include/drx_contract_io.h $(GEN_H) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) src/drx_control_selftest.c src/app/drx_control.c \
 	      src/app/drx_contract_io.c -o $@
 
 $(RAY_FRAME): src/drx_ray_frame_selftest.c src/app/drx_ray_frame.c \
               src/app/drx_contract_io.c include/drx_ray_frame.h \
-              include/drx_ray.h include/drx_contract_io.h $(CONTRACT_H) | $(BUILD_DIR)
+              include/drx_ray.h include/drx_contract_io.h $(GEN_H) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) src/drx_ray_frame_selftest.c src/app/drx_ray_frame.c \
 	      src/app/drx_contract_io.c -o $@
 
 $(AFC): src/drx_afc_selftest.c src/app/drx_afc.c include/drx_afc.h \
-        $(CONTRACT_H) | $(BUILD_DIR)
+        $(GEN_H) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) src/drx_afc_selftest.c src/app/drx_afc.c -o $@
 
 $(STATUS_FRAME): src/drx_status_frame_selftest.c src/app/drx_status_frame.c \
                  src/app/drx_contract_io.c include/drx_status_frame.h \
-                 include/drx_contract_io.h $(CONTRACT_H) | $(BUILD_DIR)
+                 include/drx_contract_io.h $(GEN_H) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) src/drx_status_frame_selftest.c src/app/drx_status_frame.c \
 	      src/app/drx_contract_io.c -o $@
 
