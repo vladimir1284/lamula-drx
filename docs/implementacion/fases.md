@@ -2446,6 +2446,68 @@ Trabajo:
 **Hito ZM5 (fin S28):** todo lo construible sin JESD está construido, validado y documentado, y
 existe un plan de migración ejecutable.
 
+!!! warning "11-oct-2026: soak de 72 h — integridad demostrada, pero sobre una configuración que nadie eligió"
+    Corrió del 8-oct 19:36 al 11-oct 19:36 EDT (`tools/soak.sh 259200`, evidencia en
+    `build/soak/20261008-193558/`), contra la ZedBoard sin reiniciar desde el 8-oct 12:09.
+
+    **Qué quedó demostrado.** 20 864 353 rayos recibidos, 461 696 MB, `BITE=0x0` todo el tiempo,
+    `dma_overruns=0`, `ddc_overflows=0`, `ray_gaps=0`, `enc_fail=0`, `cortos=0`, `largos=0`,
+    `magic=0`, `dma_err=0`, `snd_fail` sin cambios durante la corrida. Cuadre cliente contra placa:
+    `rayos_tx` pasó de 45 313 a 20 909 652 (20 864 339 enviados) y el cliente recibió 20 864 353;
+    la diferencia de 14 cabe en las ventanas de muestreo. Lo que la placa envió, llegó.
+
+    **Descartes.** `sink_drops` subió 1019 (≈49 ppm, uno cada ~3,6 min, ritmo estable de principio a
+    fin) y el cliente contó 145 huecos de `seq`, unos 7 rayos por hueco de media (cociente, no
+    medido hueco a hueco). No hay causa atribuida: la UART solo lleva `uptime`, no hora de pared, y
+    la línea `rayo ...` solo se imprime cuando cambia el contador, con intervalos crecientes. Los
+    avisos del host (`rtw_8821ce`, NetworkManager) son del WiFi, no del enlace `enp1s0`, y no hay
+    evidencia de que sean la causa. El trabajo de ADR-001 corrió en la misma máquina con
+    `nice -n 19 taskset -c 3`; la tasa de descartes fue similar durante y después (≈0,004/s contra
+    ≈0,005/s), lo que va contra una causa de carga del host, aunque la comparación es gruesa.
+
+    **Qué NO es este soak.** Corrió con la configuración que dejó en la placa la sesión del DSP real
+    del 8-oct, no con la de bring-up, y `soak.sh` no la fijó ni la registró. Leída de 966 rayos vivos
+    el 11-oct:
+
+    | Campo | Medido | Bring-up |
+    |---|---|---|
+    | `prf_div` | 776 398 en ambos lotes (80,50 Hz a 62,5 MHz) | 767 312 / 208 416 |
+    | `bins` | 1840 en ambos lotes | 3689 / 1002 |
+    | lotes | 6 + 6 rayos, alternando | 6 + 41 pulsos |
+    | `pulse_width_idx` / `pulse_mode` / `cell_mode` | 1 / 0 / 1 | — |
+    | caudal | 14,2 Mbps, 80,5 rayos/s | 28,9 Mbps, 223 rayos/s |
+
+    Por tanto las cifras de arriba valen para esa configuración y esa carga, y **no son comparables
+    con el soak del 3-oct** (3,08 M rayos, `huecos de seq` 0, 223 rayos/s). Ambos lotes comparten
+    PRF y ancho de pulso, así que tampoco es una configuración Batch real de NEXRAD. El mensaje
+    `config` exacto que mandó el DSP no está registrado en ningún sitio: la sesión del 8-oct no
+    dejó transcripción y el log de UART empieza después del arranque.
+
+    **Hallazgo nuevo: los 966 rayos leídos llevan la bandera `TRUNCATED`** (`ray_flags` `0x5`/`0x25`).
+    `drx_ray_ctx.c` la pone cuando `GATE_TRUNCATED` es distinto de 0 en el momento del rayo.
+    `776398 mod 208 = 142`: el PRI no es múltiplo de R₁, que es la causa de Z4.4 («`ray_truncated`
+    se dispara en cada pulso sin haber perdido ningún rayo»). Esa es la hipótesis más probable; la
+    alternativa es un bit sticky de una transición anterior que nadie limpió. No se distinguió:
+    leer el registro por JTAG detiene el Cortex-A9 y contamina los contadores. Los ~20,8 M de rayos del soak
+    iban, con alta probabilidad, marcados, y `resumen.txt` no tiene contador de truncados, así que
+    el soak no lo habría mostrado nunca.
+
+    **Firmware.** El `drx_app.elf` cargado es del 8-oct 12:07, anterior al commit `6a70f45` (19:08),
+    que cambió `drx_timing_cfg.c` y `drx_ray_ctx.c`. No consta de qué árbol salió, así que el soak no
+    se puede atar a un commit.
+
+    **Para que el próximo soak sirva como evidencia de Z5:**
+
+    1. Reiniciar la placa y mandar explícitamente la configuración deseada, o capturar un rayo y la
+       configuración aplicada al inicio y al final (`prf_div`, `bins`, `ray_flags`).
+    2. Estampar hora de pared en las líneas de UART.
+    3. Que `mock_dsp.py` cuente rayos perdidos por hueco, no solo eventos, y registre la hora de
+       cada hueco.
+    4. Registrar el commit y el SHA del ELF cargado en `resumen.txt`, y un contador de rayos
+       `TRUNCATED`.
+
+    El requisito «soak de 72 h» de Z5 **sigue sin cumplirse** con evidencia fiable de configuración.
+
 ## Campaña de throughput: es un ensayo aparte { #throughput }
 
 Consecuencia incómoda de la dilatación: a 100 MHz la salida es
