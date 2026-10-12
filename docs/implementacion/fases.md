@@ -2485,13 +2485,12 @@ existe un plan de migración ejecutable.
 
     **Hallazgo nuevo: los 966 rayos leídos llevan la bandera `TRUNCATED`** (`ray_flags` `0x5`/`0x25`).
     `drx_ray_ctx.c` la pone cuando `GATE_TRUNCATED` es distinto de 0 en el momento del rayo.
-    Hipótesis inicial: `776398 mod 208 = 142`, o sea PRI no múltiplo de R₁ como en Z4.4. **Esa
-    explicación no sobrevive a la prueba del 12-oct (ver más abajo):** con la config de bring-up
-    tampoco son múltiplos de 208 los PRI (300 000 mod 208 = 64; 800 000 mod 208 = 32) y no hay un
-    solo rayo `TRUNCATED`. Lo que sí quedó demostrado es que no era un bit sticky de firmware: con
-    placa reiniciada y otra config desaparece. Qué relación PRI/`bins` dispara `GATE_TRUNCATED` en la
-    config del DSP queda sin medir. Los ~20,8 M de rayos del soak de 72 h iban, con alta
-    probabilidad, marcados, y `resumen.txt` no tenía contador de truncados.
+    Hipótesis inicial: `776398 mod 208 = 142`, o sea PRI no múltiplo de R₁ como en Z4.4. **Corrección
+    del 12-oct (ver «Causa de `TRUNCATED`» más abajo):** la regla de Z4.4 era incompleta, y la
+    «config de bring-up» de 300 000/800 000 que se citó aquí no es la que corre el hardware. Lo que sí
+    quedó demostrado es que no era un bit sticky de firmware: con placa reiniciada y otra config
+    desaparece. Los ~20,8 M de rayos del soak de 72 h iban, con alta probabilidad, marcados, y
+    `resumen.txt` no tenía contador de truncados.
 
     **Firmware.** El `drx_app.elf` cargado es del 8-oct 12:07, anterior al commit `6a70f45` (19:08),
     que cambió `drx_timing_cfg.c` y `drx_ray_ctx.c`. No consta de qué árbol salió, así que el soak no
@@ -2520,9 +2519,10 @@ existe un plan de migración ejecutable.
     MB, 223,4 rayos/s, 28,9 Mbps. **0 huecos de `seq`, 0 rayos `TRUNCATED`**, `BITE=0x0`,
     `dma_overruns=0`, `ddc_overflows=0`, `trig_gaps=0`, `ray_gaps=0`, `sink_drops=0`, `enc_fail=0`,
     `cortos=0`, `largos=0`, `cola=0`, `rayo sin enmarcar` 0. `snd_fail=1`, `resync=1` y
-    `descartados=1` fijos desde el arranque (no crecieron). Config vista en los rayos: lote alto
-    `prf_div=300000`, `bins=1002` (5 612 570 rayos) y lote bajo `prf_div=800000`, `bins=3689`
-    (821 352), `pulse_width_idx` 0 y 2, `cell_mode=0`. Cuadre contra la placa: `rayos_tx` +6 428 106 desde
+    `descartados=1` fijos desde el arranque (no crecieron). Config **que declaran las cabeceras** de los
+    rayos: lote alto `prf_div=300000`, `bins=1002` (5 612 570 rayos) y lote bajo `prf_div=800000`,
+    `bins=3689` (821 352), `pulse_width_idx` 0 y 2, `cell_mode=0`. **Esos `prf_div` no son los que
+    corría el hardware**, ver «Causa de `TRUNCATED`» abajo. Cuadre contra la placa: `rayos_tx` +6 428 106 desde
     la primera lectura, 5 816 menos que el cliente, que cabe en los ~26 s entre que el cliente
     conectó y esa lectura.
 
@@ -2530,6 +2530,41 @@ existe un plan de migración ejecutable.
     del orden de 300 y salieron 0. Cambiaron a la vez la config (80,5 contra 223 rayos/s), el ELF y el
     reinicio de la placa, así que **no se puede atribuir** a una sola de las tres. Queda sin
     explicar la causa de los descartes de aquel soak.
+
+    **Causa de `TRUNCATED`, 12-oct-2026 (análisis de RTL y firmware, no medido en placa).**
+
+    - **La cabecera miente sobre `prf_div`.** `DrxControlBoot_SelfTest` manda un `config` sintético
+      (`prf_div` 800 000 / 300 000, `fw/src/app/drx_control_boot.c:67`) que `DrxTiming_Apply` guarda en
+      `g_applied`; al terminar, el propio self-test reescribe los **registros** con
+      `DrxTiming_DefaultConfig` (767 312/3689 y 208 416/1002, alineados a R₁), pero no toca `g_applied`.
+      `DrxTiming_GetRayMeta` lee `g_applied`, así que los rayos declaran 800 000/300 000 mientras el
+      motor corre 767 312/208 416. Inferencia, no lectura de registros: encaja con 0 `TRUNCATED` y con la
+      Z4.4. Los `prf_div` de la cabecera son, mientras no llegue un `config` real, los del self-test. Es un
+      bug de firmware abierto, aún sin corregir.
+    - **Regla real.** `drx_range_gate` corre libre: un `valid` cada `dec` ciclos (R₁ = 208 en fino, R₂ =
+      416 en grueso) y un `ray_start` cada `prf_div`. `ray_start` levanta `ray_truncated` si `wr_ptr ≠ 0`.
+      Con `n = prf_div / dec` muestras por PRI, no hay `TRUNCATED` solo si `n` es múltiplo entero de
+      `bins`; sin truncar y con **un** rayo por PRI, solo si `prf_div = bins × dec`. Modelo por eventos
+      (`rtl/drx_range_gate.sv:236-275`, script en el scratchpad de la sesión):
+
+        | prf_div / bins / dec | muestras/PRI | rayos/PRI | truncados/PRI |
+        |---|---|---|---|
+        | 767 312 / 3689 / 208 (alineado) | 3689,00 | 1 | 0 |
+        | 208 416 / 1002 / 208 (alineado) | 1002,00 | 1 | 0 |
+        | 767 198 / 3688 / 208 (Z4.4, con guarda) | 3688,45 | 1 | 0,45 |
+        | 300 000 / 1002 / 208 (cabecera) | 1442,31 | 1 | 1 |
+        | 800 000 / 3689 / 208 (cabecera) | 3846,15 | 1 | 1 |
+        | 776 398 / 1840 / 416 (DSP, `cell_mode=1`) | 1866,34 | 1 | 1 |
+
+      Cuadra con las tres observaciones: Z4.4 (0,45 de media con guarda, 0 alineado), el soak de 72 h
+      (966/966) y el de 8 h (0). **La explicación de Z4.4 era incompleta:** el PRI tiene que ser múltiplo
+      de `dec` **y además** igual a `bins × dec`; con `dec` = 416 (grueso) el múltiplo es de R₂.
+    - **El DSP de 72 h no tenía factor 2 sin explicar:** `cell_mode=1` usa R₂ = 416 y `1840 × 416 =
+      765 440 < 776 398`; sobran 26 muestras por PRI, que `ray_start` descarta cada vez.
+    - **`DrxTiming_Apply` acepta esa config.** `batch_ok` solo exige `bins × dec < prf_div`
+      (`drx_timing_cfg.c:378`), así que un DSP que mande `bins` por debajo de `prf_div / dec` recibe
+      `config_ack` OK y rayos `TRUNCATED` en todos. Es el BITE funcionando, pero el DSP no se entera salvo
+      por la bandera.
 
     **Límites.** Son 8 h, no 72 h: el requisito de Z5 sigue sin cumplirse con esta prueba. Un solo
     cliente Python que solo lee, sin lazo de AFC del DSP real. La mezcla de lotes (87 % / 13 %) es la
