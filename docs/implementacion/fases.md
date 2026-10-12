@@ -2485,12 +2485,13 @@ existe un plan de migración ejecutable.
 
     **Hallazgo nuevo: los 966 rayos leídos llevan la bandera `TRUNCATED`** (`ray_flags` `0x5`/`0x25`).
     `drx_ray_ctx.c` la pone cuando `GATE_TRUNCATED` es distinto de 0 en el momento del rayo.
-    `776398 mod 208 = 142`: el PRI no es múltiplo de R₁, que es la causa de Z4.4 («`ray_truncated`
-    se dispara en cada pulso sin haber perdido ningún rayo»). Esa es la hipótesis más probable; la
-    alternativa es un bit sticky de una transición anterior que nadie limpió. No se distinguió:
-    leer el registro por JTAG detiene el Cortex-A9 y contamina los contadores. Los ~20,8 M de rayos del soak
-    iban, con alta probabilidad, marcados, y `resumen.txt` no tiene contador de truncados, así que
-    el soak no lo habría mostrado nunca.
+    Hipótesis inicial: `776398 mod 208 = 142`, o sea PRI no múltiplo de R₁ como en Z4.4. **Esa
+    explicación no sobrevive a la prueba del 12-oct (ver más abajo):** con la config de bring-up
+    tampoco son múltiplos de 208 los PRI (300 000 mod 208 = 64; 800 000 mod 208 = 32) y no hay un
+    solo rayo `TRUNCATED`. Lo que sí quedó demostrado es que no era un bit sticky de firmware: con
+    placa reiniciada y otra config desaparece. Qué relación PRI/`bins` dispara `GATE_TRUNCATED` en la
+    config del DSP queda sin medir. Los ~20,8 M de rayos del soak de 72 h iban, con alta
+    probabilidad, marcados, y `resumen.txt` no tenía contador de truncados.
 
     **Firmware.** El `drx_app.elf` cargado es del 8-oct 12:07, anterior al commit `6a70f45` (19:08),
     que cambió `drx_timing_cfg.c` y `drx_ray_ctx.c`. No consta de qué árbol salió, así que el soak no
@@ -2507,6 +2508,32 @@ existe un plan de migración ejecutable.
        `TRUNCATED`.
 
     El requisito «soak de 72 h» de Z5 **sigue sin cumplirse** con evidencia fiable de configuración.
+
+!!! success "12-oct-2026: soak de 8 h con la config de bring-up — limpio, 0 descartes"
+    Corrió del 12-oct 06:25 al 14:25 EDT (`tools/soak.sh 28800`, evidencia en
+    `build/soak/20261012-062512/`), tras reiniciar la placa, recompilar el ELF
+    (`0f4de029e6e28109`, 11-oct 21:20, árbol en `daac970`; solo `tools/` sucio) y cargarlo con
+    `tools/cargar.sh`. Antes, 15 min de prueba (`build/soak/20261011-212134/`, 201 061 rayos): idéntico
+    resultado. Sin JTAG ni DSP real conectados durante la corrida.
+
+    **Medido.** 6 433 922 rayos recibidos (`seq` 7 294 291 a 13 728 212, 6 433 922 consecutivos), 104 155
+    MB, 223,4 rayos/s, 28,9 Mbps. **0 huecos de `seq`, 0 rayos `TRUNCATED`**, `BITE=0x0`,
+    `dma_overruns=0`, `ddc_overflows=0`, `trig_gaps=0`, `ray_gaps=0`, `sink_drops=0`, `enc_fail=0`,
+    `cortos=0`, `largos=0`, `cola=0`, `rayo sin enmarcar` 0. `snd_fail=1`, `resync=1` y
+    `descartados=1` fijos desde el arranque (no crecieron). Config vista en los rayos: lote alto
+    `prf_div=300000`, `bins=1002` (5 612 570 rayos) y lote bajo `prf_div=800000`, `bins=3689`
+    (821 352), `pulse_width_idx` 0 y 2, `cell_mode=0`. Cuadre contra la placa: `rayos_tx` +6 428 106 desde
+    la primera lectura, 5 816 menos que el cliente, que cabe en los ~26 s entre que el cliente
+    conectó y esa lectura.
+
+    **Contra el soak de 72 h.** Allí hubo 1019 descartes (≈49 ppm); a esa tasa aquí habría salido
+    del orden de 300 y salieron 0. Cambiaron a la vez la config (80,5 contra 223 rayos/s), el ELF y el
+    reinicio de la placa, así que **no se puede atribuir** a una sola de las tres. Queda sin
+    explicar la causa de los descartes de aquel soak.
+
+    **Límites.** Son 8 h, no 72 h: el requisito de Z5 sigue sin cumplirse con esta prueba. Un solo
+    cliente Python que solo lee, sin lazo de AFC del DSP real. La mezcla de lotes (87 % / 13 %) es la
+    de la config de bring-up, no una Batch real de NEXRAD (pendiente decidir cuál pide Z5).
 
 ## Campaña de throughput: es un ensayo aparte { #throughput }
 
