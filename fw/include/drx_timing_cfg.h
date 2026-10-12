@@ -69,6 +69,13 @@ bool DrxTiming_Start(void);
  * `bin_count * R` entre en `prf_div`. */
 drx_dsp_error_t DrxTiming_Apply(const drx_dsp_config_t *config);
 
+/* Vuelve a la configuracion de bring-up: escribe los registros Y el estado que
+ * DrxTiming_GetRayMeta lee. Sin lo segundo las cabeceras de rayo declaran la
+ * ultima config aplicada aunque el hardware ya corra otra (12-oct-2026: tras
+ * DrxControlBoot_SelfTest los rayos decian 800000/300000 y el motor corria
+ * 767312/208416). */
+void DrxTiming_RestoreDefault(void);
+
 /* Metadato de rayo de la configuracion vigente, para DrxRayCtx_Fill. Antes el
  * rayo se estampaba con los valores de bring-up aunque el DSP hubiera enviado
  * otra config, y el DSP no veia TX_BURST_0 ni la PRF real. */

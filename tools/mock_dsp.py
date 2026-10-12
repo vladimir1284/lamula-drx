@@ -249,9 +249,9 @@ def main(argv: list[str] | None = None) -> int:
                     ultimo_seq = ray.seq
                     if ray.ray_flags & C.RayFlag.TRUNCATED:
                         truncados += 1
+                    batch_high = bool(ray.ray_flags & C.RayFlag.BATCH_HIGH)
                     configs[(ray.prf_div, ray.bins, ray.pulse_width_idx, ray.pulse_mode,
-                             ray.cell_mode, ray.n_channels, ray.batch_high
-                             if hasattr(ray, "batch_high") else bool(ray.ray_flags & C.RayFlag.BATCH_HIGH))] += 1
+                             ray.cell_mode, ray.n_channels, batch_high)] += 1
                     if primero is None:
                         primero = ray
                     ultimo = ray

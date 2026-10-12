@@ -171,12 +171,7 @@ bool DrxControlBoot_SelfTest(void)
 
     /* Deja el motor en la configuracion de bring-up: es la que el resto de las
      * medidas de esta sesion dan por buena. */
-    DrxTimingConfig base;
-    DrxTiming_DefaultConfig(&base);
-    DrxReg_TimingDisable();
-    DrxReg_WriteTimingConfig(&base);
-    DrxReg_ClearTimingStatus(DrxReg_ReadTimingStatus());
-    DrxReg_TimingEnable();
+    DrxTiming_RestoreDefault();
 
     return ok;
 }

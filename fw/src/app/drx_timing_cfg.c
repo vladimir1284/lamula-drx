@@ -499,6 +499,25 @@ restaurar:
     return DRX_DSP_ERROR_PRF_RANGE_ILLEGAL;
 }
 
+void DrxTiming_RestoreDefault(void)
+{
+    DrxTimingConfig base;
+
+    DrxTiming_DefaultConfig(&base);
+    DrxReg_TimingDisable();
+    DrxReg_Write(DRX_REG_CTRL_OFFSET, 0u); /* fino, como DrxTiming_Start */
+    DrxReg_WriteTimingConfig(&base);
+    DrxReg_ClearTimingStatus(DrxReg_ReadTimingStatus());
+    DrxReg_TimingEnable();
+
+    g_applied = base;
+    g_have_applied = true;
+    g_applied_idx_low = (uint8_t)(DRX_N_PULSE_WIDTHS - 1u);
+    g_applied_idx_high = 0u;
+    g_applied_mask = (uint8_t)((1u << (unsigned)DRX_N_CH_TOP) - 1u);
+    g_first_after_config = false;
+}
+
 void DrxTiming_GetRayMeta(DrxTimingRayMeta *out)
 {
     if (out == NULL) {
