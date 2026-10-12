@@ -44,10 +44,24 @@ if fuser "$tty_ps" >/dev/null 2>&1; then
 fi
 stty -F "$tty_ps" 115200 cs8 -cstopb -parenb -echo raw
 
-stdbuf -oL cat "$tty_ps" > "$destino/uart.log" &
+# Hora de pared en cada linea: sin ella los contadores de la placa no se pueden
+# cruzar con los huecos del cliente ni con lo que corria en el host.
+stdbuf -oL cat "$tty_ps" | while IFS= read -r linea; do
+    printf '%s %s\n' "$(date +%H:%M:%S)" "$linea"
+done > "$destino/uart.log" &
 uart_pid=$!
 # shellcheck disable=SC2064
 trap "kill $uart_pid 2>/dev/null || true" EXIT
+
+# Procedencia: que codigo y que ELF corrian. El soak de 72 h no lo registro.
+{
+    echo "inicio: $(date --iso-8601=seconds)"
+    echo "commit: $(git -C "$repo_root" rev-parse HEAD)$(git -C "$repo_root" diff --quiet || echo ' (arbol sucio)')"
+    for elf in "$repo_root"/build/boot/zedboard/drx_app.elf "$repo_root"/build/fw/zedboard/drx_app.elf; do
+        [[ -e "$elf" ]] && echo "elf: $elf $(sha256sum "$elf" | cut -c1-16) $(date -r "$elf" --iso-8601=seconds)"
+    done
+    echo "comando: soak.sh $segundos $*"
+} > "$destino/procedencia.txt"
 
 echo "soak de ${segundos} s -> $destino"
 sleep 2  # deja entrar una linea de contadores previa al cliente
@@ -69,6 +83,10 @@ trap - EXIT
     grep -a "drx_status: BITE" "$destino/uart.log" | tail -1
     grep -a "drx_status: red" "$destino/uart.log" | tail -1
     grep -a "drx_status: rayo" "$destino/uart.log" | tail -1
+    echo
+    echo "=== procedencia ==="
+    cat "$destino/procedencia.txt"
+    echo "fin: $(date --iso-8601=seconds)"
     echo
     echo "=== eventos ==="
     echo "rayos sin enmarcar: $(grep -ac 'rayo sin enmarcar' "$destino/uart.log" || true)"

@@ -32,6 +32,8 @@ import importlib.util
 import socket
 import sys
 import time
+from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -208,6 +210,13 @@ def main(argv: list[str] | None = None) -> int:
         n_rayos = 0
         huecos = 0
         ultimo_seq = None
+        # Evidencia de config: el soak de 72 h de oct-2026 corrio sobre una config
+        # que nadie registro. Se cuenta cada combinacion distinta que pasa y se
+        # guarda la cabecera del primer y del ultimo rayo.
+        rayos_perdidos = 0
+        truncados = 0
+        configs = Counter()
+        primero = ultimo = None
         t0 = time.monotonic()
         while time.monotonic() - t0 < args.seconds:
             try:
@@ -230,7 +239,22 @@ def main(argv: list[str] | None = None) -> int:
                     # sobre la contrapresión.
                     if ultimo_seq is not None and (ray.seq - ultimo_seq) & 0xFFFFFFFF != 1:
                         huecos += 1
+                        perdidos = ((ray.seq - ultimo_seq) & 0xFFFFFFFF) - 1
+                        rayos_perdidos += perdidos
+                        # Hora de pared: sin ella un hueco no se puede cruzar con
+                        # nada (uart, carga del host, otros procesos).
+                        print(f"{datetime.now().isoformat(timespec='seconds')} "
+                              f"hueco seq {ultimo_seq}->{ray.seq} ({perdidos} perdidos)",
+                              flush=True)
                     ultimo_seq = ray.seq
+                    if ray.ray_flags & C.RayFlag.TRUNCATED:
+                        truncados += 1
+                    configs[(ray.prf_div, ray.bins, ray.pulse_width_idx, ray.pulse_mode,
+                             ray.cell_mode, ray.n_channels, ray.batch_high
+                             if hasattr(ray, "batch_high") else bool(ray.ray_flags & C.RayFlag.BATCH_HIGH))] += 1
+                    if primero is None:
+                        primero = ray
+                    ultimo = ray
                     if args.spectrum:
                         ultimo_iq = (ray, cuerpo[C.Ray.SIZE :])
                     if not args.quiet and n_rayos <= 3:
@@ -260,7 +284,15 @@ def main(argv: list[str] | None = None) -> int:
         _espectro(*ultimo_iq)
     if n_rayos:
         print(f"rayos: {n_rayos} ({n_rayos / transcurrido:.1f}/s)")
-        print(f"huecos de seq: {huecos}")
+        print(f"huecos de seq: {huecos} ({rayos_perdidos} rayos perdidos)")
+        print(f"rayos con TRUNCATED: {truncados}")
+        for nombre, r in (("primer", primero), ("ultimo", ultimo)):
+            print(f"cabecera {nombre} rayo: seq={r.seq} prf_div={r.prf_div} bins={r.bins} "
+                  f"pulse_width_idx={r.pulse_width_idx} pulse_mode={r.pulse_mode} "
+                  f"cell_mode={r.cell_mode} n_ch={r.n_channels} flags={r.ray_flags:#x}")
+        print("configs vistas (prf_div, bins, pw_idx, pulse_mode, cell_mode, n_ch, batch_high):")
+        for k, v in configs.most_common():
+            print(f"  {k}: {v}")
         return 0 if huecos == 0 else 3
     print("NO llegó ningún rayo")
     return 4
