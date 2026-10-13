@@ -2574,6 +2574,49 @@ existe un plan de migración ejecutable.
     cliente Python que solo lee, sin lazo de AFC del DSP real. La mezcla de lotes (87 % / 13 %) es la
     de la config de bring-up, no una Batch real de NEXRAD (pendiente decidir cuál pide Z5).
 
+!!! info "12-oct-2026: inyección de fallos — 2 de 6 casos ejecutados, y salieron dos hallazgos"
+    `tools/inyectar_fallos.py` (nuevo) ejecuta los dos casos del [catálogo](../pruebas/campana-z5.md)
+    que no necesitan firmware ni RTL nuevo. Evidencia en `build/fallos/<fecha>-<caso>/`. Los criterios
+    de paso están escritos en la cabecera del script. **Faltan cuatro**: overrun de DMA, underrun de
+    SSA, pérdida de lock de MMCM y glitch SSI, que piden inyectores nuevos o hooks de RTL.
+
+    **Configuración inválida del par: pasa 5/5** (`20261012-211450-config`). Un `afc` con
+    `nco_phase_inc = 1<<40` y un mensaje de tipo inexistente (0x7F) con el flujo vivo: la conexión
+    sigue, el rechazo vuelve (`last_error=afc_out_of_range`, BITE `config_rejected`), 0 huecos de
+    `seq`, 224 → 223 → 224 rayos/s y el pico espectral no se mueve (el NCO no se tocó). Cada
+    inyección por separado también dio 0 huecos. **La herramienta se corrigió tras el primer
+    intento, que falló 2 de 5**: una conexión nueva puede traer un salto de `seq` sin inyectar nada
+    (4 huecos / 21 rayos en una conexión, 0 en la siguiente), así que se descartan 3 s de arranque,
+    y `last_error` se lee de todos los status vistos, no solo del último. El criterio de pase es el
+    revisado, no el original. El BITE `config_rejected` apareció limpio en la corrida siguiente;
+    no se sabe qué lo limpió (conexión nueva o tiempo).
+
+    **Caída y reconexión de Ethernet: pasa 4/4, con un defecto** (cable desenchufado a mano; sin
+    sudo no se puede bajar el enlace por software). El DRx acepta una conexión nueva sin reiniciar y
+    los rayos reanudan a 223,5/s sin huecos. Pero:
+
+    - **Hasta decenas de segundos sin datos tras la reconexión.** Con el cliente conectado durante
+      la caída (23 s), el primer rayo llegó **21 s** después de volver el enlace
+      (`20261012-212211-enlace`); con una caída de 12 s, 0 rayos en 8 s. **Control:** cerrando el
+      socket del cliente *antes* de desenchufar, el primer rayo llegó **0,5 s** después de volver el
+      ping (`20261012-212906-enlace-limpio`). Es la conexión vieja, no el enlace.
+      Mecanismo (leído del código, no medido con un tracer): `drx_transport.c:283-327` sirve a un
+      solo cliente, con `lwip_accept` y `atiende(fd)` en serie en la misma tarea. Con el cable fuera
+      el socket viejo sigue "abierto" y el cliente nuevo espera en el backlog. lwIP muere con
+      `TCP_MAXRTX 12` (backoff exponencial) y `LWIP_TCP_KEEPALIVE 0`, así que el socket viejo cae
+      cuando una retransmisión recibe respuesta del host. **El 21 s es una realización de ese
+      proceso, no un valor fijo, y no se midió el peor caso (en teoría, minutos).** Un DSP que no
+      cierra su socket durante la caída lo sufre; uno que sí lo cierra, no. Ver
+      [P-25](../alcance/pendientes.md#p-25).
+    - **`link_down` no se levanta.** BITE `limpio` y `last_error=ok` en las cuatro caídas.
+      Está así por diseño: `drx_status_task.c:125` lo difiere a Z4.6 y nadie lo cableó
+      después. El catálogo de fallos pide que el BITE lo reporte. Ver
+      [P-26](../alcance/pendientes.md#p-26).
+    - **Sin explicar:** una corrida del control dio 127 rayos/s en la ventana posterior a la
+      reconexión (el criterio de ±5 % falló). Cinco minutos después, 222,6 rayos/s, 0 huecos, 0
+      TRUNCATED. La ventana no tiene datos por segundo; no se sabe si fue un artefacto del escucha
+      o una recuperación parcial del DRx.
+
 ## Campaña de throughput: es un ensayo aparte { #throughput }
 
 Consecuencia incómoda de la dilatación: a 100 MHz la salida es
