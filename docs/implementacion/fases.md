@@ -2540,7 +2540,11 @@ existe un plan de migración ejecutable.
       `DrxTiming_GetRayMeta` lee `g_applied`, así que los rayos declaran 800 000/300 000 mientras el
       motor corre 767 312/208 416. Inferencia, no lectura de registros: encaja con 0 `TRUNCATED` y con la
       Z4.4. Los `prf_div` de la cabecera son, mientras no llegue un `config` real, los del self-test. Es un
-      bug de firmware abierto, aún sin corregir.
+      bug de firmware, **corregido y medido en placa el 12-oct-2026** (`27a5d51`,
+      `DrxTiming_RestoreDefault`): tras recargar, `tools/mock_dsp.py` vio en 2240 rayos cabeceras con
+      `prf_div` 208 416 (1958 rayos, lote alto) y 767 312 (282 rayos, lote bajo), 0 huecos, 0 `TRUNCATED`.
+      Con el fix la inferencia de arriba queda confirmada para la cabecera; el soak de 72 h del 8-oct
+      sigue sin config registrada.
     - **Regla real.** `drx_range_gate` corre libre: un `valid` cada `dec` ciclos (R₁ = 208 en fino, R₂ =
       416 en grueso) y un `ray_start` cada `prf_div`. `ray_start` levanta `ray_truncated` si `wr_ptr ≠ 0`.
       Con `n = prf_div / dec` muestras por PRI, no hay `TRUNCATED` solo si `n` es múltiplo entero de
