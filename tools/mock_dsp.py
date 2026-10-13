@@ -172,7 +172,22 @@ def main(argv: list[str] | None = None) -> int:
                              "que cierra el lazo de un `afc` SIN JTAG: la "
                              "corrección entra por el socket y su efecto se ve "
                              "en los datos que salen por el mismo socket")
+    parser.add_argument("--esperar", default=None, metavar="PRF:BINS,...",
+                        help="pares prf_div:bins permitidos en las cabeceras, p.ej. "
+                             "208416:1002,767312:3689. Cualquier rayo con otro par "
+                             "(o con TRUNCATED) da código 5: un soak sobre una config "
+                             "que nadie eligió no vale como evidencia")
+    parser.add_argument("--estricto", action="store_true",
+                        help="modo soak: terminar antes de --seconds (el DRx cerró el "
+                             "socket) o pasar --stall s sin rayos da código 5, en vez "
+                             "de parecer una corrida corta pero limpia")
+    parser.add_argument("--stall", type=float, default=10.0,
+                        help="con --estricto, segundos sin rayos que cuentan como parada")
     args = parser.parse_args(argv)
+
+    esperados = None
+    if args.esperar is not None:
+        esperados = {tuple(int(x) for x in par.split(":")) for par in args.esperar.split(",")}
 
     print(f"contrato v{C.VERSION_MAJOR}.{C.VERSION_MINOR}, "
           f"conectando a {args.host}:{args.port}")
@@ -217,14 +232,27 @@ def main(argv: list[str] | None = None) -> int:
         truncados = 0
         configs = Counter()
         primero = ultimo = None
+        cerrado_por_drx = False
+        paradas = 0
+        en_parada = False
         t0 = time.monotonic()
+        t_ultimo_rayo = t0
         while time.monotonic() - t0 < args.seconds:
+            # Vigilante de paradas: sin esto una placa colgada deja al cliente
+            # esperando en silencio hasta el final de un soak de 72 h.
+            if args.estricto and not en_parada and time.monotonic() - t_ultimo_rayo > args.stall:
+                en_parada = True
+                paradas += 1
+                print(f"{datetime.now().isoformat(timespec='seconds')} "
+                      f"sin rayos desde hace {args.stall:.0f} s (último seq={ultimo_seq})",
+                      flush=True)
             try:
                 data = sock.recv(65536)
             except TimeoutError:
                 continue
             if not data:
-                print("el DRx cerró la conexión")
+                print(f"{datetime.now().isoformat(timespec='seconds')} el DRx cerró la conexión")
+                cerrado_por_drx = True
                 break
             bytes_totales += len(data)
             for header, cuerpo in framer.push(data):
@@ -233,6 +261,12 @@ def main(argv: list[str] | None = None) -> int:
                 if header.msg_type == C.MsgType.RAY:
                     ray = C.Ray.unpack(cuerpo)
                     n_rayos += 1
+                    if en_parada:
+                        print(f"{datetime.now().isoformat(timespec='seconds')} "
+                              f"rayos de nuevo tras {time.monotonic() - t_ultimo_rayo:.1f} s",
+                              flush=True)
+                        en_parada = False
+                    t_ultimo_rayo = time.monotonic()
                     # Un hueco en `seq` es un rayo que el DRx descartó o que la red
                     # perdió. Con TCP lo segundo no pasa en silencio, así que un
                     # hueco aquí apunta a `sink_drops` del lado del DRx -- ver D-16
@@ -293,7 +327,24 @@ def main(argv: list[str] | None = None) -> int:
         print("configs vistas (prf_div, bins, pw_idx, pulse_mode, cell_mode, n_ch, batch_high):")
         for k, v in configs.most_common():
             print(f"  {k}: {v}")
-        return 0 if huecos == 0 else 3
+
+        problemas = []
+        if esperados is not None:
+            fuera = {k: v for k, v in configs.items() if (k[0], k[1]) not in esperados}
+            if fuera:
+                problemas.append(f"cabeceras fuera de lo esperado {sorted(esperados)}: {fuera}")
+        if truncados and esperados is not None:
+            problemas.append(f"{truncados} rayos con TRUNCATED")
+        if args.estricto:
+            if cerrado_por_drx or transcurrido < args.seconds - 2.0:
+                problemas.append(f"terminó a los {transcurrido:.0f} s de {args.seconds:.0f} s pedidos")
+            if paradas:
+                problemas.append(f"{paradas} paradas de más de {args.stall:.0f} s sin rayos")
+        for p in problemas:
+            print(f"PROBLEMA: {p}")
+        if huecos:
+            return 3
+        return 5 if problemas else 0
     print("NO llegó ningún rayo")
     return 4
 
