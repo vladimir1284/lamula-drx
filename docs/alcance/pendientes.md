@@ -2686,32 +2686,53 @@ inferencia).
 
 ### P-25 · Tras una caída de enlace, el DRx tarda en servir al cliente nuevo si el socket viejo sigue abierto { #p-25 }
 
-**Estado:** abierto, 12-oct-2026 (encontrado en la inyección de fallos de Z5) · **Dueño:** — ·
-**Bloquea:** nada hoy; decide si Z5 lo exige.
+**Estado:** cerrado como limitación aceptada, 12-oct-2026 (encontrado en la inyección de fallos de
+Z5) · **Dueño:** — · **Bloquea:** nada. **Se reabre si:** el DSP real no cierra su socket al
+detectar la caída, o si ZM5 exige recuperación acotada tras un flap de enlace.
 
 **Medido (ZedBoard, cable desenchufado a mano):** con el cliente conectado durante una caída de
 23 s, el primer rayo llegó 21 s después de volver el enlace. Con el cliente cerrando su socket
-antes de la caída, 0,5 s. Evidencia en `build/fallos/20261012-212211-enlace` y
+antes de la caída, 0,5 s. Con una caída de 12 s, 0 rayos en los 8 s siguientes. Evidencia (locales,
+no versionadas) en `build/fallos/20261012-212211-enlace`, `20261012-212028-enlace` y
 `20261012-212906-enlace-limpio`.
 
 **Mecanismo (inferencia del código, no medido con un tracer):** `drx_transport.c:283-327` serializa
 `lwip_accept` y `atiende(fd)` en una tarea; mientras el socket viejo no muera, el nuevo espera en
 el backlog. lwIP lo cierra solo cuando una retransmisión (`TCP_MAXRTX 12`, backoff exponencial)
-recibe respuesta del host, y keepalive está apagado (`LWIP_TCP_KEEPALIVE 0`).
+recibe respuesta del host, y keepalive está apagado (`LWIP_TCP_KEEPALIVE 0`,
+`lwipopts.h:56` del BSP). La duración depende de en qué punto del backoff vuelve el enlace.
 
-**No se sabe:** el peor caso (en teoría, minutos), ni si la duración depende de la de la caída.
+**No se sabe:** el peor caso (en teoría, minutos); si la duración crece con la de la caída (dos
+puntos medidos, no una curva); ni la causa de los 127 rayos/s de una ventana posterior a la
+reconexión en la corrida `enlace-limpio` (222,6/s cinco minutos después, sin datos por segundo en
+medio).
 
-**Opciones, sin decidir:** (a) keepalive de 10 s en el socket del cliente, barato, acota a ~30 s;
-(b) `lwip_select` sobre cliente y `srv` para que una conexión nueva expulse a la vieja, con
-`SO_SNDTIMEO` para que el `lwip_send` de `drx_tx` no cuelgue. (b) toca el camino de rayos:
-recarga de placa y soak corto. Un DSP que cierra su socket al detectar la caída no lo sufre.
+**Cómo reproducir:** `tools/inyectar_fallos.py enlace` (cliente conectado durante la caída) y
+`enlace-limpio` (cierra el socket antes). Pide desenchufar y enchufar el cable a mano: sin sudo no
+se puede bajar `enp1s0` por software.
+
+**Cómo arreglarlo, si se reabre**, de menos a más coste: (a) activar `SO_KEEPALIVE` en el socket
+del cliente con ~10 s de inactividad y subir `LWIP_TCP_KEEPALIVE` a 1 en el BSP (`tcl/gen_bsp.tcl`
+fija los parámetros de lwIP a mano con `bsp config`), lo que acota el peor caso a ~30 s sin tocar
+el control de flujo; (b) `lwip_select` sobre el cliente y `srv` para que una conexión nueva expulse
+a la vieja, más `SO_SNDTIMEO` para que el `lwip_send` de `drx_tx` no cuelgue contra un peer muerto.
+(b) toca el camino de rayos: recarga de placa y soak corto de regresión.
 
 ### P-26 · `link_down` del BITE no se levanta { #p-26 }
 
-**Estado:** abierto, 12-oct-2026 · **Dueño:** — · **Bloquea:** el criterio «BITE lo reporta» del
-catálogo de inyección de fallos para la pérdida de enlace.
+**Estado:** cerrado como limitación aceptada, 12-oct-2026 · **Dueño:** — · **Bloquea:** nada. **Se
+reabre si:** el catálogo de fallos de ZM5 exige BITE `LINK_DOWN` visible.
 
 `drx_status_task.c:125` difiere `link_down` a Z4.6 y se reporta a cero; el transporte existe desde
-Z4.6 y nadie lo cableó. Medido: BITE `limpio` y `last_error=ok` en cuatro caídas reales de
-enlace. `mmcm_unlocked` y `ssi_errors` están igual de a cero, por razones distintas (no hay bit en
-`STATUS`; encoders de Z3), y eso sí está dicho en `drx_status_frame.h`.
+Z4.6 y nadie lo cableó. Medido: BITE `limpio` y `last_error=ok` en cuatro caídas reales de enlace
+(`tools/inyectar_fallos.py enlace`). `mmcm_unlocked` y `ssi_errors` están igual de a cero, por
+razones distintas (no hay bit en `STATUS`; encoders de Z3), y eso sí está dicho en
+`drx_status_frame.h`.
+
+**Cómo cablearlo, si se reabre:** hay que leer el estado del enlace del netif de lwIP (lo sabe el
+PS, no el fabric), ponerlo en la instantánea de `drx_status_task.c` junto a `ssa_underruns`, y
+decidir si es sticky o de nivel. Un bit de nivel es lo que un DSP necesita para saber si el enlace
+está caído *ahora*, pero el status solo llega por ese mismo enlace, así que **un DSP conectado
+nunca vería `link_down=1` en vivo**: solo el valor sticky tras volver. Por eso el criterio del
+catálogo («BITE lo reporta») solo es comprobable por UART, no por el socket. Esa limitación es de
+diseño, no del cableado, y conviene decidirla antes de implementar.

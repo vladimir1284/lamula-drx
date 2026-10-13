@@ -277,10 +277,79 @@ def caso_enlace(log, cierra_antes: bool = False) -> bool:
     return ok
 
 
+def caso_overrun(log, parada_s: float = 3.0) -> bool:
+    """Frena el Cortex-A9 por JTAG `parada_s` segundos con el flujo vivo.
+
+    Parado el A9 nadie recicla el anillo S2MM ni sondea STATUS, el range-gate
+    desborda y, al reanudar, la tarea de estado cuenta el overrun. Es el mismo
+    mecanismo que contaminaba las medidas de `tools/dump_ray.py` (xsct para el A9
+    en cada `mrd`), usado ahora a proposito. No hace falta firmware nuevo.
+    """
+    s = Sesion(HOST)
+    s.escuchar(3.0)
+    s.reset()
+    s.escuchar(6.0)
+    antes = s.resumen("antes")
+    log(antes)
+
+    tcl = ROOT / "build" / "fallos" / "_halt.tcl"
+    tcl.parent.mkdir(parents=True, exist_ok=True)
+    tcl.write_text(
+        "connect\n"
+        'targets -set -filter {name =~ "*Cortex-A9*#0" || name =~ "ARM*#0"}\n'
+        "stop\n"
+        f"after {int(parada_s * 1000)}\n"
+        "con\n"
+        "disconnect\n"
+    )
+    s.reset()
+    t0 = time.monotonic()
+    proc = subprocess.Popen(["xsct", str(tcl)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True)
+    framing = None
+    vivo = True
+    # xsct tarda en conectar y la parada dura `parada_s`: ventana holgada.
+    try:
+        while proc.poll() is None:
+            vivo = s.escuchar(0.5) and vivo
+        log(f"  xsct termino a los {time.monotonic() - t0:.1f} s "
+            f"(parada del A9 de {parada_s:.0f} s)")
+        vivo = s.escuchar(4.0) and vivo
+    except ValueError as exc:
+        framing = str(exc)
+    durante = s.resumen("durante+recuperacion")
+    log(durante)
+    if framing:
+        log(f"  ERROR DE FRAMING tras la parada: {framing}")
+
+    s.reset()
+    vivo = s.escuchar(8.0) and vivo
+    despues = s.resumen("despues")
+    log(despues)
+    st = s.status
+    bite_visto = any("dma_overrun" in str(f.get("bite", "")) for f in (durante, despues))
+    chequeos = {
+        "conexion viva": vivo,
+        "sin error de framing (no llega dato corrupto)": framing is None,
+        "overrun contabilizado en BITE (dma_overrun)": bite_visto,
+        "flujo reanuda, tasa +-5%": despues["rayos"] > 0
+        and _tasa_ok(antes["tasa"], despues["tasa"]),
+        "sin huecos una vez recuperado": despues["huecos"] == 0,
+    }
+    log(f"  info: dma_overruns={st.dma_overruns if st else '?'} "
+        f"huecos durante la parada={durante['huecos']} perdidos={durante['perdidos']}")
+    ok = True
+    for k, v in chequeos.items():
+        log(f"  [{'PASA' if v else 'FALLA'}] {k}")
+        ok &= v
+    s.cerrar()
+    return ok
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("caso", choices=["config", "enlace", "enlace-limpio"])
+    p.add_argument("caso", choices=["config", "enlace", "enlace-limpio", "overrun"])
     args = p.parse_args()
 
     destino = ROOT / "build" / "fallos" / f"{datetime.now():%Y%m%d-%H%M%S}-{args.caso}"
@@ -296,6 +365,7 @@ def main() -> int:
                             capture_output=True, text=True).stdout.strip()
     log(f"caso={args.caso} commit={commit}")
     ok = {"config": caso_config, "enlace": caso_enlace,
+          "overrun": caso_overrun,
           "enlace-limpio": lambda lg: caso_enlace(lg, cierra_antes=True)}[args.caso](log)
     log(f"RESULTADO: {'PASA' if ok else 'FALLA'}")
     (destino / "resultado.txt").write_text("\n".join(lineas) + "\n")

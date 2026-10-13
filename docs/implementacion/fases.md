@@ -2574,11 +2574,10 @@ existe un plan de migración ejecutable.
     cliente Python que solo lee, sin lazo de AFC del DSP real. La mezcla de lotes (87 % / 13 %) es la
     de la config de bring-up, no una Batch real de NEXRAD (pendiente decidir cuál pide Z5).
 
-!!! info "12-oct-2026: inyección de fallos — 2 de 6 casos ejecutados, y salieron dos hallazgos"
-    `tools/inyectar_fallos.py` (nuevo) ejecuta los dos casos del [catálogo](../pruebas/campana-z5.md)
-    que no necesitan firmware ni RTL nuevo. Evidencia en `build/fallos/<fecha>-<caso>/`. Los criterios
-    de paso están escritos en la cabecera del script. **Faltan cuatro**: overrun de DMA, underrun de
-    SSA, pérdida de lock de MMCM y glitch SSI, que piden inyectores nuevos o hooks de RTL.
+!!! info "12-oct-2026: inyección de fallos — 3 de 6 casos ejecutados, y salieron dos hallazgos"
+    `tools/inyectar_fallos.py` (nuevo) ejecuta tres casos del [catálogo](../pruebas/campana-z5.md)
+    sin firmware ni RTL nuevo. Evidencia en `build/fallos/<fecha>-<caso>/`. Los criterios
+    de paso están escritos en la cabecera del script. **Faltan tres** (underrun de SSA, MMCM y SSI): ver el último párrafo de este bloque.
 
     **Configuración inválida del par: pasa 5/5** (`20261012-211450-config`). Un `afc` con
     `nco_phase_inc = 1<<40` y un mensaje de tipo inexistente (0x7F) con el flujo vivo: la conexión
@@ -2616,6 +2615,36 @@ existe un plan de migración ejecutable.
       reconexión (el criterio de ±5 % falló). Cinco minutos después, 222,6 rayos/s, 0 huecos, 0
       TRUNCATED. La ventana no tiene datos por segundo; no se sabe si fue un artefacto del escucha
       o una recuperación parcial del DRx.
+
+    **Overrun de DMA: pasa 5/5** (`20261012-214004-overrun`, `tools/inyectar_fallos.py overrun`). El
+    inyector es detener el Cortex-A9 por JTAG 3 s (`xsct`: `stop`, `after 3000`, `con`) con el flujo
+    vivo, sin firmware nuevo: el mismo mecanismo que contaminaba las medidas de `tools/dump_ray.py`,
+    usado ahora a propósito. Resultado: 0 errores de framing (no llega dato corrupto), la conexión
+    sigue, el BITE `dma_overrun` sube (`dma_overruns=3`), el flujo vuelve a 223,5 rayos/s y 0 huecos
+    una vez recuperado. Durante la recuperación hubo 2 huecos de `seq` y 2 rayos perdidos, y la tasa
+    de esa ventana fue 190/s (se vacía lo acumulado). **El BITE `dma_overrun` es sticky de por vida**:
+    una conexión nueva, ~20 s después, lo sigue viendo con `dma_overruns=3`, porque `drx_status_frame.c`
+    lo deriva de un contador acumulado que solo se pone a cero reiniciando la placa. `config_rejected`,
+    en cambio, apareció limpio tras reconectar (lo alimenta `g_control->rejects`, no el acumulado).
+    El catálogo no dice si el BITE debe limpiarse al recuperarse; es una decisión de contrato, no un
+    fallo medido. Cada parada de 3 s da ~3 eventos, así que el contador mide eventos por canal, no
+    rayos. Una parada más larga o repetida no se probó, y el efecto de parar el A9 sobre el soak
+    de 72 h es el mismo mecanismo que contamina cualquier medida con JTAG abierto.
+
+    **Los tres restantes no se pueden ejecutar hoy, y por razones distintas:**
+
+    - **Underrun de SSA.** `ssa_underruns` solo se alimenta de `estimulo.errors`
+      (`drx_status_task.c:124`), que sube cuando `DrxReg_VecSetLen` no confirma la longitud tras
+      cargar un vector (`drx_stimulus.c:88`). Es un camino de error de un registro de la propia
+      placa; no hay entrada externa que lo provoque. Forzarlo pide un hook de firmware.
+    - **Pérdida de lock de MMCM.** No llega al mapa de registros (haría falta un bit nuevo en
+      `STATUS`; `drx_status_task.c:125`) y en la ZedBoard no hay forma física de provocarlo. Hook de
+      RTL.
+    - **Glitch de encoder SSI.** No hay lectores SSI (Z3), `ssi_errors` está a cero por diseño. No hay
+      camino que ejercitar.
+
+    Estos tres son una decisión de alcance de ZM5: construir hooks o cerrarlos como no construibles en
+    ZedBoard, como se hizo con la conmutación en caliente. **No lo decidí.**
 
 ## Campaña de throughput: es un ensayo aparte { #throughput }
 
