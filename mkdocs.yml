@@ -73,6 +73,20 @@ nav:
       - Evidencia de P-21 (tres corridas): implementacion/evidencia/p-21/resumen.md
       - Infraestructura: implementacion/infraestructura.md
       - Provisionado de placa limpia (borrador): implementacion/provisionado.md
+  - Firmware y Subsistema PS/PL:
+      - Visión General del Firmware: firmware/index.md
+      - Plataforma Hardware/Software: firmware/plataforma-hw-sw.md
+      - Diseño de la PL y Block Design: firmware/diseno-pl.md
+      - Interfaz Hardware/Software y Mapa de Registros: firmware/mapa-registros.md
+      - Secuencia de Arranque e Inicialización: firmware/arranque.md
+      - Arquitectura de Tareas FreeRTOS: firmware/tareas-freertos.md
+      - Comunicación y Sincronización entre Tareas: firmware/comunicacion-sincronizacion.md
+      - Rutinas de Interrupción (ISR) y GIC: firmware/interrupciones.md
+      - Módulos y Drivers de Firmware: firmware/modulos-drivers.md
+      - Configuración de FreeRTOS y BSP: firmware/configuracion-freertos.md
+      - Cómo Compilar, Cargar y Depurar: firmware/compilacion-depuracion.md
+      - Guía para Añadir una Tarea o Periférico Nuevo: firmware/guia-extension.md
+      - Glosario de Firmware y RTOS: firmware/glosario.md
   - Documentación de IPs:
       - Visión General y Flujo de Datos: ip/index.md
       - IP Fuente de Muestras SSA (vector_source): ip/vector_source.md
