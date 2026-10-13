@@ -160,6 +160,15 @@ static void DrxStatusTask(void *pvParameters)
                    (unsigned long)(red.tx_bytes >> 20),
                    (unsigned long)red.rx_bytes);
 
+        /* Heap de FreeRTOS (heap_4): libre ahora y minimo historico. Un soak de
+         * 72 h es lo unico que ve una fuga lenta, y sin esta linea solo se ve
+         * cuando `vApplicationMallocFailedHook` ya ha reventado. No cubre el
+         * heap interno de lwIP (MEM_SIZE), que no tiene estadisticas activas. */
+        xil_printf("drx_status: heap libre=%lu min=%lu de %lu\r\n",
+                   (unsigned long)xPortGetFreeHeapSize(),
+                   (unsigned long)xPortGetMinimumEverFreeHeapSize(),
+                   (unsigned long)configTOTAL_HEAP_SIZE);
+
         /* Los contadores finos del camino de vuelta, no solo el total. Sin
          * esto, un `descartados` que sube no dice NADA de por que: un rayo
          * corto, un `n_ch` que no cuadra y un descriptor fallido del DMA se
