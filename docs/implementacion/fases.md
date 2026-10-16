@@ -2646,6 +2646,69 @@ existe un plan de migración ejecutable.
     Estos tres son una decisión de alcance de ZM5: construir hooks o cerrarlos como no construibles en
     ZedBoard, como se hizo con la conmutación en caliente. **No lo decidí.**
 
+!!! success "15-oct-2026: soak de 72 h con la config de bring-up — limpio, 0 eventos"
+    Corrió del 12-oct 22:33 al 15-oct 22:33 EDT (`tools/soak.sh 259200`, evidencia en
+    `build/soak/20261012-223319/`, local y no versionada), con las comprobaciones que le faltaron
+    al soak del 8-oct.
+
+    **Condiciones.** Placa apagada, encendida y cargada desde cero con `tools/cargar.sh`. Commit
+    `5c438f7` con el árbol limpio; ELF `220f20a727e1988a`; bitstream `812866374f0a7179`, el mismo
+    sha que el del XSA del 4-oct (el RTL no cambió desde `9a3d1ac`). Preflight de 20 s antes de
+    empezar. Un solo cliente Python (`tools/mock_dsp.py --estricto --esperar 208416:1002,767312:3689`),
+    sin JTAG y sin DSP real durante la corrida. Config: la de bring-up, alineada a R₁
+    (`prf_div` 208 416 / 1002 bins en el lote alto y 767 312 / 3689 en el bajo).
+
+    **Medido.**
+
+    | | |
+    |---|---|
+    | Rayos recibidos | 57 905 276, a 223,4/s (predicho 223,47); 937,4 GB (decimal), 28,9 Mbps |
+    | `seq` | 72 017 a 57 977 292, o sea 57 905 276 consecutivos: **0 huecos, 0 rayos perdidos** |
+    | `TRUNCATED` | 0 |
+    | Cabeceras vistas | solo `208416/1002` (50 513 114 rayos, lote alto) y `767312/3689` (7 392 162, lote bajo) |
+    | Contadores de la placa | en **0 en las 250 477 lecturas**: `dma_overruns`, `trig_gaps`, `ray_gaps`, `sink_drops`, `cortos`, `largos`, `enc_fail`, `cola`, `descartados` |
+    | BITE | `0x40` en las 2 primeras lecturas, `0x0` en las 250 475 restantes |
+    | Heap de FreeRTOS | `libre` 22 344 B (250 469 lecturas) o 23 336 B (8); `min` 14 152 B de 65 536 en todas. **Sin deriva en 72 h** |
+    | Enlace del host (`enp1s0`) | `rx_err`, `rx_drop`, `rx_miss` en 0 en las 4 321 muestras |
+    | Huecos de más de 5 s en la UART | 0 |
+
+    La placa contó 57 909 747 `rayos_tx` y el cliente recibió 57 905 276. La diferencia, 4 471,
+    cuadra con los ~4 470 rayos que sacó el preflight de 20 s a 223,4/s (aritmética, no medido
+    hueco a hueco).
+
+    **Qué demuestra y qué no.**
+
+    - Demuestra estabilidad del datapath, del transporte TCP y del anillo de DMA durante 72 h con
+      esta config, y que el heap de FreeRTOS no se erosiona. El `min` de 14 152 B se fija en el
+      arranque y no se movió; el margen en reposo es de ~14 KiB, no holgado.
+    - **No es una Batch real de NEXRAD**: la mezcla es la de bring-up (12,8 % de rayos del lote
+      bajo). Tampoco ejercita el lazo de AFC con el DSP real, ni el heap interno de lwIP
+      (`MEM_SIZE`, sin estadísticas activas), ni nada de la ZU9.
+    - **No explica los ~49 ppm del soak del 8-oct** (a esa tasa habrían salido ~2 800 descartes y
+      salieron 0). Cambiaron a la vez config, ELF y reinicio de la placa, así que no se atribuye a
+      una sola causa. Lo que sí queda acotado: con la config alineada, ni el datapath ni el
+      transporte los producen.
+    - [P-17](../alcance/pendientes.md#p-17): 0 overruns de DMA en 72 h es una observación, no un
+      presupuesto de latencia de la ISR.
+
+    **Hallazgos de método.**
+
+    - **`resumen.txt` salió truncado** (825 B, sin contadores finales ni procedencia): `grep | head -1`
+      bajo `set -e` y `pipefail` recibe SIGPIPE con un log de 130 MB y mata el bloque. Con el soak de
+      30 s de prueba no se veía. Corregido en `67ae947` (`grep -a -m1`) y probado solo con una corrida
+      de 20 s. Las cifras de arriba salen de `uart.log`, `cliente.log` y `host.log`;
+      `resumen-completo.txt` en el directorio de evidencia es la reconstrucción a mano. El código de
+      salida del cliente no quedó registrado; se infiere 0 porque no hay líneas `PROBLEMA` ni huecos.
+    - **El BITE bajó de `0x40` a `0x0` al conectarse el cliente**, igual que en el soak de 8 h. El
+      `0x40` es el `config_rejected` de la autoprueba de AFC. La coincidencia con la conexión no
+      identifica qué lo limpia.
+    - **Una sesión SSH caída se llevó la vigilancia automática** unas 3 h. El soak sobrevivió porque
+      se lanzó con `setsid nohup`.
+
+    **Estado de ZM5 para el soak.** El requisito de 72 h está cumplido para la config de bring-up.
+    Sigue abierto, y es decisión de dirección técnica, si Z5 exige además una Batch real
+    alineada a R₁ y el lazo de AFC con el DSP real.
+
 ## Campaña de throughput: es un ensayo aparte { #throughput }
 
 Consecuencia incómoda de la dilatación: a 100 MHz la salida es

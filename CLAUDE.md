@@ -410,7 +410,10 @@ de la máquina se llevó el soak 5 entero, y solo se recuperó porque la placa s
 contadores vivían en su RAM. Desde el 12-oct-2026 también escribe `procedencia.txt` (commit, sha256 del
 ELF) y pone hora a cada línea de UART, porque el soak de 72 h del 8-oct corrió sobre una config de DSP
 que nadie registró y no se puede citar como evidencia de Z5. El soak de 8 h con la config de bring-up
-(12-oct) salió limpio: 0 descartes, 0 huecos (las cabeceras declaran `prf_div` 300 000/800 000 pero el hardware corría 208 416/767 312: bug de firmware corregido y medido en placa el 12-oct, ver `fases.md#z5`). **Z5 sigue pidiendo 72 h** y falta decidir con qué config.
+(12-oct) salió limpio: 0 descartes, 0 huecos (las cabeceras declaran `prf_div` 300 000/800 000 pero el hardware corría 208 416/767 312: bug de firmware corregido y medido en placa el 12-oct, ver `fases.md#z5`). **El soak de 72 h con la config de bring-up cerró limpio el 15-oct-2026**: 57,9 M de rayos, 0 huecos
+de `seq`, 0 `TRUNCATED`, contadores de la placa en 0 en 250 477 lecturas y heap de FreeRTOS sin deriva
+(detalle y límites en `fases.md#z5`). Sigue abierto, y es decisión de dirección técnica, si Z5 exige
+además una Batch real y el lazo de AFC con el DSP real.
 
 Lo que sí está hecho y verificado, además de lo de arriba:
 
