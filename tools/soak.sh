@@ -127,8 +127,8 @@ trap - EXIT
     cat "$destino/cliente.log"
     echo
     echo "=== contadores de la placa: primera y ultima lectura ==="
-    for patron in "drx_status: BITE" "drx_status: red" "drx_status: rayo"; do
-        grep -a "$patron" "$destino/uart.log" | head -1
+    for patron in "drx_status: BITE" "drx_status: red" "drx_status: rayo" "drx_status: heap"; do
+        grep -a -m1 "$patron" "$destino/uart.log"
         grep -a "$patron" "$destino/uart.log" | tail -1
     done
     echo
