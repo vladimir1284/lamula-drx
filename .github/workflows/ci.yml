@@ -104,9 +104,9 @@ jobs:
           export PATH="$HOME/.local/bin:$PATH"
           make venv
 
-      # El cierre de temporización se corre TAMBIÉN con el FS_HZ real de la ZU9
-      # aunque no haya placa: es la única forma de que la deuda de la entrada D2
-      # del registro delta no se descubra el día que llegue el hardware.
+      # La intención era correr el cierre de temporización TAMBIÉN con el FS_HZ
+      # real de la ZU9 aunque no haya placa (entrada D2 del registro delta).
+      # Hoy NO ocurre: `zu9` está fuera de la matriz por falta del device pack.
       - name: Síntesis e implementación
         run: |
           vivado -mode batch -source tcl/build.tcl -tclargs \

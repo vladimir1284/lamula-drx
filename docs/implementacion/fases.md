@@ -2643,8 +2643,15 @@ existe un plan de migración ejecutable.
     - **Glitch de encoder SSI.** No hay lectores SSI (Z3), `ssi_errors` está a cero por diseño. No hay
       camino que ejercitar.
 
-    Estos tres son una decisión de alcance de ZM5: construir hooks o cerrarlos como no construibles en
-    ZedBoard, como se hizo con la conmutación en caliente. **No lo decidí.**
+    **Decisión de alcance, 16-oct-2026 (vladimir): los tres se cierran como no construibles en
+    ZedBoard**, el mismo criterio que la conmutación en caliente de Z1 y la instrumentación de
+    jitter de Z2. Construir un hook cuesta código que solo existe para que el test pase (y que
+    puede quedar en la netlist de producción), prueba el camino de reporte y no el fallo real, y
+    pide una corrida de Vivado y otra de placa por hook. SSA y MMCM se vuelven a probar en la ZU9
+    con hardware real; SSI, cuando exista el camino SSI (Z3). **Esto es un recorte, no un pase:**
+    ZM5 se cierra con 3 de 6 casos del catálogo ejecutados y 3 descartados por alcance, y el
+    BITE `SSA_UNDERRUN`, `MMCM_UNLOCKED` y `SSI_*` no tienen evidencia de disparo en ninguna
+    plataforma.
 
 !!! success "15-oct-2026: soak de 72 h con la config de bring-up — limpio, 0 eventos"
     Corrió del 12-oct 22:33 al 15-oct 22:33 EDT (`tools/soak.sh 259200`, evidencia en

@@ -1,6 +1,6 @@
 # Campaña de Z5: inyección de fallos, throughput y soak
 
-**Borrador del 8-oct-2026. Nada de esto se ha ejecutado.** Es el plan de la campaña de
+**Borrador del 8-oct-2026; actualizado el 16-oct-2026 con lo ejecutado desde entonces.** Es el plan de la campaña de
 [Z5](../implementacion/fases.md#z5) sobre lo que existe hoy, sin escribir scripts que nadie ha
 podido probar contra la placa. Parte del catálogo de [inyección de
 fallos](plan-testing.md#inyeccion-de-fallos) y dice, fallo por fallo, **qué se puede provocar ya, con
@@ -18,12 +18,15 @@ Los observables son los que el sistema ya emite: la bandera `bite` de la trama `
 | Configuración inválida del par remoto | **Sí, solo con el cliente** | `CONFIG` con PRF fuera de rango, ancho de pulso fuera de tabla o `afc` fuera de rango, por el socket. Ya hay precedente: `afc_out_of_range` vuelve como `last_error=12` con `CONFIG_REJECTED` (Z4.6) | Rechazo con código, **estado anterior preservado**: la tasa de rayos y `TRIG_COUNT` no se alteran. **Ejecutado el 12-oct-2026, pasa 5/5** (`tools/inyectar_fallos.py config`; ver [`fases.md#z5`](../implementacion/fases.md#z5)) |
 | Pérdida de enlace Ethernet y reconexión | **Sí, desde el host** | Bajar y subir `enp1s0` (`tools/net_drx_link.sh` ya fija el perfil) o desconectar el cliente y reconectar. | Reconexión **sin reset de la placa**. `drx_transport.c` tiene un bucle de `lwip_accept` con contador `accepts` (línea 286), así que debería reaceptar; *no se había probado una caída real*. **Ejecutado el 12-oct-2026** (`tools/inyectar_fallos.py enlace`): reacepta sin reset, pero tarda hasta decenas de segundos si el cliente no cerró su socket, y `link_down` no se levanta ([P-25](../alcance/pendientes.md#p-25), [P-26](../alcance/pendientes.md#p-26)) |
 | Overrun de DMA | **Solo de forma indirecta** | El consumidor lento del lado de la red **no** lo provoca: desde Z4.6 la tarea `drx_tx` desacopla el socket del anillo S2MM, así que un cliente lento sube `sink_drops`/`cola`, no `dma_overruns`. Para `dma_overruns` hay que frenar al PS. Se sabe que `mrd` por JTAG lo hace (para el A9), pero eso contamina cualquier medida | Descarte contabilizado, sin corrupción, BITE `DMA_OVERRUN`. **Ejecutado el 12-oct-2026 deteniendo el A9 por JTAG** (`tools/inyectar_fallos.py overrun`, sin firmware nuevo): pasa 5/5, y el BITE `dma_overrun` queda sticky de por vida ([`fases.md#z5`](../implementacion/fases.md#z5)) |
-| Underrun de la fuente de muestras (SSA) | **No** | No hay inyector. `vector_load` congela la fuente (P-23), pero no se ha comprobado que eso levante `SSA_UNDERRUN` | BITE, gating parado limpiamente, recuperación sin reset. **Falta un hook en RTL** |
-| Pérdida de lock de MMCM | **No** | Sin hook de RTL ni forma física de provocarlo | BITE `MMCM_UNLOCKED`, parada segura. **Falta un hook** |
-| Glitch de encoder SSI | **Desconocido** | Depende de que exista el camino SSI; este borrador no lo ha verificado | Rayo marcado az/el inválido, **no descartado** |
+| Underrun de la fuente de muestras (SSA) | **No. Cerrado como no construible en ZedBoard, 16-oct-2026** | No hay inyector. `vector_load` congela la fuente (P-23), pero no se ha comprobado que eso levante `SSA_UNDERRUN` | BITE, gating parado limpiamente, recuperación sin reset. **Falta un hook en RTL** |
+| Pérdida de lock de MMCM | **No. Cerrado como no construible en ZedBoard, 16-oct-2026** | Sin hook de RTL ni forma física de provocarlo | BITE `MMCM_UNLOCKED`, parada segura. **Falta un hook** |
+| Glitch de encoder SSI | **No. Cerrado como no construible en ZedBoard, 16-oct-2026** (no hay camino SSI hasta Z3) | Depende de que exista el camino SSI; este borrador no lo ha verificado | Rayo marcado az/el inválido, **no descartado** |
 
-Resumen honesto: **dos de seis** se pueden ejercitar hoy sin tocar RTL ni firmware. Las demás
-exigen construir un inyector, y ese trabajo es de diseño, no de scripting.
+Resumen honesto: **tres de seis** se ejercitaron sin tocar RTL ni firmware (config, enlace, overrun;
+ver [`fases.md#z5`](../implementacion/fases.md#z5)). Las otras tres exigen construir un hook y se
+**cerraron como no construibles en ZedBoard el 16-oct-2026** (decisión de vladimir, mismo criterio que
+la conmutación en caliente y el jitter): es un recorte de alcance, no un pase. Sus BITE no tienen
+evidencia de disparo en ninguna plataforma; SSA y MMCM se reprueban en la ZU9.
 
 ## Criterios de paso, para todos
 

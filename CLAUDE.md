@@ -190,9 +190,9 @@ placa por JTAG — el DMA completa pasadas enteras con 0 errores, y eso prueba q
 a la PL porque el stream tiene backpressure y el único que levanta `tready` es `vector_source` en
 ese modo. **Lo que NO prueba** es que el dato llegue correcto a la salida del DDC: el A/B contra el
 vector de +6 dBFS dio `OVERFLOW = 0` en los dos casos y no discriminó; eso se mide en Z4.4, cuando
-haya camino de vuelta para leer un rayo. Deuda anotada: `DRX_STIMULUS_N_CH` en
-`fw/include/drx_stimulus.h` tiene que coincidir a mano con el `N_CH` de `rtl/drx_top.sv`, que no
-vive en `config/params.toml`. Detalle en `fases.md#z4`, entrada del 1-oct (más tarde).
+haya camino de vuelta para leer un rayo. La deuda de `DRX_STIMULUS_N_CH` (sincronizado a mano con el
+`N_CH` de `rtl/drx_top.sv`) **se cerró en Z4.4**: `n_ch_top` vive en `config/params.toml` y sale por
+`gen_params.py` hacia RTL, firmware y Tcl. Detalle en `fases.md#z4`, entrada del 1-oct (más tarde).
 
 **Z4.4 cerrada, 1-oct-2026 (noche).** El camino de vuelta existe y está medido. `STATUS (overrun)`
 y `GATE_TRUNCATED` **bajan de `0x7` a `0x0`** y llegan **231 rayos en 1000 ms** sin un solo error:
