@@ -149,7 +149,7 @@ descriptor `.bif`:
 the_ROM_image:
 {
   [bootloader] fsbl.elf
-  drx_top.bin
+  drx_top.bit
   drx_app.elf
 }
 ```
@@ -161,20 +161,20 @@ La reproducibilidad depende de tres cosas, y ninguna sale gratis:
 ```sh title="tools/make_boot.sh"
 #   1. Versión de Vivado/Vitis PINADA. Dos versiones distintas dan bitstreams
 #      distintos aunque el RTL sea idéntico.
-#   2. Usar el `.bin` crudo y no el `.bit`: la cabecera del .bit lleva marca de
-#      tiempo y por sí sola rompe la reproducibilidad.
+#   2. Empaquetar el `.bit`, no el `.bin` crudo. bootgen solo reconoce un
+#      bitstream por la extensión `.bit`; con `.bin` lo guarda como dato de PS y
+#      la PL nunca se configura (descubierto el 16-oct-2026 al arrancar desde SD).
 #   3. Semilla de implementación fija (`-seed`) y sin pasos dependientes del
 #      número de hilos.
 ```
 
-El punto 2 es el que sorprende: la cabecera del `.bit` incluye la fecha y la hora de generación, así
-que dos builds idénticas dan ficheros distintos. Por eso el flujo pide el `.bin` crudo:
-
-```tcl
-# `-bin_file` produce además el .bin crudo, sin la cabecera del .bit que lleva
-# marca de tiempo: es el que se usa para el BOOT.BIN reproducible byte a byte.
-write_bitstream -force -bin_file [file join $opt(outdir) drx_top.bit]
-```
+El punto 2 es el que sorprende, y es una corrección del 16-oct-2026. Este tutorial decía que el flujo
+empaqueta el `.bin` crudo porque la cabecera del `.bit` lleva fecha y hora. Era un error: bootgen
+para Zynq-7000 solo reconoce un bitstream por la extensión `.bit`, y un `.bin` lo guarda como dato
+de PS (`attributes 0x10`, no `0x20`). El FSBL nunca configura la PL y el LED DONE no enciende. Nadie
+lo vio hasta el primer arranque desde SD. `tcl/build.tcl` sigue produciendo el `.bin` con
+`write_bitstream -bin_file`, pero el `BOOT.BIN` se empaqueta con el `.bit`. Que dos corridas de
+Vivado den el mismo `.bit` no está medido.
 
 Y el script no se fía: empaqueta dos veces y compara.
 

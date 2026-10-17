@@ -2716,6 +2716,40 @@ existe un plan de migración ejecutable.
     Sigue abierto, y es decisión de dirección técnica, si Z5 exige además una Batch real
     alineada a R₁ y el lazo de AFC con el DSP real.
 
+!!! success "16-oct-2026: arranque desde SD hecho — y el `BOOT.BIN` «reproducible» de ZM0 nunca había arrancado y era defectuoso"
+    Primera vez que una ZedBoard arranca sola desde SD, sin JTAG ni `ps7_init` de `xsct`. **El primer
+    intento falló**: LED DONE apagado, sin UART, sin ping. Diagnóstico por JTAG de solo lectura
+    (`BOOT_MODE` = 5, SD presente, PC en el bucle `wfe` de `FsblHandoffJtagExit`) y
+    `bootgen -arch zynq -read BOOT.BIN`: el bitstream iba con `attributes 0x10` (dato de PS) en vez de
+    `0x20` (PL). Causa: `tcl/boot/boot.bif` listaba `drx_top.bin`, y bootgen para Zynq-7000 solo
+    reconoce un bitstream por la extensión `.bit`. El FSBL copiaba el bitstream a memoria y nunca
+    configuraba la PL. **Todo `BOOT.BIN` anterior a este día era defectuoso**, incluido el que ZM0
+    dio por «reproducible byte a byte» el 26-sep: reproducible, sí; arrancable, no. Nadie lo vio
+    porque nunca se arrancó desde SD (mismo patrón que el bitstream equivocado del 1-oct).
+    `[destination_device = pl]` no sirve: bootgen lo rechaza para la arquitectura zynq.
+
+    **Corrección** (`7593bd7`): `boot.bif` y `tools/make_boot.sh` empaquetan el `.bit`. Con el
+    `BOOT.BIN` nuevo (sha256 `de21ef14…`, 4 444 752 B): DONE encendido, ping 3/3 a 0,15 ms,
+    `mock_dsp.py --seconds 10` a 222,5 rayos/s con 0 huecos.
+
+    **Criterio de aceptación de [provisionado.md](provisionado.md)**, soak de 660 s desde esa SD
+    (`tools/soak.sh 660`, evidencia en `build/soak/20261016-230257/`): 147 442 rayos, 0 huecos de
+    `seq`, 0 `TRUNCATED`, `dma_overruns=0`, `ddc_overflows=0`, `trig_gaps=0`, `ray_gaps=0`, heap sin
+    deriva, 0 errores de enlace en el host. Cumplido.
+
+    **Lo que NO está medido.**
+
+    - Que dos corridas de Vivado distintas den el mismo `.bit` y, con él, el mismo `BOOT.BIN`. Solo
+      está medido que dos empaquetados del mismo `.bit` dan el mismo hash.
+    - Los 660 s son el mínimo del criterio, no un soak: la placa lleva en esta SD minutos, no horas.
+    - Al final de la corrida aparecen `descartados=2` y `snd_fail=2`, en la última lectura, tomada
+      con el cliente ya desconectado. Inferencia: envíos que fallan al cerrar el socket; no se
+      contrastó con el log de UART.
+    - `resync=1` se mantiene constante durante los 11 min: es del arranque, no de régimen.
+    - La SD conserva archivos de PetaLinux de 2023 (`boot.scr`, `image.ub`, `test_leds.elf`); la
+      BootROM solo lee `BOOT.BIN`.
+    - El cable JTAG estaba conectado durante el arranque, aunque no se cargó nada por él.
+
 ## Campaña de throughput: es un ensayo aparte { #throughput }
 
 Consecuencia incómoda de la dilatación: a 100 MHz la salida es

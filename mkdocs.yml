@@ -72,7 +72,7 @@ nav:
       - ILA de depuración (P-21): implementacion/ila.md
       - Evidencia de P-21 (tres corridas): implementacion/evidencia/p-21/resumen.md
       - Infraestructura: implementacion/infraestructura.md
-      - Provisionado de placa limpia (borrador): implementacion/provisionado.md
+      - Provisionado de placa limpia: implementacion/provisionado.md
   - Firmware y Subsistema PS/PL:
       - Visión General del Firmware: firmware/index.md
       - Plataforma Hardware/Software: firmware/plataforma-hw-sw.md

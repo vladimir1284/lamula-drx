@@ -14,9 +14,10 @@ push produce un BOOT.BIN reproducible byte a byte".
 1. Comprobar `command -v bootgen`. A fecha de este repo no hay Vivado/Vitis (ni por tanto
    bootgen) instalado en el entorno de desarrollo — el script está escrito y revisado, su primera
    ejecución real cierra ZM0.
-2. Confirmar que `build/gw/<platform>/drx_top.bin` existe — lo produce `vivado-build` en el paso
-   `bitstream`. Sin el `.bin` crudo (no el `.bit`, que lleva timestamp en la cabecera y por sí
-   solo rompe la reproducibilidad) el script no tiene qué empaquetar.
+2. Confirmar que `build/gw/<platform>_zynq/drx_zynq_top.bit` existe — lo produce `vivado-build`
+   (`-top zynq`). Se empaqueta el `.bit`, NO el `.bin` crudo: bootgen solo reconoce un bitstream por la
+   extensión `.bit`, y con `.bin` el FSBL nunca configura la PL (medido el 16-oct-2026).
+   Diagnóstico: `bootgen -arch zynq -read BOOT.BIN` debe mostrar el bitstream con `attributes 0x20`.
 3. El script también exige `fsbl.elf` y `drx_app.elf` en el mismo directorio de salida. **Esos
    son artefactos de Z4, no de Z0** — si faltan, el script termina con exit code 2 y un mensaje
    que ya lo dice ("lo produce Z4, no Z0"). No es un error a investigar en fase Z0, es el estado

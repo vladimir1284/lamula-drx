@@ -34,7 +34,11 @@ corrigieron tres bugs reales de infraestructura que nadie había ejercitado ante
 desincronizado del Makefile, DRC de bitstream bloqueando `debug_probe`, nombre de archivo equivocado
 en `make_boot.sh`) y se sacó `zu9` de la matriz de CI: este Vivado no tiene el device pack de Zynq
 UltraScale+ instalado. Ver A7/A8/A11 en `docs/alcance/pendientes.md` y `fases.md#z1`, entrada del
-21-sep (más tarde) y del 26-sep.
+21-sep (más tarde) y del 26-sep. **Corrección del 16-oct-2026: ese `BOOT.BIN` «reproducible» nunca
+había arrancado y era defectuoso** — `boot.bif` empaquetaba el bitstream como `.bin` y bootgen lo
+guardaba como dato de PS, así que la PL no se configuraba. Con el `.bit` la placa arranca desde SD
+sin JTAG y sostiene 660 s limpios (`fases.md#z5`, `provisionado.md`). «Reproducible» solo está
+medido entre dos empaquetados del mismo `.bit`, no entre corridas de Vivado.
 
 **Z1 — DDC + range gating: en curso, avanzada, no cerrada.** `rtl/drx_ddc_top.sv` existe, corre
 contra IP real de Xilinx (DDS Compiler, CIC Compiler, FIR Compiler ×2) y está verificado con la
