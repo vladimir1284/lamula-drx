@@ -1,14 +1,16 @@
 // Descriptor de BOOT.BIN para bootgen.
 //
-// FASE Z0: el ELF del firmware todavía no existe (fw/ es Z4). Este fichero está
-// escrito para que el paso de empaquetado esté decidido y guionizado desde el
-// principio; `tools/make_boot.sh` explica qué falta.
-//
 // El orden importa: FSBL primero, luego el bitstream, luego la aplicación.
+//
+// El bitstream tiene que entrar como `.bit`. bootgen para Zynq-7000 solo lo
+// reconoce como bitstream por la extensión; un `.bin` crudo se empaqueta como
+// dato de PS (`attributes 0x10` en `bootgen -read`, en vez de `0x20`), el FSBL
+// nunca configura la PL y el LED DONE no enciende. Medido en placa el
+// 16-oct-2026, con el `BOOT.BIN` anterior.
 
 the_ROM_image:
 {
   [bootloader] fsbl.elf
-  drx_top.bin
+  drx_top.bit
   drx_app.elf
 }

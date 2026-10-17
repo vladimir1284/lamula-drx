@@ -6,15 +6,20 @@
 #
 #   1. Versión de Vivado/Vitis PINADA. Dos versiones distintas dan bitstreams
 #      distintos aunque el RTL sea idéntico.
-#   2. Usar el `.bin` crudo y no el `.bit`: la cabecera del .bit lleva marca de
-#      tiempo y por sí sola rompe la reproducibilidad.
+#   2. Empaquetar el `.bit`, no el `.bin` crudo. bootgen solo reconoce un
+#      bitstream por la extensión `.bit`; con `.bin` lo guarda como dato de PS y
+#      la PL nunca se configura (descubierto el 16-oct-2026 al arrancar desde SD).
+#      Medido: dos empaquetados del MISMO .bit dan el mismo hash. NO medido: que
+#      dos corridas de Vivado distintas den el mismo .bit y, con él, el mismo
+#      BOOT.BIN (la cabecera del .bit lleva marca de tiempo).
 #   3. Semilla de implementación fija (`-seed`) y sin pasos dependientes del
 #      número de hilos.
 #
 # ESTADO: ejecutado por primera vez el 21-sep-2026 (CI, self-hosted). Desde el
 # 26-sep-2026 empaqueta fsbl.elf y drx_app.elf reales (Z4.2) y BOOT.BIN sale
-# reproducible byte a byte. NUNCA se ha arrancado una ZedBoard desde SD: el
-# bring-up físico del 1-oct-2026 fue por JTAG (ver bringup/README.md).
+# reproducible byte a byte. El bring-up físico del 1-oct-2026 fue por JTAG; el
+# primer arranque desde SD (16-oct-2026) destapó que el bitstream iba como `.bin`
+# y no se configuraba la PL (ver el punto 2).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -40,7 +45,7 @@ for tool in bootgen; do
   command -v "$tool" >/dev/null || { echo "falta $tool en el PATH" >&2; exit 1; }
 done
 
-bit="$gwdir/drx_zynq_top.bin"
+bit="$gwdir/drx_zynq_top.bit"
 [[ -f "$bit" ]] || {
   echo "falta $bit: correr primero 'vivado -mode batch -source tcl/build.tcl \
 -tclargs -platform $platform -top zynq -step xsa'" >&2
@@ -49,7 +54,8 @@ bit="$gwdir/drx_zynq_top.bin"
 
 mkdir -p "$outdir"
 cp "$repo_root/tcl/boot/boot.bif" "$outdir/boot.bif"
-cp "$bit" "$outdir/drx_top.bin"
+cp "$bit" "$outdir/drx_top.bit"
+rm -f "$outdir/drx_top.bin"
 for artefact in fsbl.elf drx_app.elf; do
   [[ -f "$fwdir/$artefact" ]] && cp "$fwdir/$artefact" "$outdir/$artefact"
 done
