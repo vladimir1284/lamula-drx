@@ -2728,7 +2728,7 @@ existe un plan de migración ejecutable.
     porque nunca se arrancó desde SD (mismo patrón que el bitstream equivocado del 1-oct).
     `[destination_device = pl]` no sirve: bootgen lo rechaza para la arquitectura zynq.
 
-    **Corrección** (`7593bd7`): `boot.bif` y `tools/make_boot.sh` empaquetan el `.bit`. Con el
+    **Corrección** (`639d709`): `boot.bif` y `tools/make_boot.sh` empaquetan el `.bit`. Con el
     `BOOT.BIN` nuevo (sha256 `de21ef14…`, 4 444 752 B): DONE encendido, ping 3/3 a 0,15 ms,
     `mock_dsp.py --seconds 10` a 222,5 rayos/s con 0 huecos.
 

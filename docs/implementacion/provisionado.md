@@ -4,7 +4,7 @@
 definición de terminado de [Z5](fases.md#z5) pide «una ZedBoard provisionada desde cero por un
 `BOOT.BIN` construido por CI de forma reproducible». El primer intento destapó un bug de empaquetado:
 `boot.bif` listaba el bitstream como `.bin` y bootgen lo guardaba como dato de PS, así que la PL
-nunca se configuraba. Corregido en `7593bd7`; con el `.bit` la placa arranca sola y cumple el
+nunca se configuraba. Corregido en `639d709`; con el `.bit` la placa arranca sola y cumple el
 criterio de aceptación de abajo. «Reproducible» sigue medido solo para dos empaquetados del mismo
 `.bit`, no entre corridas de Vivado.
 
